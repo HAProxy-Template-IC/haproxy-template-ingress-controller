@@ -238,6 +238,7 @@ func TestHTTPStore_RefreshURLVersionRejectsAcceptedContentABA(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("old refresh did not start")
 	}
+	publishUnchangedSource(t, store, server.URL, FetchOptions{})
 
 	versionB, err := store.RefreshURLVersion(t.Context(), server.URL)
 	require.NoError(t, err)
@@ -248,6 +249,7 @@ func TestHTTPStore_RefreshURLVersionRejectsAcceptedContentABA(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, versionA)
 	require.True(t, store.PromotePendingVersion(server.URL, versionA.Checksum, versionA.Revision))
+	publishUnchangedSource(t, store, server.URL, FetchOptions{})
 
 	close(releaseOldRefresh)
 	select {

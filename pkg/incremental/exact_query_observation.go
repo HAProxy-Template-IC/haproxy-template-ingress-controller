@@ -188,7 +188,7 @@ func validateExactQueryObservationInputs(inputs []InputRevision) error {
 		if !validInputKey(current.Key) || !validRevision(current.Revision) {
 			return errors.New("incremental exact query observation has an invalid transitive input")
 		}
-		if index > 0 && inputs[index-1].Key.value >= current.Key.value {
+		if index > 0 && inputs[index-1].Key.id.String() >= current.Key.id.String() {
 			return errors.New("incremental exact query observation transitive inputs are not canonical")
 		}
 	}

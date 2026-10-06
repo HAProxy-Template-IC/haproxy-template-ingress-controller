@@ -34,7 +34,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
 	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
@@ -692,10 +691,11 @@ func TestRenderServiceExactCycleCapturesFirstAcceptedHTTPAtCommit(t *testing.T) 
 	require.False(t, fixture.httpComponent.GetStore().HasActiveLease(fixture.url))
 }
 
-// Accepting fetched content is the one commit that still needs the live store to
-// match what it rendered: the check that authorised the content ran against this
-// render's inputs, and no later render can take the acceptance back.
-func TestRenderServiceExactCycleCandidateAcceptanceRefusesMovedInputs(t *testing.T) {
+// Fetched content is accepted against the render's own snapshot: a watched
+// input moving before the commit no longer refuses it, because the render gate
+// revokes content that a later render cannot load (ADR-0030). The next render
+// still reads the moved input.
+func TestRenderServiceExactCycleCandidateAcceptanceToleratesMovedInputs(t *testing.T) {
 	fixture := newExactCycleDirectHTTPFixture(t)
 	first, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
@@ -703,9 +703,16 @@ func TestRenderServiceExactCycleCandidateAcceptanceRefusesMovedInputs(t *testing
 	require.NoError(t, fixture.routes.Add(
 		incrementalTestResource("default", "late", nil), []string{"default", "late"},
 	))
-	require.ErrorIs(t, first.InputTransaction.Commit(t.Context()), incremental.ErrRevisionConflict)
-	require.Nil(t, fixture.service.exactCycleCandidate)
-	require.False(t, fixture.httpComponent.GetStore().HasActiveLease(fixture.url))
+	require.NoError(t, first.InputTransaction.Commit(t.Context()))
+	_, accepted := fixture.httpComponent.GetStore().Get(fixture.url)
+	require.True(t, accepted)
+
+	next, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.False(t, next.InputTransaction.HasCandidates())
+	require.Contains(t, next.HAProxyConfig, "late")
+	require.NoError(t, next.InputTransaction.Commit(t.Context()))
+	require.NoError(t, fixture.service.RetireIncrementalCache())
 }
 
 func TestRenderServiceExactCycleDirectHTTPSkipsRootAcrossUnrelatedWatchedChange(t *testing.T) {

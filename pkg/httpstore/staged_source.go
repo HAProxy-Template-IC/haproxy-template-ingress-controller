@@ -175,7 +175,7 @@ func (s *HTTPStore) stagedSourceCurrentLocked(source *StagedSource) bool {
 	}
 	entry, exists := s.cache[source.url]
 	if source.baseExists {
-		return exists && entry == source.baseEntry &&
+		return exists && sameCacheEntryVersion(entry, source.baseEntry) &&
 			entry.sourceDescriptor == source.baseDescriptor &&
 			entry.sourceGeneration == source.baseGeneration &&
 			entry.replayRevision == source.baseReplay

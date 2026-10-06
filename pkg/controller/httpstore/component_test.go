@@ -604,24 +604,14 @@ func TestComponent_ValidationCompleted_WithActualPendingContent(t *testing.T) {
 	// Publish ProposalValidationCompletedEvent with matching request ID
 	bus.Publish(events.NewProposalValidationCompletedEvent(request.ID, 100))
 
-	// Wait for and verify HTTPResourceAcceptedEvent
-	timeout := time.After(2 * time.Second)
-	for {
-		select {
-		case event := <-eventChan:
-			if accepted, ok := event.(*events.HTTPResourceAcceptedEvent); ok {
-				assert.Equal(t, server.URL, accepted.URL)
-				assert.Greater(t, accepted.ContentSize, 0)
-
-				// Verify pending was promoted
-				pendingURLs := store.GetPendingURLs()
-				assert.Len(t, pendingURLs, 0, "pending should be cleared after promotion")
-				return
-			}
-		case <-timeout:
-			t.Fatal("timeout waiting for HTTPResourceAcceptedEvent")
-		}
-	}
+	accepted := testutil.WaitForEvent[*events.HTTPResourceAcceptedEvent](t, eventChan, 2*time.Second)
+	assert.Equal(t, server.URL, accepted.URL)
+	assert.Greater(t, accepted.ContentSize, 0)
+	assert.Empty(t, store.GetPendingURLs(), "pending should be cleared after promotion")
+	trigger := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, eventChan, testutil.EventTimeout)
+	assert.Equal(t, "http_content_validated", trigger.Reason)
+	assert.NotEmpty(t, trigger.CorrelationID())
+	assert.Empty(t, trigger.CausationID())
 }
 
 // pending content when ValidationFailedEvent is received.

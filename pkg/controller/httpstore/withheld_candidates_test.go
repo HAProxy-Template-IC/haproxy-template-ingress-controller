@@ -30,7 +30,7 @@ import (
 
 // A render that must not accept new content leaves an unaccepted source out as
 // a failed non-critical fetch would, without fetching it, and asks for the
-// reconcile that accepts it; accepted content still reads normally.
+// acceptance attempt; accepted content still reads normally.
 func TestWithheldRenderLeavesUnacceptedSourcesOut(t *testing.T) {
 	requests := atomic.Int32{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -49,8 +49,7 @@ func TestWithheldRenderLeavesUnacceptedSourcesOut(t *testing.T) {
 	assert.True(t, withheld.CandidateWithheld(server.URL+"/page"))
 	assert.False(t, withheld.InputTransaction().HasCandidates())
 	assert.Equal(t, int32(0), requests.Load())
-	trigger := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, triggers, testutil.EventTimeout)
-	assert.Equal(t, "http_content_withheld", trigger.Reason)
+	testutil.WaitForEvent[*events.HTTPContentAcceptanceRequestedEvent](t, triggers, testutil.EventTimeout)
 
 	_, err = withheld.Fetch(server.URL+"/critical", map[string]any{"critical": true})
 	require.ErrorIs(t, err, ErrCandidateWithheld)
@@ -61,6 +60,15 @@ func TestWithheldRenderLeavesUnacceptedSourcesOut(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "page-1", content)
 	commitInputTransaction(t, accepting)
+	component.RequestRenderForAcceptedContent()
+	first := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, triggers, testutil.EventTimeout)
+	assert.Equal(t, "http_content_accepted", first.Reason)
+	assert.NotEmpty(t, first.CorrelationID())
+	assert.Empty(t, first.CausationID())
+	component.RequestRenderForAcceptedContent()
+	second := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, triggers, testutil.EventTimeout)
+	assert.NotEmpty(t, second.CorrelationID())
+	assert.NotEqual(t, first.CorrelationID(), second.CorrelationID(), "independent render requests start new chains")
 
 	again := NewHTTPStoreWrapper(WithCandidatesWithheld(t.Context()), component, logger, nil, SourceModeAuthoritative)
 	content, err = again.Fetch(server.URL+"/page", map[string]any{"critical": false})
@@ -68,4 +76,38 @@ func TestWithheldRenderLeavesUnacceptedSourcesOut(t *testing.T) {
 	assert.Equal(t, "page-1", content)
 	assert.False(t, again.CandidateWithheld(server.URL+"/page"))
 	again.InputTransaction().Abort()
+}
+
+// A revoked acceptance is reported, asks for the render without it, and leaves
+// the source out of the next deploying render until it is accepted again.
+func TestRevokedContentIsWithheldAgain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("page"))
+	}))
+	defer server.Close()
+	bus, logger := testutil.NewTestBusAndLogger()
+	published := bus.Subscribe("revocation-test", 10)
+	component := New(bus, logger, 0)
+	bus.Start()
+	accepting := NewHTTPStoreWrapper(t.Context(), component, logger, nil, SourceModeAuthoritative)
+	_, err := accepting.Fetch(server.URL, map[string]any{"critical": true})
+	require.NoError(t, err)
+	commitInputTransaction(t, accepting)
+	refusedRender := component.AcceptanceSequence()
+
+	require.Equal(t, 1, component.RevokeAcceptances(refusedRender))
+
+	revoked := testutil.WaitForEvent[*events.HTTPContentRevokedEvent](t, published, testutil.EventTimeout)
+	assert.Equal(t, server.URL, revoked.URL)
+	assert.True(t, revoked.Critical)
+	assert.False(t, revoked.Restored)
+	trigger := testutil.WaitForEvent[*events.ReconciliationTriggeredEvent](t, published, testutil.EventTimeout)
+	assert.Equal(t, "http_content_revoked", trigger.Reason)
+	assert.NotEmpty(t, trigger.CorrelationID())
+	assert.Empty(t, trigger.CausationID())
+	withheld := NewHTTPStoreWrapper(WithCandidatesWithheld(t.Context()), component, logger, nil, SourceModeAuthoritative)
+	_, err = withheld.Fetch(server.URL, map[string]any{"critical": true})
+	require.ErrorIs(t, err, ErrCandidateWithheld, "a critical source fails the render rather than deploying without it")
+	withheld.InputTransaction().Abort()
+	assert.Zero(t, component.RevokeAcceptances(refusedRender))
 }

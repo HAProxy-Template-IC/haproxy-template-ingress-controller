@@ -683,7 +683,8 @@ func (s *RenderService) reusedExactCycleResult(
 		inputTransaction, generation, candidate, bctx, cache, session,
 	)
 	return &RenderResult{
-		CycleSnapshot: candidate.cycle, OutputSnapshot: output, HAProxyConfig: configText,
+		HTTPObservations: observedHTTPInputs(bctx.inputTransaction),
+		CycleSnapshot:    candidate.cycle, OutputSnapshot: output, HAProxyConfig: configText,
 		AuxiliaryFileSnapshot: artifacts, ContentChecksum: checksum, PlanID: planID,
 		StatusPatchSnapshot: status, EventSnapshot: events, RenderedResourceSnapshot: resources,
 		DurationMs: time.Since(startTime).Milliseconds(), AuxFileCount: counts.Artifacts,

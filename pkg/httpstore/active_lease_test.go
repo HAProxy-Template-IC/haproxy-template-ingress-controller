@@ -141,6 +141,101 @@ func TestActiveLeasePrepareRejectsLateRelevantChangeAndPermitsUnrelated(t *testi
 	assert.ErrorContains(t, err, "changed while the render was running")
 }
 
+func TestActiveLeaseVerificationPreservesPendingChangesAndToken(t *testing.T) {
+	store := New(slog.Default(), 0)
+	url := "https://active.test/value"
+	store.LoadFixture(url, "first")
+	set, token, err := store.NewActiveLeaseSet()
+	require.NoError(t, err)
+	token = commitActiveLeaseReplacement(t, store, set, token, []ActiveLeaseReference{{
+		URL: url, References: 1,
+	}})
+	store.LoadFixture(url, "changed")
+	snapshot, err := set.BeginActiveLeases(token)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Changes(), 1)
+
+	verification := &ActiveLeaseCommit{Snapshot: snapshot, VerifyOnly: true}
+	prepared, err := store.PrepareStagedSourcesAndVerifyObservationSetsWithActiveLeases(
+		t.Context(), nil, nil, nil, nil, verification,
+	)
+	require.NoError(t, err)
+	_, _, planned := prepared.PlannedActiveLeases()
+	assert.False(t, planned)
+	prepared.Publish()
+	prepared.Release()
+	current, err := set.BeginActiveLeases(token)
+	require.NoError(t, err)
+	assert.Equal(t, snapshot.Changes(), current.Changes())
+
+	winnerToken := publishActiveLeaseCommit(t, store, &ActiveLeaseCommit{Snapshot: current})
+	require.NotEqual(t, token, winnerToken)
+	_, err = store.PrepareStagedSourcesAndVerifyObservationSetsWithActiveLeases(
+		t.Context(), nil, nil, nil, nil, verification,
+	)
+	assert.ErrorIs(t, err, ErrInputsMoved)
+	current, err = set.BeginActiveLeases(winnerToken)
+	require.NoError(t, err)
+	assert.Empty(t, current.Changes())
+}
+
+func TestActiveLeaseVerificationRejectsInvalidModesAndAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*ActiveLeaseCommit)
+	}{
+		{"updates", func(c *ActiveLeaseCommit) { c.Updates = []ActiveLeaseUpdate{{Added: 1}} }},
+		{"replacement", func(c *ActiveLeaseCommit) { c.Replacement = []ActiveLeaseReference{{References: 1}} }},
+		{"replace", func(c *ActiveLeaseCommit) { c.Replace = true }},
+		{"replay", func(c *ActiveLeaseCommit) { c.Replay = &AcceptedReplayState{} }},
+		{"published replay", func(c *ActiveLeaseCommit) { c.PublishedReplay = []ContentSnapshot{{}} }},
+		{"substituted snapshot", func(c *ActiveLeaseCommit) {
+			cloned := *c.Snapshot
+			cloned.token.generation++
+			c.Snapshot = &cloned
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := New(slog.Default(), 0)
+			set, token, err := store.NewActiveLeaseSet()
+			require.NoError(t, err)
+			snapshot, err := set.BeginActiveLeases(token)
+			require.NoError(t, err)
+			verification := &ActiveLeaseCommit{Snapshot: snapshot, VerifyOnly: true}
+			test.mutate(verification)
+			_, err = store.PrepareStagedSourcesAndVerifyObservationSetsWithActiveLeases(
+				t.Context(), nil, nil, nil, nil, verification,
+			)
+			require.Error(t, err)
+			assert.NotErrorIs(t, err, ErrInputsMoved)
+			_, err = set.BeginActiveLeases(token)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestActiveLeaseVerificationCannotPublishReplay(t *testing.T) {
+	store := New(slog.Default(), 0)
+	url := "https://active.test/value"
+	store.LoadFixture(url, "accepted")
+	content := store.AcceptedSnapshot(url, SourceDescriptor{})
+	set, token, err := store.NewActiveLeaseSet()
+	require.NoError(t, err)
+	snapshot, err := set.BeginActiveLeases(token)
+	require.NoError(t, err)
+	prepared, err := store.PrepareStagedSourcesAndVerifyObservationSetsWithActiveLeases(
+		t.Context(), nil, nil, nil, nil, &ActiveLeaseCommit{Snapshot: snapshot, VerifyOnly: true},
+	)
+	require.NoError(t, err)
+	defer prepared.Abort()
+	err = prepared.PreparePublishedReplayActiveLeases(
+		&ActiveLeaseCommit{Snapshot: snapshot, VerifyOnly: true}, []ContentSnapshot{content},
+	)
+	assert.ErrorContains(t, err, "invalid transition")
+	_, _, planned := prepared.PlannedActiveLeases()
+	assert.False(t, planned)
+}
+
 func TestActiveLeaseAbortAndTokenAuthentication(t *testing.T) {
 	store := New(slog.Default(), 0)
 	set, token, err := store.NewActiveLeaseSet()

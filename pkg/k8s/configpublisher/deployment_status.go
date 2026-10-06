@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 
+	"golang.org/x/sync/errgroup"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -268,49 +269,45 @@ func (p *Publisher) applyPodStatusToAuxiliaryFiles(ctx context.Context, auxFiles
 	// After stamping, entries for keys no longer live are evicted so the
 	// content-hashed names of a superseded set don't accumulate.
 	live := make(map[stampKey]struct{}, len(auxFiles.MapFiles)+len(auxFiles.GeneralFiles)+len(auxFiles.CRTListFiles))
-
-	for _, ref := range auxFiles.MapFiles {
-		key := stampKey{kind: kindMapFile, namespace: ref.Namespace, name: ref.Name, podName: podName}
+	var stamps errgroup.Group
+	stamps.SetLimit(auxiliaryPublishConcurrency)
+	stamp := func(kind string, ref haproxyv1alpha1.ResourceReference,
+		lookup func(context.Context, string, string) (string, bool),
+		patch func(ctx context.Context, name string, data []byte, opts metav1.PatchOptions) error,
+	) {
+		key := stampKey{kind: kind, namespace: ref.Namespace, name: ref.Name, podName: podName}
 		live[key] = struct{}{}
-		checksum, ok := p.lookupMapFileChecksum(ctx, ref.Namespace, ref.Name)
-		if !ok {
-			continue
-		}
-		p.stampAuxiliaryFilePodStatus(key, podUID, podRuntimeID, checksum, fieldManager, driftCheck,
-			func(name string, data []byte, opts metav1.PatchOptions) error {
-				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(ref.Namespace).
-					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
-				return err
-			})
+		stamps.Go(func() error {
+			checksum, ok := lookup(ctx, ref.Namespace, ref.Name)
+			if !ok {
+				return nil
+			}
+			p.stampAuxiliaryFilePodStatus(key, podUID, podRuntimeID, checksum, fieldManager, driftCheck,
+				func(name string, data []byte, opts metav1.PatchOptions) error { return patch(ctx, name, data, opts) })
+			return nil
+		})
+	}
+
+	client := p.crdClient.HaproxyTemplateICV1alpha1()
+	for _, ref := range auxFiles.MapFiles {
+		stamp(kindMapFile, ref, p.lookupMapFileChecksum, func(ctx context.Context, name string, data []byte, opts metav1.PatchOptions) error {
+			_, err := client.HAProxyMapFiles(ref.Namespace).Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
+			return err
+		})
 	}
 	for _, ref := range auxFiles.GeneralFiles {
-		key := stampKey{kind: kindGeneralFile, namespace: ref.Namespace, name: ref.Name, podName: podName}
-		live[key] = struct{}{}
-		checksum, ok := p.lookupGeneralFileChecksum(ctx, ref.Namespace, ref.Name)
-		if !ok {
-			continue
-		}
-		p.stampAuxiliaryFilePodStatus(key, podUID, podRuntimeID, checksum, fieldManager, driftCheck,
-			func(name string, data []byte, opts metav1.PatchOptions) error {
-				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(ref.Namespace).
-					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
-				return err
-			})
+		stamp(kindGeneralFile, ref, p.lookupGeneralFileChecksum, func(ctx context.Context, name string, data []byte, opts metav1.PatchOptions) error {
+			_, err := client.HAProxyGeneralFiles(ref.Namespace).Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
+			return err
+		})
 	}
 	for _, ref := range auxFiles.CRTListFiles {
-		key := stampKey{kind: kindCRTListFile, namespace: ref.Namespace, name: ref.Name, podName: podName}
-		live[key] = struct{}{}
-		checksum, ok := p.lookupCRTListFileChecksum(ctx, ref.Namespace, ref.Name)
-		if !ok {
-			continue
-		}
-		p.stampAuxiliaryFilePodStatus(key, podUID, podRuntimeID, checksum, fieldManager, driftCheck,
-			func(name string, data []byte, opts metav1.PatchOptions) error {
-				_, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(ref.Namespace).
-					Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
-				return err
-			})
+		stamp(kindCRTListFile, ref, p.lookupCRTListFileChecksum, func(ctx context.Context, name string, data []byte, opts metav1.PatchOptions) error {
+			_, err := client.HAProxyCRTListFiles(ref.Namespace).Patch(ctx, name, types.ApplyPatchType, data, opts, statusSubresource)
+			return err
+		})
 	}
+	_ = stamps.Wait()
 
 	p.auxStamps.retainLivePodKeys(podName, live)
 }

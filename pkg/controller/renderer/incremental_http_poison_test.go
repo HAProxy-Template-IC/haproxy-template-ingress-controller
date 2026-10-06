@@ -472,6 +472,8 @@ func TestIncrementalHTTPNewerSiblingConflictCannotRepublishLeaseToken(t *testing
 	assert.Equal(t, "a=first\nb=stable\n", fixture.render(t))
 	fixture.bodyA.Store("changed")
 	promoteIncrementalHTTPBody(t, fixture.httpComponent, fixture.urlA)
+	baseToken := fixture.service.incremental.snapshot.httpCursor.token
+	require.Len(t, incrementalActiveLeaseChanges(t, fixture, baseToken), 1)
 
 	winner, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
@@ -479,6 +481,7 @@ func TestIncrementalHTTPNewerSiblingConflictCannotRepublishLeaseToken(t *testing
 	require.NoError(t, err)
 	require.NoError(t, winner.InputTransaction.Commit(t.Context()))
 	winnerToken := fixture.service.incremental.snapshot.httpCursor.token
+	require.NotEqual(t, baseToken, winnerToken)
 	require.ErrorContains(t, sibling.InputTransaction.Commit(t.Context()), "changed while the render was running")
 
 	assert.Equal(t, winnerToken, fixture.service.incremental.snapshot.httpCursor.token)

@@ -222,9 +222,7 @@ func newHTTPInputPipelineWithShape(
 	return New(pipelineConfig), component
 }
 
-// The reconcile pipeline runs no `haproxy -c` per render — but accepting
-// external content is not something the render gate's later verdict can undo,
-// so that one render takes the check up front.
+// Reversible acceptance still requires a passing synchronous check.
 func TestReconcilePipelineChecksBeforeAcceptingNewHTTPInput(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -274,4 +272,71 @@ func currentHTTPRefresher(component *controllerhttpstore.Component, url string) 
 		return nil
 	}
 	return state
+}
+
+func TestDeferredHTTPCandidatesFollowNestedURLsWithoutRefetching(t *testing.T) {
+	var requests atomic.Int32
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte("nested content"))
+	}))
+	t.Cleanup(page.Close)
+	index := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(page.URL))
+	}))
+	t.Cleanup(index.Close)
+	template := testutil.MinimalHAProxyConfig + fmt.Sprintf(`
+{%% var next, _ = http.Fetch(%q) %%}
+{%% if next != "" %%}# {{ http.Fetch(next) }}{%% end %%}
+`, index.URL)
+	pipeline, component := newHTTPInputPipeline(t, template, nil)
+	result, err := pipeline.Execute(t.Context(), &mockStoreProvider{storeMap: map[string]stores.Store{}}, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	assert.Contains(t, result.HAProxyConfig, "# nested content")
+	assert.Equal(t, int32(2), requests.Load())
+	for _, url := range []string{index.URL, page.URL} {
+		_, accepted := component.GetStore().Get(url)
+		assert.True(t, accepted)
+	}
+}
+
+func TestDeferredHTTPCandidatesDiscoverIndependentURLsTogether(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(r.URL.Path))
+	}))
+	t.Cleanup(server.Close)
+	var attempts atomic.Int32
+	template := testutil.MinimalHAProxyConfig + fmt.Sprintf(`
+{{ countAttempt() }}
+{%% for _, path := range []string{"a", "b", "c"} %%}
+{%% var page, err = http.Fetch(%q + "/" + path) %%}
+{%% if err != nil %%}{%% fail(err.Error()) %%}{%% end %%}
+# {{ page }}
+{%% end %%}
+`, server.URL)
+	engine, err := templating.New(map[string]string{"haproxy.cfg": template}, &templating.Options{
+		Functions: map[string]templating.GlobalFunc{"countAttempt": func(...any) (any, error) {
+			attempts.Add(1)
+			return "", nil
+		}},
+	})
+	require.NoError(t, err)
+	bus, logger := testutil.NewTestBusAndLogger()
+	component := controllerhttpstore.New(bus, logger, 0)
+	service := renderer.NewRenderService(&renderer.RenderServiceConfig{
+		Engine: engine, Config: &config.Config{HAProxyConfig: config.HAProxyConfig{Template: template}},
+		Logger: logger, HTTPStoreComponent: component, ColdRendersRunToCompletion: true,
+	})
+	t.Cleanup(func() { _ = service.RetireIncrementalCache() })
+	pipeline := New(&PipelineConfig{Renderer: service, Logger: logger})
+	result, err := pipeline.Execute(t.Context(), &mockStoreProvider{storeMap: map[string]stores.Store{}}, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), attempts.Load(), "one discovery render and one complete render")
+	assert.Equal(t, int32(3), requests.Load())
+	for _, path := range []string{"a", "b", "c"} {
+		assert.Contains(t, result.HAProxyConfig, "# /"+path)
+	}
 }

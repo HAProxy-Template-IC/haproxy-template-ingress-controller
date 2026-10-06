@@ -59,6 +59,7 @@ const (
 	// already dispatched, as opposed to a config the load gate refused.
 	eventReasonRenderRefused  = "RenderRefusedByHAProxy"
 	eventReasonRenderAccepted = "RenderAcceptedByHAProxy"
+	eventReasonContentRevoked = "HTTPContentRevoked"
 
 	// conditionValidated is the status condition type reporting whether the
 	// controller accepted (validated) the observed config generation. Its
@@ -181,6 +182,7 @@ func NewStatusUpdater(
 			events.EventTypeConfigInvalid,
 			events.EventTypeValidationFailed,
 			events.EventTypeRenderGateCompleted,
+			events.EventTypeHTTPContentRevoked,
 		},
 	})
 
@@ -223,6 +225,8 @@ func (u *StatusUpdater) HandleEvent(event busevents.Event) {
 	case *events.RenderGateCompletedEvent:
 		u.handleRenderGateCompleted(e)
 		u.restoreValidatedAfterPass(u.ctx, e)
+	case *events.HTTPContentRevokedEvent:
+		u.handleHTTPContentRevoked(e)
 	}
 }
 
@@ -302,6 +306,36 @@ func (u *StatusUpdater) handleRenderGateCompleted(event *events.RenderGateComple
 		u.recorder.Event(object, corev1.EventTypeWarning, eventReasonRenderRefused,
 			renderGateEventMessage(event))
 	}
+}
+
+// handleHTTPContentRevoked emits a Warning Event for content taken back after
+// HAProxy refused a render containing it.
+func (u *StatusUpdater) handleHTTPContentRevoked(event *events.HTTPContentRevokedEvent) {
+	u.mu.RLock()
+	refs := slices.Clone(u.configRefs)
+	u.mu.RUnlock()
+	if u.recorder == nil {
+		return
+	}
+	for _, ref := range refs {
+		object := &v1alpha1.HAProxyTemplateConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace},
+		}
+		u.recorder.Event(object, corev1.EventTypeWarning, eventReasonContentRevoked,
+			httpContentRevokedMessage(event))
+	}
+}
+
+func httpContentRevokedMessage(event *events.HTTPContentRevokedEvent) string {
+	effect := "Templates render without it until it is accepted again."
+	switch {
+	case event.Restored:
+		effect = "Its previously accepted content is served instead."
+	case event.Critical:
+		effect = "Renders fail until it is accepted again, so nothing new deploys."
+	}
+	return fmt.Sprintf("HAProxy refused a configuration while new content from %s awaited confirmation, so the content was taken back. "+
+		"%s Check the RenderRefusedByHAProxy Event and fix the configuration it names.", event.URL, effect)
 }
 
 // gateEventState is what an emitted Event said, so the next verdict can tell

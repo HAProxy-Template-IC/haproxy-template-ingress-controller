@@ -626,7 +626,7 @@ func (s *HTTPStore) validateInitialCandidatesLocked(
 			}
 		}
 		entry, exists := s.cache[candidate.url]
-		if !exists || entry != candidate.entry || entry.sourceDescriptor != candidate.sourceDescriptor ||
+		if !exists || !sameCacheEntryVersion(entry, candidate.entry) || entry.sourceDescriptor != candidate.sourceDescriptor ||
 			entry.sourceGeneration != candidate.sourceGeneration ||
 			entry.mutationRevision != candidate.mutationRevision || entry.AcceptedChecksum != "" || entry.HasPending {
 			return fmt.Errorf("HTTP source %s changed before its validated content could be accepted", RedactURL(candidate.url))

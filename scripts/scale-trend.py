@@ -21,17 +21,42 @@ MAX_PIPELINES = 60
 WINDOW = 7
 MIN_BASELINES = 3
 WARN_FRACTION = 0.20
-# Hard corridor (FAIL): how long a routine change takes to go live at scale,
-# and the controller's memory footprint.
-HARD = {"change_convergence_seconds_p95": 0.50, "controller_rss_bytes": 0.50}
+# Hard corridor (FAIL): how long a routine change takes to route at scale,
+# how long the HAProxyCfg takes to show it, and the controller's memory.
+HARD = {
+    "change_convergence_seconds_p95": 0.50,
+    "haproxycfg_publication_seconds_p95": 0.50,
+    "controller_rss_bytes": 0.50,
+}
 # WARN only: context metrics that also move with legitimate changes.
 SOFT = (
     "change_convergence_seconds_median",
+    "haproxycfg_publication_seconds_median",
     "seed_to_converged_seconds",
     "controller_container_cpu_seconds_delta",
     "haproxy_reloads_total_delta",
     "config_lines",
 )
+
+
+# Metrics whose meaning changed under the same key, with the
+# scale_metrics_version that introduced the current meaning. Older runs
+# measured something else and are not baselines for them.
+REDEFINED = {
+    "change_convergence_seconds_p95": 2,
+    "change_convergence_seconds_median": 2,
+}
+# Metrics that older runs recorded, with the same meaning, under another key.
+FORMER_KEYS = {
+    "haproxycfg_publication_seconds_p95": "change_marker_seconds_p95",
+    "haproxycfg_publication_seconds_median": "change_marker_seconds_median",
+}
+
+
+def baseline_value(run, key):
+    if run.get("scale_metrics_version", 1) < REDEFINED.get(key, 1):
+        return None
+    return run.get(key, run.get(FORMER_KEYS.get(key)))
 
 
 def get(url, headers=None):
@@ -103,9 +128,10 @@ def evaluate(cur, history):
 
     failed = False
     for key in (*HARD, *SOFT):
-        values = [r[key] for r in pool if numeric(r.get(key))]
+        values = [v for v in (baseline_value(r, key) for r in pool) if numeric(v)]
         if len(values) < MIN_BASELINES or not numeric(cur.get(key)):
-            lines.append(f"trend: {key}: no comparable baseline ({len(values)} values)")
+            prefix = "TREND UNGATED" if key in HARD else "trend"
+            lines.append(f"{prefix}: {key}: no comparable baseline ({len(values)} values)")
             continue
         median = statistics.median(values)
         change = cur[key] / median - 1

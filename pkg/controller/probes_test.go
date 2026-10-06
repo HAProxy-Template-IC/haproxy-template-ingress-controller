@@ -16,6 +16,7 @@ package controller
 
 import (
 	"crypto/x509"
+	"net/http"
 	"testing"
 	"time"
 
@@ -56,7 +57,10 @@ func newFailingReinit(t *testing.T) *probeFixture {
 		IntrospectionServer: introspection.NewServer("localhost:0", introspection.NewRegistry()),
 	}
 	// refreshing pins the sibling result the test sets; no background check runs.
-	f.infra.siblings = &siblingConvergence{now: func() time.Time { return f.now }, refreshing: true}
+	f.infra.siblings = &siblingProbes{
+		converged:   &siblingProbe{now: func() time.Time { return f.now }, refreshing: true},
+		renderGraph: &siblingProbe{now: func() time.Time { return f.now }, refreshing: true},
+	}
 
 	f.predecessor = f.infra.NoteIterationStart()
 	f.infra.NoteInitialized(f.predecessor)
@@ -85,8 +89,13 @@ func newFailingReinit(t *testing.T) *probeFixture {
 }
 
 func (f *probeFixture) setSiblings(noneConverged bool) {
-	f.infra.siblings.checkedAt = f.now
-	f.infra.siblings.noneConverged = noneConverged
+	f.infra.siblings.converged.checkedAt = f.now
+	f.infra.siblings.converged.noneMatch = noneConverged
+}
+
+func (f *probeFixture) setGraphSiblings(noneMatch bool) {
+	f.infra.siblings.renderGraph.checkedAt = f.now
+	f.infra.siblings.renderGraph.noneMatch = noneMatch
 }
 
 func (f *probeFixture) installWebhookServer(t *testing.T) *pkgwebhook.Server {
@@ -142,7 +151,7 @@ func TestProbes_ServingPredecessorExemptionConditions(t *testing.T) {
 		},
 		{
 			name:   "sibling result outdated",
-			mutate: func(f *probeFixture) { f.infra.siblings.checkedAt = f.now.Add(-2 * siblingRefreshInterval) },
+			mutate: func(f *probeFixture) { f.infra.siblings.converged.checkedAt = f.now.Add(-2 * siblingRefreshInterval) },
 			why:    "a check that stopped refreshing cannot rule out a converged sibling",
 		},
 		{
@@ -228,4 +237,42 @@ func TestProbes_HungStartupFailsLiveness(t *testing.T) {
 
 	f.infra.NoteAttemptReturned(hung)
 	assert.True(t, healthy(f.infra.livenessHealth()))
+}
+
+// A replica whose first full render hasn't published a graph denies every
+// admission request until it does (#285). It leaves the webhook Service while
+// another replica can validate, and stays in it, with a note the other
+// replicas read, while none can.
+func TestProbes_ReadinessWaitsForTheFirstGraphWhileASiblingValidates(t *testing.T) {
+	f := newFailingReinit(t)
+	f.successor = healthyIteration()
+	published := false
+	f.infra.markServing(&servingIteration{
+		id:             f.infra.currentIteration(),
+		health:         healthyIteration,
+		leading:        func() bool { return true },
+		graphPublished: func() bool { return published },
+	})
+	server := f.installWebhookServer(t)
+	_, err := server.InstallValidatorGeneration(map[string]pkgwebhook.ValidationFunc{}, nil, nil)
+	require.NoError(t, err)
+
+	f.setGraphSiblings(false)
+	readiness := f.infra.readinessHealth()
+	assert.False(t, healthy(readiness), "a sibling with a graph validates instead")
+	assert.NotEmpty(t, readiness[healthKeyRenderGraph].Error)
+	assert.True(t, healthy(f.infra.livenessHealth()), "a running first render is no reason to restart")
+
+	f.setGraphSiblings(true)
+	readiness = f.infra.readinessHealth()
+	assert.True(t, healthy(readiness), "alone, the replica answers and explains its denials")
+	assert.False(t, siblingRenderGraphPublished(http.StatusOK, readiness), "other replicas must not count it as validating")
+
+	f.infra.siblings.renderGraph.checkedAt = f.now.Add(-2 * siblingRefreshInterval)
+	assert.False(t, healthy(f.infra.readinessHealth()), "an outdated check cannot rule out a sibling with a graph")
+
+	published = true
+	readiness = f.infra.readinessHealth()
+	assert.True(t, healthy(readiness))
+	assert.True(t, siblingRenderGraphPublished(http.StatusOK, readiness))
 }

@@ -56,6 +56,8 @@ type HTTPStore struct {
 	nextActiveLeaseSet      uint64
 	activeLeaseSets         map[uint64]*activeLeaseState
 	activeLeaseURLs         map[string]map[uint64]SourceDescriptor
+	acceptanceSequence      uint64
+	acceptances             map[string]*acceptance
 	httpClient              *http.Client
 	logger                  *slog.Logger
 	maxAge                  time.Duration // Maximum time an entry can remain unused before eviction (0 = disabled)
@@ -99,6 +101,7 @@ func (s *HTTPStore) quarantinePublicationLocked() {
 	s.nextActiveLeaseSet = ^uint64(0)
 	s.activeLeaseSets = nil
 	s.activeLeaseURLs = nil
+	s.acceptances = nil
 }
 
 // DefaultValidationStuckAfter bounds a pending validation. Render plus
@@ -226,7 +229,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	now := time.Now()
 	s.mu.Lock()
 	entry, exists := s.cache[url]
-	if !exists || entry != snapshot.entry || entry.sourceIdentity != snapshot.sourceIdentity ||
+	if !exists || !sameCacheEntryVersion(entry, snapshot.entry) || entry.sourceIdentity != snapshot.sourceIdentity ||
 		entry.sourceDescriptor != snapshot.sourceDescriptor ||
 		entry.sourceGeneration != snapshot.sourceGeneration ||
 		entry.mutationRevision != snapshot.mutationRevision || entry.HasPending {
@@ -375,7 +378,7 @@ func (s *HTTPStore) sourceCurrent(url string, snapshot *initialFetchSnapshot) bo
 	}
 
 	entry, exists := s.cache[url]
-	return exists && entry == snapshot.entry && entry.sourceIdentity == snapshot.sourceIdentity &&
+	return exists && sameCacheEntryVersion(entry, snapshot.entry) && entry.sourceIdentity == snapshot.sourceIdentity &&
 		entry.sourceDescriptor == snapshot.sourceDescriptor &&
 		entry.sourceGeneration == snapshot.sourceGeneration &&
 		entry.mutationRevision == snapshot.mutationRevision
@@ -587,7 +590,7 @@ func (s *HTTPStore) updateRefreshMetadata(url string, snapshot *refreshSnapshot,
 	defer s.mu.Unlock()
 
 	entry, exists := s.cache[url]
-	if !exists || entry != snapshot.entry || entry.mutationRevision != snapshot.mutationRevision ||
+	if !exists || !sameCacheEntryVersion(entry, snapshot.entry) || entry.mutationRevision != snapshot.mutationRevision ||
 		entry.sourceDescriptor != snapshot.sourceDescriptor || entry.sourceGeneration != snapshot.sourceGeneration ||
 		entry.HasPending || entry.AcceptedChecksum != snapshot.acceptedChecksum {
 		return
@@ -605,7 +608,7 @@ func (s *HTTPStore) commitPendingRefresh(
 	defer s.mu.Unlock()
 
 	entry, exists := s.cache[url]
-	if !exists || entry != snapshot.entry || entry.mutationRevision != snapshot.mutationRevision ||
+	if !exists || !sameCacheEntryVersion(entry, snapshot.entry) || entry.mutationRevision != snapshot.mutationRevision ||
 		entry.sourceDescriptor != snapshot.sourceDescriptor || entry.sourceGeneration != snapshot.sourceGeneration ||
 		entry.HasPending || entry.AcceptedChecksum != snapshot.acceptedChecksum {
 		return PendingVersion{}, false

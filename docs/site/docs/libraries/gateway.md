@@ -93,7 +93,7 @@ Installing the v1.6.0 standard channel gives you every route kind, including TLS
 The word "experimental" describes two independent things, which don't gate each other:
 
 - **Channel** — which route *kinds* (CRDs) a Gateway API install ships, shown in the table above.
-- **The `controller.templateLibraries.gateway.experimentalChannel` value** — a separate switch that tells HAPTIC's `validationTests` the experimental **HTTPRoute schema** is installed, so tests exercising experimental HTTPRoute *fields* (`retry` per GEP-1731, `sessionPersistence` per GEP-1619) run. HAPTIC emits those directives whenever the fields are present, regardless of the flag; see the [Chart Values Reference](../reference.md). This value gates no route kind.
+- **The `controller.templateLibraries.gateway.experimentalChannel` value** — a separate switch that tells HAPTIC's `validationTests` the experimental **HTTPRoute schema** is installed, so tests exercising experimental HTTPRoute *fields* (`retry` per GEP-1731, `sessionPersistence` per GEP-1619, the `ExternalAuth` filter) run. HAPTIC emits those directives whenever the fields are present, regardless of the flag; see the [Chart Values Reference](../reference.md). This value gates no route kind.
 
 <a id="architecture"></a>
 
@@ -423,6 +423,7 @@ CORS and advanced matchers also change configuration text. See
 | `URLRewrite` | Extended | Supported | Path and hostname rewriting |
 | `RequestMirror` | Extended | Supported | Enable `spoaHub.plugins.mirror`; supports percentage or fraction sampling and multiple mirrors per rule |
 | `CORS` | Extended (GEP-1767) | Supported | HTTPRoute only. Supports `allowOrigins` (exact values, a bare `*`, and `*.`-prefixed wildcards compiled to a regex against the request `Origin`), `allowMethods`, `allowHeaders`, `exposeHeaders`, `allowCredentials`, and `maxAge` |
+| `ExternalAuth` | Extended (experimental channel) | Partial | HTTPRoute only. `protocol: HTTP` through the SPOA hub external-auth plugin; `GRPC` and `forwardBody` are unsupported. See [`ExternalAuth` filter](#externalauth-filter) |
 | `ExtensionRef` | Implementation-specific | Partial | Supports `HAProxyRoutePolicy` for route policies and `SSLPassthrough` for TLS passthrough; other kinds are unsupported |
 
 #### `RequestHeaderModifier` filter
@@ -605,6 +606,93 @@ spec:
 - **URLRewrite** rewrites the request and forwards to backend (transparent to client)
 - **RequestRedirect** sends HTTP redirect response to client (client sees new URL)
 
+#### `ExternalAuth` filter
+
+The `ExternalAuth` filter asks an authorization service about each request that
+matches the rule, before the request reaches a backend. **Only available for
+HTTPRoute.** HAPTIC sends the check through the SPOA hub external-auth plugin.
+
+The filter is a Gateway API experimental-channel field. The controller reads
+route schemas when it starts, so install the experimental channel CRDs first. If
+you install them later, restart the controller.
+
+Enable the plugin. For an authorization Service reached over plain HTTP, also
+allow plaintext requests:
+
+```yaml
+spoaHub:
+  plugins:
+    external-auth:
+      enabled: true
+      params: |
+        timeout_ms = 5000
+        fail_open = false
+        allow_plaintext = true
+```
+
+Attach the filter to a rule:
+
+```yaml
+spec:
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      filters:
+        - type: ExternalAuth
+          externalAuth:
+            protocol: HTTP
+            backendRef:
+              name: auth-service
+              port: 8080
+            http:
+              path: /verify
+              allowedHeaders: [X-Api-Key]
+              allowedResponseHeaders: [X-Auth-User]
+      backendRefs:
+        - name: api-svc
+          port: 8080
+```
+
+For each request, HAPTIC:
+
+- Sends the client's method to
+  `http://<service>.<namespace>.svc.cluster.local:<port><http.path><request path>`,
+  without the query string or body. The request uses HTTPS when the Service port
+  has `appProtocol: https`. A `BackendTLSPolicy` isn't applied to this request.
+- Forwards the `Host` and `Authorization` headers, plus the headers in
+  `http.allowedHeaders`. Other headers, including `Cookie`, aren't forwarded
+  unless you list them.
+- Lets the request through only when the authorization service answers `200`.
+  Any other status, a timeout, or an unreachable service returns `401` to the
+  client, and the access log records `denied_by: external_auth`. The plugin's
+  `fail_open` setting doesn't apply to Gateway routes.
+- Copies the headers in `http.allowedResponseHeaders` from the authorization
+  response to the backend request. A copy the client sent is removed first, even
+  when the authorization response doesn't include that header.
+
+A `backendRef` in another namespace needs a covering
+[ReferenceGrant](#cross-namespace-routes-referencegrant).
+
+HAPTIC can't enforce the following settings. A rule using them answers `500`
+(`denied_by: external_auth_unavailable`), and the route status reports the
+problem:
+
+| Setting | Fix |
+|---------|-----|
+| `protocol: GRPC` | Use an authorization service that speaks HTTP and set `protocol: HTTP` |
+| `forwardBody.maxSize` greater than `0` | Remove `forwardBody`; the plugin doesn't forward request bodies |
+| Empty `http.allowedResponseHeaders` | List the headers to copy. Gateway API asks for every header in this case, but HAProxy needs each header name in its configuration |
+| A header name with characters other than letters, digits, and `-` | Rename the header |
+| `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Keep-Alive`, `TE`, `Trailer`, `Upgrade`, `Proxy-Connection`, `Allowed`, `Status-Code`, `Redirect-URL`, or `Error` in `http.allowedResponseHeaders` | Remove the header from the list |
+| The filter on a `backendRefs[]` entry | Move the filter to the rule's `filters` |
+| The external-auth plugin is disabled | Enable `spoaHub.plugins.external-auth` |
+| A plain-HTTP authorization Service without `allow_plaintext = true` | Set `allow_plaintext = true` in the plugin's `params` |
+
+A missing Service or a missing ReferenceGrant also answers `500` and sets
+`ResolvedRefs=False` on the route.
+
 Add a header modifier to the demo route and inspect its generated configuration:
 
 <div class="pg-embed" markdown data-scenario="gateway" data-facade="spec.templateSnippets.frontend-filters-495-gateway-route-filters" data-tab="haproxy.cfg" data-controls="tabs,resources" data-title="Filter → http-request directive" data-height="440">
@@ -636,7 +724,7 @@ deploy without a reload.
 | `backendRefs[].namespace` | Supported | Defaults to the route namespace; cross-namespace Services require a covering [ReferenceGrant](#cross-namespace-routes-referencegrant) |
 | `backendRefs[].port` | Supported | Service port number |
 | `backendRefs[].weight` | Supported | Traffic splitting with weighted distribution |
-| `backendRefs[].filters[]` | Partial | Supports `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite`. `RequestMirror` and `ExtensionRef` are unsupported here |
+| `backendRefs[].filters[]` | Partial | Supports `RequestHeaderModifier`, `ResponseHeaderModifier`, `RequestRedirect`, and `URLRewrite`. `RequestMirror` and `ExtensionRef` are unsupported here; an `ExternalAuth` filter here makes the rule answer `500` |
 | Multiple backends | Supported | Traffic splits according to weights |
 | Single backend | Supported | All matching traffic goes to this backend |
 | Omitted weight | Supported | Defaults to weight 1 |
@@ -1266,6 +1354,9 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
   `RequestMirror` filter, and removing the last one: the filter's rule block
   exists only while a route uses it. The same holds for the route-id and
   misdirected-request blocks with the first route and the first Gateway.
+- The first route in the cluster to carry an `ExternalAuth` filter, and removing the
+  last one. A header name that no other route lists in `allowedHeaders` or
+  `allowedResponseHeaders` also reloads once.
 - A rule whose `matches` carry several different path prefixes, combined with
   `ReplacePrefixMatch`: one map value carries one prefix length, so that rule keeps a
   configuration line per match.

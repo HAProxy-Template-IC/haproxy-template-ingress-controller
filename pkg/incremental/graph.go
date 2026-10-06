@@ -284,10 +284,10 @@ func NewWithProviderOptions(
 			return nil, fmt.Errorf("incremental query key is empty")
 		}
 		if definition.Run == nil {
-			return nil, fmt.Errorf("incremental query %q has no implementation", definition.Key.value)
+			return nil, fmt.Errorf("incremental query %q has no implementation", definition.Key.id.String())
 		}
 		if _, exists := runs[definition.Key]; exists {
-			return nil, fmt.Errorf("incremental query %q is defined more than once", definition.Key.value)
+			return nil, fmt.Errorf("incremental query %q is defined more than once", definition.Key.id.String())
 		}
 		runs[definition.Key] = definition.Run
 	}
@@ -464,7 +464,7 @@ func (g *Graph) Value(key QueryKey) ([]byte, bool) {
 	if !g.currentValidLocked() {
 		return nil, false
 	}
-	entry, exists := g.current.nodes.Root().Get([]byte(key.value))
+	entry, exists := g.current.nodes.Root().Get([]byte(key.id.String()))
 	if !exists || entry.dirty {
 		return nil, false
 	}
@@ -482,7 +482,7 @@ func (g *Graph) ExactValue(key QueryKey) (ExactValueRoot, bool, error) {
 	if !g.currentValidLocked() {
 		return ExactValueRoot{}, false, fmt.Errorf("incremental graph generation has invalid provenance")
 	}
-	entry, exists := g.current.nodes.Root().Get([]byte(key.value))
+	entry, exists := g.current.nodes.Root().Get([]byte(key.id.String()))
 	if !exists || entry.dirty {
 		return ExactValueRoot{}, false, nil
 	}
@@ -513,7 +513,7 @@ func (g *Graph) ValidateCommittedExactValue(key QueryKey, root ExactValueRoot) e
 	if err := root.validateOwned(g.valueAuthority, key); err != nil {
 		return err
 	}
-	entry, exists := g.current.nodes.Root().Get([]byte(key.value))
+	entry, exists := g.current.nodes.Root().Get([]byte(key.id.String()))
 	if !exists {
 		return fmt.Errorf("incremental query has no committed exact value")
 	}
@@ -533,7 +533,7 @@ func (g *Graph) Counters(key QueryKey) NodeCounters {
 	if !g.currentValidLocked() {
 		return NodeCounters{}
 	}
-	counters, _ := g.current.counters.Root().Get([]byte(key.value))
+	counters, _ := g.current.counters.Root().Get([]byte(key.id.String()))
 	return counters
 }
 
@@ -677,9 +677,9 @@ func openCommittedNodeEntry(graph *Graph, key QueryKey, entry committedNodeEntry
 func dependencyTreeKey(key dependencyKey) string {
 	switch key.kind {
 	case inputDependency:
-		return string([]byte{byte(inputDependency)}) + key.input.value
+		return string([]byte{byte(inputDependency)}) + key.input.id.String()
 	case queryDependency:
-		return string([]byte{byte(queryDependency)}) + key.query.value
+		return string([]byte{byte(queryDependency)}) + key.query.id.String()
 	default:
 		return ""
 	}
@@ -715,12 +715,12 @@ func buildCommittedInputTree(
 		}
 		entry, err := sealCommittedInputEntry(inputs[key])
 		if err != nil {
-			return nil, fmt.Errorf("incremental committed input %q: %w", key.value, err)
+			return nil, fmt.Errorf("incremental committed input %q: %w", key.id.String(), err)
 		}
 		if entry.changedAt > generation {
-			return nil, fmt.Errorf("incremental committed input %q changed after its generation", key.value)
+			return nil, fmt.Errorf("incremental committed input %q changed after its generation", key.id.String())
 		}
-		entries[index] = persistenttree.Entry[committedInputEntry]{Key: key.value, Value: entry}
+		entries[index] = persistenttree.Entry[committedInputEntry]{Key: key.id.String(), Value: entry}
 	}
 	return persistenttree.NewFromSorted(entries)
 }
@@ -735,9 +735,9 @@ func buildCommittedNodeTree(
 	for index, key := range keys {
 		entry, err := sealCommittedNodeEntry(graph, key, nodes[key], generation)
 		if err != nil {
-			return nil, fmt.Errorf("incremental committed query %q: %w", key.value, err)
+			return nil, fmt.Errorf("incremental committed query %q: %w", key.id.String(), err)
 		}
-		entries[index] = persistenttree.Entry[committedNodeEntry]{Key: key.value, Value: entry}
+		entries[index] = persistenttree.Entry[committedNodeEntry]{Key: key.id.String(), Value: entry}
 	}
 	return persistenttree.NewFromSorted(entries)
 }
@@ -792,7 +792,7 @@ func buildCommittedDirtyTree(
 	sortQueryKeys(keys)
 	entries := make([]persistenttree.Entry[struct{}], len(keys))
 	for index, key := range keys {
-		entries[index] = persistenttree.Entry[struct{}]{Key: key.value}
+		entries[index] = persistenttree.Entry[struct{}]{Key: key.id.String()}
 	}
 	return persistenttree.NewFromSorted(entries)
 }
@@ -810,7 +810,7 @@ func buildCommittedCounterTree(
 	sortQueryKeys(keys)
 	entries := make([]persistenttree.Entry[NodeCounters], len(keys))
 	for index, key := range keys {
-		entries[index] = persistenttree.Entry[NodeCounters]{Key: key.value, Value: counters[key]}
+		entries[index] = persistenttree.Entry[NodeCounters]{Key: key.id.String(), Value: counters[key]}
 	}
 	return persistenttree.NewFromSorted(entries)
 }
@@ -840,9 +840,9 @@ func queryDep(key QueryKey) dependencyKey {
 func reverseScope(key dependencyKey) orderedset.Scope {
 	switch key.kind {
 	case inputDependency:
-		return orderedset.Scope{Domain: uint8(inputDependency), Key: key.input.value}
+		return orderedset.Scope{Domain: uint8(inputDependency), Key: key.input.id.String()}
 	case queryDependency:
-		return orderedset.Scope{Domain: uint8(queryDependency), Key: key.query.value}
+		return orderedset.Scope{Domain: uint8(queryDependency), Key: key.query.id.String()}
 	default:
 		return orderedset.Scope{}
 	}
@@ -850,13 +850,13 @@ func reverseScope(key dependencyKey) orderedset.Scope {
 
 func sortQueryKeys(keys []QueryKey) {
 	slices.SortFunc(keys, func(left, right QueryKey) int {
-		return cmp.Compare(left.value, right.value)
+		return cmp.Compare(left.id.String(), right.id.String())
 	})
 }
 
 func sortInputKeys(keys []InputKey) {
 	slices.SortFunc(keys, func(left, right InputKey) int {
-		return cmp.Compare(left.value, right.value)
+		return cmp.Compare(left.id.String(), right.id.String())
 	})
 }
 
@@ -871,9 +871,9 @@ func compareDependencyKeys(left, right dependencyKey) int {
 		return byKind
 	}
 	if left.kind == inputDependency {
-		return cmp.Compare(left.input.value, right.input.value)
+		return cmp.Compare(left.input.id.String(), right.input.id.String())
 	}
-	return cmp.Compare(left.query.value, right.query.value)
+	return cmp.Compare(left.query.id.String(), right.query.id.String())
 }
 
 func sameDependencyKeys(left, right []dependency) bool {

@@ -1029,7 +1029,7 @@ templateSnippets:
         }
       %%}
       # haproxytech/basic-auth
-      http-request set-var(txn.ht_ba) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.ht_ba) var(txn.resource_key),map({{ routes }})
       http-request set-var(txn.denied_by) str(basic_auth_unavailable) if { var(txn.ht_ba) -m str missing }
       http-request deny deny_status 503 if { var(txn.ht_ba) -m str missing }
       {%- for _, u := range sort_strings(userlists) %}
@@ -1401,7 +1401,7 @@ validationTests:
               - port: 8080
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ht_ba\) var\(txn\.resource_id\),map\(\S*/haproxytech-basic-auth-routes.map\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ht_ba\) var\(txn\.resource_key\),map\(\S*/haproxytech-basic-auth-routes.map\)'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.ht_ba\) -m str missing \}'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.denied_by\) str\(basic_auth\) if \{ var\(txn\.ht_ba\) -m beg "ok auth_default_api-auth " \} !\{ http_auth\(auth_default_api-auth\) \}'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request auth realm "Zone-A" if \{ var\(txn\.ht_ba\) -m str "ok auth_default_api-auth Zone-A" \} !\{ http_auth\(auth_default_api-auth\) \}'}
@@ -2017,7 +2017,7 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: "map:ing-ac-routes.map", pattern: '(?m)^default/ac-allow haproxytech:allow$'}
       - {type: contains, target: "map:ing-ac-allow.map", pattern: '(?m)^10\.0\.0\.0/8\|default/ac-allow 1$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny if \{ var\(txn\.ac\) -m str "haproxytech:allow" "haproxytech:both" \} !\{ var\(txn\.ac_block\),concat\(\|,txn\.resource_id\),map\(\S*/ing-ac-allow\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny if \{ var\(txn\.ac\) -m str "haproxytech:allow" "haproxytech:both" \} !\{ var\(txn\.ac_block\),concat\(\|,txn\.resource_key\),map\(\S*/ing-ac-allow\.map\) -m found \}'}
 
   test-haproxytech-access-control-deny-list:
     description: >-
@@ -2044,7 +2044,7 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: "map:ing-ac-routes.map", pattern: '(?m)^default/ac-deny haproxytech:deny$'}
       - {type: contains, target: "map:ing-ac-deny.map", pattern: '(?m)^192\.168\.0\.0/16\|default/ac-deny 1$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny if \{ var\(txn\.ac\) -m str "haproxytech:deny" "haproxytech:both" \} \{ var\(txn\.ac_block\),concat\(\|,txn\.resource_id\),map\(\S*/ing-ac-deny\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny if \{ var\(txn\.ac\) -m str "haproxytech:deny" "haproxytech:both" \} \{ var\(txn\.ac_block\),concat\(\|,txn\.resource_key\),map\(\S*/ing-ac-deny\.map\) -m found \}'}
 
   test-haproxytech-access-control-deprecated-alias:
     description: >-
@@ -2442,7 +2442,7 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: "proto h2"}
       - {type: contains, target: haproxy.cfg, pattern: "option httpchk GET /healthz HTTP/1.1"}
       - {type: contains, target: "map:ing-src-ip-routes.map", pattern: '(?m)^default/ok-be haproxytech:X-Real-IP$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-src hdr\(X-Real-IP\) if \{ var\(txn\.resource_id\),map\(\S*/ing-src-ip-routes\.map\) -m str "haproxytech:X-Real-IP" \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-src hdr\(X-Real-IP\) if \{ var\(txn\.resource_key\),map\(\S*/ing-src-ip-routes\.map\) -m str "haproxytech:X-Real-IP" \}'}
       - {type: contains, target: haproxy.cfg, pattern: "capture request header X-Forwarded-For len 256"}
       # Header manipulation is reload-free: the value lives URL-encoded in
       # ing-reqhdr.map (a%b -> a%25b), read by one static line keyed on the backend.
@@ -2561,8 +2561,8 @@ validationTests:
                     - {path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ht_rw_in\) path if \{ var\(txn\.resource_id\),map\(\S*/haproxytech-rewrite-routes\.map\) -m found \}'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ht_rw_v\) var\(txn\.resource_id\),concat\(\|,txn\.ht_rw_in\),map_beg\(\S*/haproxytech-rewrite-prefix\.map\) if \{ var\(txn\.ht_rw_in\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ht_rw_in\) path if \{ var\(txn\.resource_key\),map\(\S*/haproxytech-rewrite-routes\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ht_rw_v\) var\(txn\.resource_key\),concat\(\|,txn\.ht_rw_in\),map_beg\(\S*/haproxytech-rewrite-prefix\.map\) if \{ var\(txn\.ht_rw_in\) -m found \}'}
       - {type: contains, target: haproxy.cfg, pattern: "http-request set-path %\\[var\\(txn\\.ht_rw_v\\),field\\(2,' ',0\\)\\]%\\[var\\(txn\\.ht_rw_rest\\)\\] if \\{ var\\(txn\\.ht_rw_v\\) -m found \\}"}
       - {type: contains, target: "map:haproxytech-rewrite-routes.map", pattern: '(?m)^default/pr-strip 1$'}
       - {type: contains, target: "map:haproxytech-rewrite-routes.map", pattern: '(?m)^default/pr-bare 1$'}

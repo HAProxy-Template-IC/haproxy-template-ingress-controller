@@ -339,8 +339,22 @@ templateSnippets:
   # txn.hub.external_auth.allowed (bool) and ...status_code (uint32).
   spoe-message-check-auth-body:
     template: |-
+      {#- Several libraries may capture the same header; HAProxy rejects a
+          duplicate argument name, so the first spelling wins. -#}
+      {%- var seen = map[string]bool{"hdr_authorization": true, "hdr_cookie": true, "hdr_x_forwarded_for": true,
+        "hdr_x_forwarded_proto": true, "hdr_x_forwarded_host": true, "hdr_x_forwarded_uri": true} -%}
+      {%- var extraArgs = "" -%}
+      {%- for _, token := range split(render_glob "spoe-message-check-auth-extra-args-*", " ") -%}
+        {%- var arg = strip(token) -%}
+        {%- if arg == "" -%}{%- continue -%}{%- end -%}
+        {%- var name = arg -%}
+        {%- if index(arg, "=") > 0 -%}{%- name = arg[:index(arg, "=")] -%}{%- end -%}
+        {%- if seen[name] -%}{%- continue -%}{%- end -%}
+        {%- seen[name] = true -%}
+        {%- extraArgs += " " + arg -%}
+      {%- end -%}
       spoe-message check-auth
-          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri) req_id=unique-id{{- render_glob "spoe-message-check-auth-extra-args-*" -}}
+          args auth_url=var(txn.auth_url) path=path method=var(txn.auth_method) forward_headers=var(txn.auth_forward_headers) extract_headers=var(txn.auth_extract_headers) hdr_authorization=req.hdr(Authorization) hdr_cookie=req.hdr(Cookie) hdr_x_forwarded_for=req.hdr(X-Forwarded-For) hdr_x_forwarded_proto=req.hdr(X-Forwarded-Proto) hdr_x_forwarded_host=req.hdr(X-Forwarded-Host) hdr_x_forwarded_uri=req.hdr(X-Forwarded-Uri) req_id=unique-id{{ extraArgs }}
 
   # Every message carries `req_id=unique-id` — the same value HAProxy's
   # `unique-id-format` puts in the JSON access log's `req_id` field
@@ -388,7 +402,7 @@ templateSnippets:
   #
   # `app=var(txn.coraza_app)` carries the per-Ingress WAF identifier
   # that the chart's `coraza-app.map` lookup populates from the
-  # request's resource_id. The coraza plugin reads this in `process()`
+  # request's policy_id. The coraza plugin reads this in `process()`
   # (haproxy-spoa-hub-plugin-coraza/src/plugin.rs:370) and routes the
   # request to that app's WAF instance — the per-Ingress
   # [plugins.params.applications."<ns>/<name>"] block. When unset, the

@@ -1,0 +1,465 @@
+_fx:
+  externalAuthHub: &externalAuthHub
+    spoaHub:
+      enabled: true
+      haproxy:
+        socketPath: /run/spoa/hub.sock
+        modeSpop: true
+        messages: [check-auth]
+        timeoutHello: 2s
+        timeoutIdle: 5m
+        timeoutProcessing: 500ms
+        poolMaxConn: 100
+        poolPurgeDelay: 30s
+      plugins:
+        - {name: external_auth, library: libexternal_auth_plugin.so, messages: [check-auth], timeoutMs: 6000, params: "timeout_ms = 5000\nallow_plaintext = true\n"}
+  externalAuthGateway: &externalAuthGateway
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata: {name: gw, namespace: default}
+      spec:
+        gatewayClassName: haptic
+        listeners:
+          - {name: http, port: 80, protocol: HTTP}
+  externalAuthServices: &externalAuthServices
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: api-service, namespace: default}
+      spec: {ports: [{port: 80}]}
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: auth, namespace: default}
+      spec: {ports: [{port: 8080}]}
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: auth, namespace: identity}
+      spec: {ports: [{port: 8080}]}
+    - apiVersion: v1
+      kind: Service
+      metadata: {name: ungranted-auth, namespace: identity}
+      spec: {ports: [{port: 8080}]}
+  externalAuthHTTP: &externalAuthHTTP
+    type: ExternalAuth
+    externalAuth:
+      protocol: HTTP
+      backendRef: {name: auth, port: 8080}
+      http:
+        path: /verify/
+        allowedHeaders: [X-Api-Key]
+        allowedResponseHeaders: [X-Auth-User]
+
+validationTests:
+  test-httproute-external-auth-http:
+    _helm_skip_test: '{{ or (include "haptic.gatewayExperimental.disabled" .) (include "haptic.spoaHub.disabled" .) }}'
+    requires: [httproutes]
+    description: An HTTP ExternalAuth filter sends the rule's requests through the SPOA hub check-auth flow, keyed by its rule ID, with the client's method, Host, Authorization and allowed headers, and copies only the allowed response headers after stripping client copies.
+    extraContext: *externalAuthHub
+    fixtures:
+      gateways: *externalAuthGateway
+      services: *externalAuthServices
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: protected, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [api.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /api}}]
+                filters: [*externalAuthHTTP]
+                backendRefs: [{name: api-service, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /public}}]
+                backendRefs: [{name: api-service, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:auth-url.map, pattern: '(?m)^gateway/h_default_protected_0 http://auth\.default\.svc\.cluster\.local:8080/verify$'}
+      - {type: not_contains, target: map:auth-url.map, pattern: 'h_default_protected_1'}
+      - {type: contains, target: map:auth-forward-headers.map, pattern: '(?m)^gateway/h_default_protected_0 authorization,host,x_api_key$'}
+      - {type: contains, target: map:auth-extract-headers.map, pattern: '(?m)^gateway/h_default_protected_0 x-auth-user$'}
+      - {type: contains, target: map:gw-extauth-response.map, pattern: '(?m)^h_default_protected_0\|x-auth-user 1$'}
+      - {type: contains, target: file:spoe.conf, pattern: ' hdr_host=req\.hdr\(host\)'}
+      - {type: contains, target: file:spoe.conf, pattern: ' hdr_x_api_key=req\.hdr\(x-api-key\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.auth_key\) var\(txn\.resource_key\)\n\s*http-request set-var\(txn\.gw_extauth\) bool\(true\) if \{ var\(txn\.gw_rule_id\) -m found \} \{ var\(txn\.auth_key\),map\(\S*auth-url\.map\) -m found \}\n\s*http-request set-var\(txn\.auth_method\) method if \{ var\(txn\.gw_extauth\) -m bool \}\n\s*http-request set-var\(txn\.auth_url\) var\(txn\.auth_key\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request send-spoe-group spoa-hub-check-auth check-auth-group if \{ var\(txn\.auth_url\) -m found \}\n\s*http-request set-var\(txn\.hub\.external_auth\.allowed\) bool\(false\) if \{ var\(txn\.gw_extauth\) -m bool \} !\{ var\(txn\.hub\.external_auth\.status_code\) -m int 200 \}'}
+      # A client-sent copy is stripped even when the auth server omits the header.
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header X-Auth-User if \{ var\(txn\.gw_extauth\) -m bool \} \{ var\(txn\.gw_rule_id\),concat\(\|x-auth-user\),map\(\S*gw-extauth-response\.map\) -m found \}\n\s*http-request set-header X-Auth-User %\[var\(txn\.hub\.external_auth\.x_auth_user\)\] if \{ var\(txn\.gw_extauth\) -m bool \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 401 if \{ var\(txn\.auth_url\) -m found \} !\{ var\(txn\.hub\.external_auth\.allowed\) -m bool \}'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'str\(external_auth_unavailable\)'}
+      - {type: contains, target: 'status:default/protected:deployed', pattern: '"reason":"Accepted","status":"True","type":"Accepted"'}
+      - {type: not_contains, target: 'status:default/protected:deployed', pattern: 'PartiallyInvalid'}
+
+  test-httproute-external-auth-cross-namespace:
+    _helm_skip_test: '{{ or (include "haptic.gatewayExperimental.disabled" .) (include "haptic.spoaHub.disabled" .) }}'
+    requires: [httproutes, referencegrants]
+    description: An ExternalAuth backendRef in another namespace needs a ReferenceGrant; without one the rule is denied with 500 and ResolvedRefs reports RefNotPermitted, so the client's credentials never reach the other namespace.
+    extraContext: *externalAuthHub
+    fixtures:
+      gateways: *externalAuthGateway
+      services: *externalAuthServices
+      referencegrants:
+        - apiVersion: gateway.networking.k8s.io/v1beta1
+          kind: ReferenceGrant
+          metadata: {name: allow-auth, namespace: identity}
+          spec:
+            from: [{group: gateway.networking.k8s.io, kind: HTTPRoute, namespace: default}]
+            to: [{group: "", kind: Service, name: auth}]
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: granted, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [granted.example.com]
+            rules:
+              - filters:
+                  - type: ExternalAuth
+                    externalAuth:
+                      protocol: HTTP
+                      backendRef: {name: auth, namespace: identity, port: 8080}
+                      http: {allowedResponseHeaders: [X-Auth-User]}
+                backendRefs: [{name: api-service, port: 80}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: ungranted, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [ungranted.example.com]
+            rules:
+              - filters:
+                  - type: ExternalAuth
+                    externalAuth:
+                      protocol: HTTP
+                      backendRef: {name: ungranted-auth, namespace: identity, port: 8080}
+                      http: {allowedResponseHeaders: [X-Auth-User]}
+                backendRefs: [{name: api-service, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:auth-url.map, pattern: '(?m)^gateway/h_default_granted_0 http://auth\.identity\.svc\.cluster\.local:8080$'}
+      - {type: not_contains, target: map:auth-url.map, pattern: 'h_default_ungranted_0'}
+      - {type: contains, target: map:gw-extauth-errors.map, pattern: '(?m)^h_default_ungranted_0 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.denied_by\) str\(external_auth_unavailable\) if \{ var\(txn\.gw_rule_id\),map\(\S*gw-extauth-errors\.map\) -m found \}\n\s*http-request deny deny_status 500 if \{ var\(txn\.gw_rule_id\),map\(\S*gw-extauth-errors\.map\) -m found \}'}
+      - {type: contains, target: 'status:default/ungranted:deployed', pattern: '"reason":"RefNotPermitted","status":"False","type":"ResolvedRefs"'}
+
+  test-httproute-external-auth-unenforceable:
+    _helm_skip_test: '{{ or (include "haptic.gatewayExperimental.disabled" .) (include "haptic.spoaHub.disabled" .) }}'
+    requires: [httproutes]
+    description: An ExternalAuth filter the chart cannot enforce as specified (gRPC protocol, a forwarded body, no allowedResponseHeaders, plain HTTP the plugin refuses, or a filter on a backendRef) denies its rule with 500 instead of serving it unauthenticated, and route status names the problem.
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: [check-auth]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+        plugins:
+          - {name: external_auth, library: libexternal_auth_plugin.so, messages: [check-auth], timeoutMs: 6000, params: "allow_plaintext = false\n"}
+    fixtures:
+      gateways: *externalAuthGateway
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: api-service, namespace: default}
+          spec: {ports: [{port: 80}]}
+        - apiVersion: v1
+          kind: Service
+          metadata: {name: auth, namespace: default}
+          spec: {ports: [{port: 8443, appProtocol: https}, {port: 8080}]}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: unenforceable, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [api.example.com]
+            rules:
+              - matches: [{path: {type: PathPrefix, value: /grpc}}]
+                filters:
+                  - type: ExternalAuth
+                    externalAuth: {protocol: GRPC, backendRef: {name: auth, port: 8443}, grpc: {}}
+                backendRefs: [{name: api-service, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /body}}]
+                filters:
+                  - type: ExternalAuth
+                    externalAuth:
+                      protocol: HTTP
+                      backendRef: {name: auth, port: 8443}
+                      http: {allowedResponseHeaders: [X-Auth-User]}
+                      forwardBody: {maxSize: 1024}
+                backendRefs: [{name: api-service, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /all-headers}}]
+                filters:
+                  - type: ExternalAuth
+                    externalAuth: {protocol: HTTP, backendRef: {name: auth, port: 8443}}
+                backendRefs: [{name: api-service, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /plaintext}}]
+                filters:
+                  - type: ExternalAuth
+                    externalAuth:
+                      protocol: HTTP
+                      backendRef: {name: auth, port: 8080}
+                      http: {allowedResponseHeaders: [X-Auth-User]}
+                backendRefs: [{name: api-service, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /backend-filter}}]
+                backendRefs:
+                  - name: api-service
+                    port: 80
+                    filters:
+                      - type: ExternalAuth
+                        externalAuth:
+                          protocol: HTTP
+                          backendRef: {name: auth, port: 8443}
+                          http: {allowedResponseHeaders: [X-Auth-User]}
+              - matches: [{path: {type: PathPrefix, value: /tls}}]
+                filters:
+                  - type: ExternalAuth
+                    externalAuth:
+                      protocol: HTTP
+                      backendRef: {name: auth, port: 8443}
+                      http: {allowedResponseHeaders: [X-Auth-User]}
+                backendRefs: [{name: api-service, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-extauth-errors.map, pattern: '(?m)^h_default_unenforceable_0 1$'}
+      - {type: contains, target: map:gw-extauth-errors.map, pattern: '(?m)^h_default_unenforceable_1 1$'}
+      - {type: contains, target: map:gw-extauth-errors.map, pattern: '(?m)^h_default_unenforceable_2 1$'}
+      - {type: contains, target: map:gw-extauth-errors.map, pattern: '(?m)^h_default_unenforceable_3 1$'}
+      - {type: contains, target: map:gw-extauth-errors.map, pattern: '(?m)^h_default_unenforceable_4 1$'}
+      - {type: not_contains, target: map:gw-extauth-errors.map, pattern: 'h_default_unenforceable_5'}
+      - {type: contains, target: map:auth-url.map, pattern: '(?m)^gateway/h_default_unenforceable_5 https://auth\.default\.svc\.cluster\.local:8443$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 500 if \{ var\(txn\.gw_rule_id\),map\(\S*gw-extauth-errors\.map\) -m found \}'}
+      - {type: contains, target: 'status:default/unenforceable:deployed', pattern: '"message":"HTTPRoute default/unenforceable uses ExternalAuth protocol ''GRPC''. Set protocol: HTTP; GRPC is not supported.","observedGeneration":\d+,"reason":"UnsupportedValue","status":"True","type":"PartiallyInvalid"'}
+
+  test-httproute-external-auth-plugin-disabled:
+    _helm_skip_test: '{{ include "haptic.gatewayExperimental.disabled" . }}'
+    requires: [httproutes]
+    description: Without the SPOA hub external-auth plugin an ExternalAuth rule is denied with 500 and its route reports Accepted=False, never served unauthenticated.
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages: [mirror]
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+    fixtures:
+      gateways: *externalAuthGateway
+      services: *externalAuthServices
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: protected, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [api.example.com]
+            rules:
+              - filters: [*externalAuthHTTP]
+                backendRefs: [{name: api-service, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:gw-extauth-errors.map, pattern: '(?m)^h_default_protected_0 1$'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 500 if \{ var\(txn\.gw_rule_id\),map\(\S*gw-extauth-errors\.map\) -m found \}'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'txn\.gw_extauth'}
+      - {type: contains, target: 'status:default/protected:deployed', pattern: '"message":"HTTPRoute default/protected has an ExternalAuth filter, but the SPOA hub external-auth plugin is disabled. Enable spoaHub.plugins.external-auth.","observedGeneration":\d+,"reason":"UnsupportedValue","status":"False","type":"Accepted"'}
+
+  test-httproute-external-auth-shared-header-capture:
+    _helm_skip_test: '{{ or (include "haptic.gatewayExperimental.disabled" .) (include "haptic.spoaHub.disabled" .) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}'
+    requires: [httproutes, ingresses]
+    description: A request header captured for both an Ingress auth-headers-request annotation and a Gateway allowedHeaders list appears once on the check-auth message, which HAProxy requires.
+    extraContext: *externalAuthHub
+    fixtures:
+      gateways: *externalAuthGateway
+      services: *externalAuthServices
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: protected-ingress
+            annotations:
+              haproxy-haptic.org/auth-url: "http://auth.default.svc:8080/check"
+              haproxy-haptic.org/auth-headers-request: "X-Api-Key"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ingress.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: api-service, port: {number: 80}}}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: protected, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [api.example.com]
+            rules:
+              - filters: [*externalAuthHTTP]
+                backendRefs: [{name: api-service, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: match_count, target: file:spoe.conf, pattern: 'hdr_x_api_key=', expected: "1"}
+      - {type: contains, target: map:auth-url.map, pattern: '(?m)^default/protected-ingress http://auth\.default\.svc:8080/check$'}
+      - {type: contains, target: map:auth-url.map, pattern: '(?m)^gateway/h_default_protected_0 http://auth\.default\.svc\.cluster\.local:8080/verify$'}
+
+  test-route-features-isolated-across-route-kinds:
+    _helm_skip_test: '{{ or (include "haptic.gatewayExperimental.disabled" .) (include "haptic.spoaHub.disabled" .) (not .Values.controller.templateLibraries.hapticAnnotations.enabled) }}'
+    requires: [httproutes, ingresses]
+    description: An Ingress and an HTTPRoute sharing a namespace and name never share per-route features in either direction. Every per-route lookup reads txn.resource_key (<ns>/<name> for an Ingress, gateway/<rule id> for a Gateway rule), never the bare txn.resource_id.
+    extraContext: *externalAuthHub
+    fixtures:
+      gateways: *externalAuthGateway
+      services: *externalAuthServices
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ingress-protected
+            annotations:
+              haproxy-haptic.org/auth-url: "http://auth.default.svc:8080/check"
+              haproxy-haptic.org/allowed-methods: "GET"
+              haproxy-haptic.org/allowlist-source-range: "10.0.0.0/8"
+              haproxy-haptic.org/cors-enable: "true"
+              haproxy-haptic.org/cors-allow-origin: "https://app.example.com"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ingress-protected.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: api-service, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: route-protected}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: route-protected-ingress.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: api-service, port: {number: 80}}}}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: ingress-protected, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [ingress-protected-route.example.com]
+            rules:
+              - backendRefs: [{name: api-service, port: 80}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: route-protected, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [route-protected.example.com]
+            rules:
+              - filters: [*externalAuthHTTP]
+                backendRefs: [{name: api-service, port: 80}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:auth-url.map, pattern: '(?m)^default/ingress-protected http://auth\.default\.svc:8080/check$'}
+      - {type: contains, target: map:auth-url.map, pattern: '(?m)^gateway/h_default_route-protected_0 '}
+      - {type: not_contains, target: map:auth-url.map, pattern: '(?m)^default/route-protected '}
+      - {type: not_contains, target: map:auth-url.map, pattern: 'h_default_ingress-protected'}
+      # A Gateway rule sets its own key before the <ns>/<name> default applies.
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.resource_key\) str\(gateway/\),concat\(,txn\.gw_rule_id\) if \{ var\(txn\.gw_rule_id\) -m found \}(?s:.*?)http-request set-var\(txn\.resource_key\) var\(txn\.resource_id\) if \{ var\(txn\.resource_id\) -m found \} !\{ var\(txn\.resource_key\) -m found \}'}
+      # Representative per-route features (native auth, method allowlist, compat CIDR access control and CORS) read the kind-unique key.
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.auth_key\) var\(txn\.resource_key\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'var\(txn\.resource_key\),concat\(\|,txn\.am_method\),map\('}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.ac\) var\(txn\.resource_key\),map\('}
+      - {type: contains, target: haproxy.cfg, pattern: 'Access-Control-Allow-Methods %\[var\(txn\.resource_key\),map\('}
+      # Sweep guard: nothing may key on the bare resource id.
+      - {type: not_contains, target: haproxy.cfg, pattern: 'var\(txn\.resource_id\),'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'var\(txn\.resource_id\) -m str'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'concat\([^)]*txn\.resource_id'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '%\[var\(txn\.resource_id\)\]'}
+
+  test-vendor-route-features-isolated-across-route-kinds:
+    _helm_skip_test: '{{ if and .Values.controller.templateLibraries.gateway.experimentalChannel .Values.controller.templateLibraries.nginxIngress.enabled .Values.controller.templateLibraries.haproxyIngress.enabled .Values.controller.templateLibraries.haproxytech.enabled }}false{{ else }}true{{ end }}'
+    requires: [httproutes, ingresses]
+    description: Vendor annotation features (nginx-ingress, haproxy-ingress, haproxytech access control) on an Ingress read txn.resource_key, so a same-named HTTPRoute never inherits them.
+    fixtures:
+      gateways: *externalAuthGateway
+      services: *externalAuthServices
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: nginx-shared
+            annotations: {nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: nginx-shared.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: api-service, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: hi-shared
+            annotations: {haproxy-ingress.github.io/allowlist-source-range: "10.0.0.0/8"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: hi-shared.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: api-service, port: {number: 80}}}}
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: ht-shared
+            annotations: {haproxy.org/allow-list: "10.0.0.0/8"}
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: ht-shared.example.com
+                http:
+                  paths:
+                    - {path: /, pathType: Prefix, backend: {service: {name: api-service, port: {number: 80}}}}
+      httproutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: nginx-shared, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [nginx-shared-route.example.com]
+            rules: [{backendRefs: [{name: api-service, port: 80}]}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: hi-shared, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [hi-shared-route.example.com]
+            rules: [{backendRefs: [{name: api-service, port: 80}]}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata: {name: ht-shared, namespace: default}
+          spec:
+            parentRefs: [{name: gw}]
+            hostnames: [ht-shared-route.example.com]
+            rules: [{backendRefs: [{name: api-service, port: 80}]}]
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.ac\) var\(txn\.resource_key\),map\('}
+      - {type: contains, target: haproxy.cfg, pattern: 'concat\(\|,txn\.resource_key\),map\(\S*allow'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'var\(txn\.resource_id\),'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'var\(txn\.resource_id\) -m str'}
+      - {type: not_contains, target: haproxy.cfg, pattern: 'concat\([^)]*txn\.resource_id'}
+      - {type: not_contains, target: haproxy.cfg, pattern: '%\[var\(txn\.resource_id\)\]'}

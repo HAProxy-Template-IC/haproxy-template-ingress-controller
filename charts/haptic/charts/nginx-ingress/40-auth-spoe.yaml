@@ -6,7 +6,7 @@ templateSnippets:
   # External-auth (auth-url) map contribution. The spoa-hub library
   # defines auth-url.map and the SPOE wiring; this snippet feeds the
   # map with one entry per Ingress that has the auth-url annotation set.
-  # The frontend looks up the URL by `txn.resource_id` (= `<ns>/<name>`,
+  # The frontend looks up the URL by `txn.resource_key` (= `<ns>/<name>`,
   # set in base.yaml from the routing chain's qualifier value) and
   # triggers the SPOE plugin.
   #
@@ -375,7 +375,7 @@ templateSnippets:
         }
       %%}
       # nginx-ingress/basic-auth
-      http-request set-var(txn.ni_ba) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.ni_ba) var(txn.resource_key),map({{ routes }})
       http-request set-var(txn.denied_by) str(basic_auth_unavailable) if { var(txn.ni_ba) -m str missing }
       http-request deny deny_status 503 if { var(txn.ni_ba) -m str missing }
       {%- for _, u := range sort_strings(userlists) %}
@@ -549,7 +549,7 @@ templateSnippets:
   #       via coraza-app.map. Rules don't bleed into other Ingresses'
   #       traffic.
   #   nginx.ingress.kubernetes.io/enable-modsecurity: "false"
-  #     → entry in coraza-disabled.map; the resource_id is excluded from the
+  #     → entry in coraza-disabled.map; the resource_key is excluded from the
   #       unconditional default-on dispatch in frontend-spoe-filters-050-coraza.
   #     "true" is accepted as a no-op (modsecurity-snippet already implies opt-in).
   #
@@ -684,9 +684,9 @@ templateSnippets:
               }
               // coraza-app.map is keyed by <ns>/<name> (resource id), not
               // by <host><path> — see frontend-spoe-filters-050-coraza
-              // and base.yaml's resource_id extraction. Host-less rules
+              // and base.yaml's resource_key derivation. Host-less rules
               // are fine because the routing chain still produces a
-              // resource_id whatever path/host pattern matched.
+              // resource_key whatever path/host pattern matched.
               byKey[key] = map[string]any{
                 "ns": ns,
                 "name": name,
@@ -756,7 +756,7 @@ templateSnippets:
   # coraza-app.map population. Walks the cached util-nginx-ingress-coraza-scan
   # output and emits one `<ns>/<name> <ns>/<name>` identity row per Ingress
   # carrying the modsecurity-snippet annotation. The map is consumed via
-  # `var(txn.resource_id),map(...)` (see frontend-spoe-filters-050-coraza in
+  # `var(txn.resource_key),map(...)` (see frontend-spoe-filters-050-coraza in
   # spoa-hub.yaml), so the value sent to the SPOE plugin is the resource id
   # itself.
   # Fail-closed guard for routes whose nginx-ingress WAF annotations were
@@ -775,8 +775,8 @@ templateSnippets:
       {%- for _, entry := range (gf | dig("sphNginxBrokenRoutes") | fallback([]any{}) | toSlice()) -%}
         {%- var e = entry.(map[string]any) -%}
       # WARNING nginx-ingress WAF annotations on Ingress {{ e["resourceID"].(string) }}: {{ replace(e["reason"].(string), "\n", " ") }} Failing closed (503) for this route until it is fixed.
-      http-request set-var(txn.denied_by) str(waf_policy_unavailable) if { var(txn.resource_id) -m str {{ e["resourceID"].(string) }} }
-      http-request deny deny_status 503 if { var(txn.resource_id) -m str {{ e["resourceID"].(string) }} }
+      http-request set-var(txn.denied_by) str(waf_policy_unavailable) if { var(txn.resource_key) -m str {{ e["resourceID"].(string) }} }
+      http-request deny deny_status 503 if { var(txn.resource_key) -m str {{ e["resourceID"].(string) }} }
       {%- end -%}
 
   map-coraza-app-500-nginx-ingress:
@@ -800,7 +800,7 @@ templateSnippets:
   # to skip the SPOE roundtrip for resources that opt out. Keyed by
   # `<ns>/<name>` (resource id) — the host dimension is not part of the
   # key, so host-less Ingress rules are fine (the routing chain still
-  # resolves them to a resource_id).
+  # resolves them to a resource_key).
   map-coraza-disabled-500-nginx-ingress:
     template: |-
       {%- var _ = render "util-nginx-ingress-coraza-scan" -%}

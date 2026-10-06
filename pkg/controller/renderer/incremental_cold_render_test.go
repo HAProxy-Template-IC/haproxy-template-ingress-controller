@@ -134,3 +134,51 @@ func renderStaticColdIncremental(
 	}
 	return bctx, main.Config, nil
 }
+
+func TestColdIncrementalRenderRefusesAnotherPairsAnalysis(t *testing.T) {
+	engine, err := templating.New(map[string]string{names.MainTemplateName: "global\n"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherEngine, err := templating.New(map[string]string{names.MainTemplateName: "global\n"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	analyzed := &config.Config{}
+	analysis := AnalyzeColdIncrementalRenders(analyzed, engine)
+
+	for name, cfg := range map[string]*ColdIncrementalRenderConfig{
+		"config": {Config: &config.Config{}, Engine: engine, Analysis: analysis},
+		"engine": {Config: analyzed, Engine: otherEngine, Analysis: analysis},
+	} {
+		if _, err := NewColdIncrementalRender(t.Context(), cfg); err == nil {
+			t.Errorf("a render accepted an analysis of a different %s", name)
+		}
+	}
+}
+
+type nonComparableColdEngine struct {
+	templating.Engine
+	values []string
+}
+
+func TestColdIncrementalRenderAcceptsNonComparableEngine(t *testing.T) {
+	cfg := &ColdIncrementalRenderConfig{
+		Config: &config.Config{},
+		Engine: nonComparableColdEngine{values: []string{"value"}},
+	}
+	if _, err := NewColdIncrementalRender(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestColdIncrementalRenderRefusesNonComparableSharedAnalysis(t *testing.T) {
+	cfg := &ColdIncrementalRenderConfig{
+		Config: &config.Config{},
+		Engine: nonComparableColdEngine{values: []string{"value"}},
+	}
+	cfg.Analysis = AnalyzeColdIncrementalRenders(cfg.Config, cfg.Engine)
+	if _, err := NewColdIncrementalRender(t.Context(), cfg); err == nil {
+		t.Fatal("accepted shared analysis without a comparable engine identity")
+	}
+}

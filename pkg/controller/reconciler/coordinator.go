@@ -85,6 +85,8 @@ type Coordinator struct {
 	pipeline      PipelineExecutor
 	storeProvider stores.StoreProvider
 	currentFiles  CurrentFilesAuthority
+	acceptance    HTTPContentAcceptance
+	ledger        *acceptanceLedger
 	metrics       *metrics.Metrics
 	logger        *slog.Logger
 
@@ -109,6 +111,10 @@ type CoordinatorConfig struct {
 
 	// CurrentFiles owns the last accepted auxiliary output for each leader term.
 	CurrentFiles CurrentFilesAuthority
+
+	// HTTPAcceptance is the HTTP store's reversible content acceptance; nil
+	// without an HTTP store.
+	HTTPAcceptance HTTPContentAcceptance
 
 	// Metrics receives one render count per reconcile; optional.
 	Metrics *metrics.Metrics
@@ -141,6 +147,8 @@ func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 		pipeline:      cfg.Pipeline,
 		storeProvider: cfg.StoreProvider,
 		currentFiles:  cfg.CurrentFiles,
+		acceptance:    cfg.HTTPAcceptance,
+		ledger:        newAcceptanceLedger(),
 		metrics:       cfg.Metrics,
 		logger:        logger.With("component", CoordinatorComponentName),
 	}
@@ -162,11 +170,15 @@ func (c *Coordinator) Name() string {
 // follower replicas fill the buffer and log critical drops continuously.
 // Subscribing here, on leadership, keeps followers unsubscribed entirely.
 func (c *Coordinator) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
 	var generation uint64
 	if c.currentFiles != nil {
 		generation = c.currentFiles.BeginTerm()
 		defer c.currentFiles.EndTerm(generation)
 	}
+	c.ledger = newAcceptanceLedger()
+	defer c.ledger.attempts.Wait()
+	defer cancel()
 
 	// Subscribe when starting (after leadership acquired).
 	// Use SubscribeTypesLeaderOnly() to suppress late subscription warning.
@@ -177,6 +189,7 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		CoordinatorEventBufferSize,
 		events.EventTypeReconciliationTriggered,
 		events.EventTypeRenderGateCompleted,
+		events.EventTypeHTTPContentAcceptanceRequested,
 	)
 	// Unsubscribe on loop exit: without this, every leadership
 	// re-acquisition on the same instance would stack another subscription
@@ -213,6 +226,11 @@ func (c *Coordinator) Start(ctx context.Context) error {
 			}
 		case *events.RenderGateCompletedEvent:
 			c.settleCurrentFiles(generation, e)
+			c.settleAcceptances(e)
+		case *events.HTTPContentAcceptanceRequestedEvent:
+			if c.acceptance != nil {
+				c.requestAcceptanceAttempt(ctx, generation)
+			}
 		}
 	}
 }
@@ -267,29 +285,21 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 	// downstream components (e.g. metrics) can correlate it with the trigger.
 	c.eventBus.Publish(events.NewReconciliationStartedEvent(event.Reason, events.PropagateCorrelation(event)))
 
-	var renderOpts []rendercontext.Option
-	if c.currentFiles != nil {
-		if exact, ok := c.currentFiles.(exactCurrentFilesAuthority); ok {
-			source, err := exact.ExactSource(generation)
-			if err != nil {
-				c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
-				return nil
-			}
-			renderOpts = append(renderOpts, rendercontext.WithCurrentAuxFilesSource(source))
-		} else {
-			currentFiles, err := c.currentFiles.Snapshot(generation)
-			if err != nil {
-				c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
-				return nil
-			}
-			renderOpts = append(renderOpts, rendercontext.WithCurrentAuxFiles(currentFiles))
-		}
+	renderOpts, err := c.renderOptions(generation)
+	if err != nil {
+		c.handlePipelineFailure(ctx, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: err}, event, startTime)
+		return nil
 	}
-	result, err := c.pipeline.Execute(ctx, c.storeProvider, rendercontext.RenderModeReconcile, renderOpts...)
+	result, err := c.pipeline.Execute(pipeline.WithPendingContentWithheld(ctx), c.storeProvider,
+		rendercontext.RenderModeReconcile, renderOpts...)
 	if cause := context.Cause(ctx); cause != nil {
 		c.logger.Debug("Discarding reconciliation result after authority expired",
 			"cause", cause,
 			"correlation_id", correlationID)
+		return nil
+	}
+	if pipeline.WaitsForCriticalContent(err) {
+		c.logger.Info("Deploy waits for critical http.Fetch content to be accepted", "error", err)
 		return nil
 	}
 	if err != nil {
@@ -313,6 +323,25 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 
 	// Pipeline succeeded - publish events for downstream components
 	return c.handlePipelineSuccess(ctx, result, event, startTime)
+}
+
+// renderOptions binds a render to the auxiliary files the fleet runs in this term.
+func (c *Coordinator) renderOptions(generation uint64) ([]rendercontext.Option, error) {
+	if c.currentFiles == nil {
+		return nil, nil
+	}
+	if exact, ok := c.currentFiles.(exactCurrentFilesAuthority); ok {
+		source, err := exact.ExactSource(generation)
+		if err != nil {
+			return nil, err
+		}
+		return []rendercontext.Option{rendercontext.WithCurrentAuxFilesSource(source)}, nil
+	}
+	currentFiles, err := c.currentFiles.Snapshot(generation)
+	if err != nil {
+		return nil, err
+	}
+	return []rendercontext.Option{rendercontext.WithCurrentAuxFiles(currentFiles)}, nil
 }
 
 func (c *Coordinator) acceptCurrentFiles(generation uint64, result *pipeline.PipelineResult) error {
@@ -396,6 +425,9 @@ func (c *Coordinator) handlePipelineSuccess(
 	if context.Cause(ctx) != nil {
 		return nil
 	}
+	c.ledger.record(occurrence, acceptanceWindow{
+		reached: c.acceptanceSequence(), observations: result.HTTPObservations,
+	})
 	c.eventBus.Publish(templateEvent)
 
 	// No validation event follows: TemplateRenderedEvent is the deploy trigger

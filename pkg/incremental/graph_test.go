@@ -484,7 +484,7 @@ func TestDynamicDefinitionInsertionAndRemoval(t *testing.T) {
 	graph.mu.RLock()
 	_, inputEdgeExists := graph.current.reverse.Root().Get([]byte(dependencyTreeKey(inputDep(NewInputKey("object/one")))))
 	_, queryEdgeExists := graph.current.reverse.Root().Get([]byte(dependencyTreeKey(queryDep(componentOne))))
-	_, countersExist := graph.current.counters.Root().Get([]byte(componentOne.value))
+	_, countersExist := graph.current.counters.Root().Get([]byte(componentOne.id.String()))
 	graph.mu.RUnlock()
 	if inputEdgeExists || queryEdgeExists || countersExist {
 		t.Fatal("removed query left committed state")
@@ -576,7 +576,7 @@ func assertCommittedInputs(t *testing.T, graph *Graph, want ...InputKey) {
 		t.Fatalf("committed input count = %d, want %d", graph.current.inputs.Len(), len(want))
 	}
 	for _, key := range want {
-		if _, exists := graph.current.inputs.Root().Get([]byte(key.value)); !exists {
+		if _, exists := graph.current.inputs.Root().Get([]byte(key.id.String())); !exists {
 			t.Fatalf("committed input %q is missing", key.Opaque())
 		}
 	}

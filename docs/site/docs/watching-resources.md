@@ -306,11 +306,22 @@ Use `http.Fetch(url, options, authentication)` to read a response body into a
 template. For example, you can maintain an IP blocklist separately from your
 routing resources.
 
-The first request waits for a response. Set `interval` to refresh the content;
-HAPTIC uses conditional requests and renders again when the content changes.
-Each controller replica fetches its own copy. New content becomes the accepted
-input only after the complete rendered configuration passes validation.
-Admission checks don't replace the content used by the running configuration.
+Deploying renders don't fetch a new URL's first response. Until that content passes
+`haproxy -c` together with the rest of the configuration, deploying renders
+leave it out: a non-critical source deploys without it, and a `critical: true`
+source fails the render, so nothing deploys until the content is accepted. The
+next successful render includes accepted content. Set `interval` to refresh the
+content; HAPTIC uses conditional requests and validates new content before it
+replaces the old. Each controller replica fetches its own copy. Admission checks
+don't replace the content used by the running configuration. During startup,
+first renders and their validation checks run one at a time; waiting for HTTP
+responses releases that slot so other renders can proceed.
+
+If HAProxy refuses a configuration containing newly accepted content, HAPTIC
+takes the content back and renders without it, or with the version it accepted
+before. It records an `HTTPContentRevoked` Warning Event on the
+`HAProxyTemplateConfig`. Content that still produces the refused configuration stays pending. Fix the
+source content or the template that uses it.
 
 ### Fetch parameters
 

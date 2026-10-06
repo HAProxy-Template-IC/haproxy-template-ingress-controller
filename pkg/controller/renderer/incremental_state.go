@@ -175,6 +175,10 @@ type incrementalRenderState struct {
 	httpMu          sync.Mutex
 	httpLifecycleMu sync.Mutex
 	cache           incrementalCacheBuilder
+	// coldCommitAwaitsGraph makes a cold commit wait for its graph instead of
+	// maxColdCacheBuildWait, so the next render, held by the coldRenderGate,
+	// finds it published rather than superseding the build.
+	coldCommitAwaitsGraph bool
 
 	graph                    *incremental.Graph
 	snapshot                 *incrementalStateSnapshot
@@ -416,10 +420,30 @@ func (c *incrementalComponentCatalog) addSnippet(
 	return dynamicDeriveSource, nil
 }
 
-func newIncrementalRenderState(cfg *config.Config, engine templating.Engine) *incrementalRenderState {
+// incrementalRenderAnalysis is read-only after construction and shared by independent render states.
+type incrementalRenderAnalysis struct {
+	config                   *config.Config
+	engine                   templating.Engine
+	err                      error
+	components               map[string]incrementalComponent
+	activations              map[string][]incrementalComponent
+	groups                   map[string][]incrementalComponent
+	dependencies             map[string][]string
+	required                 map[string]struct{}
+	deriveSources            map[string]struct{}
+	staticBindingPlan        *incrementalBindingPlan
+	dynamicComponents        []string
+	bindingEntryPoints       []string
+	bindingsUseCurrentConfig bool
+	bindingsUseCurrentFiles  bool
+}
+
+// analyzeIncrementalRender returns nil when the config declares no
+// incremental components.
+func analyzeIncrementalRender(cfg *config.Config, engine templating.Engine) *incrementalRenderAnalysis {
 	catalog, err := newIncrementalComponentCatalog(cfg)
 	if err != nil {
-		return newInvalidIncrementalRenderState(cfg, err)
+		return &incrementalRenderAnalysis{config: cfg, engine: engine, err: err}
 	}
 	components := catalog.components
 	groups := catalog.groups
@@ -432,37 +456,65 @@ func newIncrementalRenderState(cfg *config.Config, engine templating.Engine) *in
 			return strings.Compare(left.name, right.name)
 		})
 	}
-	dependencies := incrementalGroupDependencies(catalog.dependencySets)
 	staticBindingPlan, dynamicComponents, bindingEntryPoints, err := newIncrementalStaticBindingPlan(components)
 	if err != nil {
-		return newInvalidIncrementalRenderState(cfg, err)
+		return &incrementalRenderAnalysis{config: cfg, engine: engine, err: err}
 	}
-	executor, _ := engine.(templating.IncrementalComponentExecutor)
-	planner, _ := engine.(templating.IncrementalBindingPlannerExecutor)
-	state := &incrementalRenderState{
-		snapshot:           newIncrementalStateSnapshot(),
+	analysis := &incrementalRenderAnalysis{
+		config:             cfg,
+		engine:             engine,
 		components:         components,
 		activations:        activations,
 		groups:             groups,
-		dependencies:       dependencies,
+		dependencies:       incrementalGroupDependencies(catalog.dependencySets),
 		required:           catalog.required,
 		deriveSources:      catalog.deriveSources,
 		staticBindingPlan:  staticBindingPlan,
 		dynamicComponents:  dynamicComponents,
 		bindingEntryPoints: bindingEntryPoints,
-		config:             cfg,
-		engine:             executor,
-		planner:            planner,
-		httpIDs:            map[httpInputIdentity]uint64{},
-		httpSpecs:          map[uint64]httpInputSpec{},
-		httpByURL:          map[string]map[httpstore.SourceDescriptor]uint64{},
-		httpRefs:           map[uint64]uint64{},
-		httpFlight:         map[uint64]uint64{},
-		transitionNow:      sampleIncrementalTransitionTime,
 	}
-	state.bindingsUseCurrentConfig, state.bindingsUseCurrentFiles =
+	analysis.bindingsUseCurrentConfig, analysis.bindingsUseCurrentFiles =
 		bindingPreviousOutputUsage(engine, bindingEntryPoints)
-	for group := range groups {
+	return analysis
+}
+
+func newIncrementalRenderState(cfg *config.Config, engine templating.Engine) *incrementalRenderState {
+	return newIncrementalRenderStateFromAnalysis(analyzeIncrementalRender(cfg, engine))
+}
+
+func newIncrementalRenderStateFromAnalysis(analysis *incrementalRenderAnalysis) *incrementalRenderState {
+	if analysis == nil {
+		return nil
+	}
+	if analysis.err != nil {
+		return newInvalidIncrementalRenderState(analysis.config, analysis.err)
+	}
+	executor, _ := analysis.engine.(templating.IncrementalComponentExecutor)
+	planner, _ := analysis.engine.(templating.IncrementalBindingPlannerExecutor)
+	state := &incrementalRenderState{
+		snapshot:                 newIncrementalStateSnapshot(),
+		components:               analysis.components,
+		activations:              analysis.activations,
+		groups:                   analysis.groups,
+		dependencies:             analysis.dependencies,
+		required:                 analysis.required,
+		deriveSources:            analysis.deriveSources,
+		staticBindingPlan:        analysis.staticBindingPlan,
+		dynamicComponents:        analysis.dynamicComponents,
+		bindingEntryPoints:       analysis.bindingEntryPoints,
+		bindingsUseCurrentConfig: analysis.bindingsUseCurrentConfig,
+		bindingsUseCurrentFiles:  analysis.bindingsUseCurrentFiles,
+		config:                   analysis.config,
+		engine:                   executor,
+		planner:                  planner,
+		httpIDs:                  map[httpInputIdentity]uint64{},
+		httpSpecs:                map[uint64]httpInputSpec{},
+		httpByURL:                map[string]map[httpstore.SourceDescriptor]uint64{},
+		httpRefs:                 map[uint64]uint64{},
+		httpFlight:               map[uint64]uint64{},
+		transitionNow:            sampleIncrementalTransitionTime,
+	}
+	for group := range analysis.groups {
 		state.snapshot.groupIndexes[group] = newIncrementalGroupIndex()
 	}
 	plan, err := newIncrementalPreparedPlan(

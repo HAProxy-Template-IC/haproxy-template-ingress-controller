@@ -41,7 +41,7 @@ templateSnippets:
   util-haptic-ingress-match:
     template: |-
       {%- var HapticResourceMatchCondition = func(key string) string {
-        return "{ var(txn.resource_id) -m str " + key + " }"
+        return "{ var(txn.resource_key) -m str " + key + " }"
       } -%}
       {%- var HapticHostMatchCondition = func(key string) string {
         var condition, found = shared.Select("haptic-ingress-match-publications", "hosts", key)

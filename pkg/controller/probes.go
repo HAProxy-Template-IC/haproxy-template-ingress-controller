@@ -27,8 +27,9 @@ const (
 	ReadinessPath = "/readyz"
 	LivenessPath  = "/livez"
 
-	healthKeyAdmission = "admission"
-	healthKeyStartup   = "startup"
+	healthKeyAdmission   = "admission"
+	healthKeyStartup     = "startup"
+	healthKeyRenderGraph = "render-graph"
 )
 
 // servingIteration is an iteration that completed startup.
@@ -36,6 +37,9 @@ type servingIteration struct {
 	id      iterationID
 	health  introspection.HealthCheckFunc
 	leading func() bool
+	// graphPublished reports whether the iteration's first full render has
+	// published its graph; nil when it renders nothing to warm.
+	graphPublished func() bool
 }
 
 func (p *persistentInfra) markServing(s *servingIteration) {
@@ -69,7 +73,7 @@ func (p *persistentInfra) exemptPredecessor() *servingIteration {
 	if serving == nil || serving.id == p.currentIteration() || serving.health == nil || !serving.leading() {
 		return nil
 	}
-	if p.siblings == nil || !p.siblings.NoneConverged() {
+	if p.siblings == nil || !p.siblings.converged.NoneMatch() {
 		return nil
 	}
 	return serving
@@ -112,5 +116,34 @@ func (p *persistentInfra) readinessHealth() map[string]introspection.ComponentHe
 		entry.Error = "no admission validators installed; this replica denies admission requests"
 	}
 	entries[healthKeyAdmission] = entry
+	if graph, ok := p.renderGraphHealth(); ok {
+		entries[healthKeyRenderGraph] = graph
+	}
 	return entries
+}
+
+// renderGraphHealth keeps a replica whose first full render is still running
+// out of the webhook Service while another replica can validate: it would
+// deny every request until that render commits (#285). Alone, it stays Ready
+// and its denials say why; the note marks it for the other replicas.
+func (p *persistentInfra) renderGraphHealth() (introspection.ComponentHealth, bool) {
+	p.servingMu.Lock()
+	serving := p.serving
+	p.servingMu.Unlock()
+	if serving == nil || serving.graphPublished == nil {
+		return introspection.ComponentHealth{}, false
+	}
+	if serving.graphPublished() {
+		return introspection.ComponentHealth{Healthy: true}, true
+	}
+	if p.siblings != nil && p.siblings.renderGraph.NoneMatch() {
+		return introspection.ComponentHealth{
+			Healthy: true,
+			Error:   "first full render still running; no other replica can validate, so this one answers admission requests",
+		}, true
+	}
+	return introspection.ComponentHealth{
+		Healthy: false,
+		Error:   "first full render still running; another replica validates admission requests until it finishes",
+	}, true
 }

@@ -75,14 +75,24 @@ type ActiveLeaseReference struct {
 	References uint64
 }
 
-// ActiveLeaseCommit carries either changed reference counts or a cold replacement.
+// ActiveLeaseCommit verifies a snapshot or publishes its dependency transition.
 type ActiveLeaseCommit struct {
 	Snapshot        *ActiveLeaseSnapshot
+	VerifyOnly      bool
 	Updates         []ActiveLeaseUpdate
 	Replacement     []ActiveLeaseReference
 	Replace         bool
 	Replay          *AcceptedReplayState
 	PublishedReplay []ContentSnapshot
+}
+
+// ValidateMode rejects transitions combined with verification-only mode.
+func (c *ActiveLeaseCommit) ValidateMode() error {
+	if c != nil && c.VerifyOnly && (len(c.Updates) != 0 || len(c.Replacement) != 0 ||
+		c.Replace || c.Replay != nil || len(c.PublishedReplay) != 0) {
+		return errors.New("verification-only HTTP leases cannot include a dependency transition")
+	}
+	return nil
 }
 
 // ActiveLeaseTransition reports URL-level zero-to-one and one-to-zero changes.
@@ -455,6 +465,22 @@ func (s *HTTPStore) countActiveLeaseChangesLocked(
 func (s *HTTPStore) planActiveLeaseCommitLocked(
 	commit *ActiveLeaseCommit,
 ) (*preparedActiveLeasePlan, error) {
+	if err := commit.ValidateMode(); err != nil {
+		return nil, err
+	}
+	if commit.VerifyOnly {
+		_, err := s.validateActiveLeaseSnapshotLocked(commit.Snapshot)
+		if errors.Is(err, ErrActiveLeaseTokenStale) {
+			return nil, fmt.Errorf("leased HTTP content %w", ErrInputsMoved)
+		}
+		return nil, err
+	}
+	return s.planActiveLeaseTransitionLocked(commit)
+}
+
+func (s *HTTPStore) planActiveLeaseTransitionLocked(
+	commit *ActiveLeaseCommit,
+) (*preparedActiveLeasePlan, error) {
 	if len(commit.PublishedReplay) != 0 {
 		return nil, errors.New("published HTTP replay leases require a prepared input publication")
 	}
@@ -565,7 +591,7 @@ func (s *HTTPStore) planPublishedReplayActiveLeaseLocked(
 	commit *ActiveLeaseCommit,
 	snapshots []ContentSnapshot,
 ) (*preparedActiveLeasePlan, error) {
-	if commit == nil || commit.Replay != nil || len(commit.PublishedReplay) != 0 {
+	if commit == nil || commit.VerifyOnly || commit.Replay != nil || len(commit.PublishedReplay) != 0 {
 		return nil, errors.New("published HTTP replay lease has an invalid transition")
 	}
 	state, current, currentReplay, err := s.activeLeaseCommitBaseLocked(commit)

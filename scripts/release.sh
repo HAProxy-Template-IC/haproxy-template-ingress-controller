@@ -132,13 +132,7 @@ PREV_VERSION=$(git show HEAD:VERSION 2>/dev/null || cat VERSION)
 PREV_ESC=$(printf '%s' "$PREV_VERSION" | sed 's/[][\.^$*]/\\&/g')
 VERSION_DOC_FILES=$(grep -rlF -- "$PREV_VERSION" \
     README.md charts/haptic/README.md docs/site/docs 2>/dev/null || true)
-for f in $VERSION_DOC_FILES; do
-    sed -i \
-        -e "s|\\(--version \\)$PREV_ESC\\b|\\1$VERSION|g" \
-        -e "s|\\(--expect-chart-version \\)$PREV_ESC\\b|\\1$VERSION|g" \
-        -e "s|\\(haptic:\\)$PREV_ESC-haproxy[0-9.]*|\\1$VERSION-haproxy$DEFAULT_HAPROXY|g" \
-        "$f"
-done
+python3 scripts/update-release-docs.py "$PREV_VERSION" "$VERSION" "$DEFAULT_HAPROXY" $VERSION_DOC_FILES
 # These files ship inside the released chart (Artifact Hub renders README and
 # values.yaml; NOTES.txt prints after install; Chart.yaml carries the Artifact
 # Hub Documentation link), so their hosted-docs links must point at the version

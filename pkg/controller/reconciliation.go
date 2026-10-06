@@ -24,6 +24,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery/cached/memory"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/restmapper"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
@@ -200,6 +201,9 @@ func createReconciliationComponents(
 		HAProxyPodStore:    haproxyPodStore,
 		HTTPStoreComponent: httpStoreComponent,
 		TypedResourceTypes: wiring.TypedResourceTypes,
+		// Its reconcile callers, the Coordinator and the Warmer, render under
+		// the leadership term and the iteration lifecycle respectively.
+		ColdRendersRunToCompletion: true,
 	})
 	setup.AddCleanup(func() {
 		if err := renderService.RetireIncrementalCache(); err != nil {
@@ -228,12 +232,13 @@ func createReconciliationComponents(
 
 	// Coordinator: leader-side render + deploy.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
-		EventBus:      setup.Bus,
-		Pipeline:      reconcilePipeline,
-		StoreProvider: storeProvider,
-		CurrentFiles:  currentFiles,
-		Metrics:       setup.MetricsComponent.Metrics(),
-		Logger:        logger,
+		EventBus:       setup.Bus,
+		Pipeline:       reconcilePipeline,
+		StoreProvider:  storeProvider,
+		CurrentFiles:   currentFiles,
+		HTTPAcceptance: httpStoreComponent,
+		Metrics:        setup.MetricsComponent.Metrics(),
+		Logger:         logger,
 	})
 
 	// Warmer: a follower's render, committed for the graph and then dropped.
@@ -519,5 +524,14 @@ func createConfigPublisher(ctx context.Context, crdClientset versioned.Interface
 	// Create publisher with listers for cached reads
 	publisher := configpublisher.NewWithListers(k8sClient.Clientset(), crdClientset, listers, logger)
 	publisher.SetRepublishInterval(republishInterval)
+	// Clients built from fake clientsets have no REST config.
+	if restConfig := k8sClient.RestConfig(); restConfig != nil {
+		metadataClient, err := metadata.NewForConfig(restConfig)
+		if err != nil {
+			stopInformers()
+			return nil, nil, fmt.Errorf("creating metadata client: %w", err)
+		}
+		publisher.SetMetadataClient(metadataClient)
+	}
 	return publisher, stopInformers, nil
 }

@@ -106,17 +106,52 @@ func TestSourceReplacementPreservesTimerAndDirtiesOldLease(t *testing.T) {
 	transaction := newInputTransaction(component)
 	_, err = transaction.enrollSource(replacement)
 	require.NoError(t, err)
-	prepared, err := transaction.PrepareCommitPreservingRefreshers(t.Context(), nil)
+	snapshot, err := component.BeginActiveLeases(set, token)
+	require.NoError(t, err)
+	prepared, err := transaction.PrepareCommitPreservingRefreshers(t.Context(), nil,
+		&purehttpstore.ActiveLeaseCommit{Snapshot: snapshot, VerifyOnly: true})
 	require.NoError(t, err)
 	require.True(t, prepared.Publish())
 	prepared.Release()
 
 	assert.Equal(t, before, activeLeaseTimerSnapshot(component, url))
-	snapshot, err := component.BeginActiveLeases(set, token)
+	snapshot, err = component.BeginActiveLeases(set, token)
 	require.NoError(t, err)
 	require.Len(t, snapshot.Changes(), 1)
 	assert.Equal(t, descriptor, snapshot.Changes()[0].Descriptor)
 	assert.True(t, snapshot.Contains(url, descriptor))
+}
+
+func TestActiveLeaseVerificationWithoutTransactionPreservesTimer(t *testing.T) {
+	component, url, descriptor := activeLeaseTimerFixture(t)
+	set, token, err := component.NewActiveLeaseSet()
+	require.NoError(t, err)
+	token = publishComponentActiveLease(t, component, set, token, []purehttpstore.ActiveLeaseUpdate{{
+		URL: url, Descriptor: descriptor, Added: 1,
+	}})
+	before := activeLeaseTimerSnapshot(component, url)
+	snapshot, err := component.BeginActiveLeases(set, token)
+	require.NoError(t, err)
+	prepared, err := component.PrepareObservationCommitWithActiveLeases(t.Context(), nil,
+		&purehttpstore.ActiveLeaseCommit{Snapshot: snapshot, VerifyOnly: true})
+	require.NoError(t, err)
+	_, _, planned := prepared.PlannedActiveLeases()
+	assert.False(t, planned)
+	require.True(t, prepared.Publish())
+	prepared.Release()
+	assert.Equal(t, before, activeLeaseTimerSnapshot(component, url))
+	_, err = component.BeginActiveLeases(set, token)
+	require.NoError(t, err)
+}
+
+func TestActiveLeaseVerificationCannotDeferPublishedReplay(t *testing.T) {
+	prepared, published, replay, err := splitPublishedReplayCommit(&purehttpstore.ActiveLeaseCommit{
+		VerifyOnly: true, PublishedReplay: []purehttpstore.ContentSnapshot{{}},
+	})
+	assert.ErrorContains(t, err, "verification-only")
+	assert.Nil(t, prepared)
+	assert.Nil(t, published)
+	assert.Nil(t, replay)
 }
 
 func activeLeaseTimerFixture(

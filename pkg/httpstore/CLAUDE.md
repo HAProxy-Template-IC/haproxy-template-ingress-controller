@@ -105,6 +105,18 @@ promoted := store.PromotePendingVersion(url, version.Checksum, version.Revision)
 rejected := store.RejectPendingVersion(url, version.Checksum, version.Revision)
 ```
 
+### Reversible Acceptance (ADR-0030)
+
+Every acceptance (initial candidate commit or promotion) enters a ledger with the version it replaced, outside the authenticated publication state:
+
+```go
+seq := store.AcceptanceSequence()     // acceptances so far
+store.ConfirmAcceptances(observations) // exact source-version tokens from a passing render
+revoked := store.RevokeAcceptances(seq) // the gate refused one: restore the previous version, or none
+```
+
+A revocation records a semantic change and clears ETag/Last-Modified, so renders see it and the next refresh fetches unconditionally.
+
 ### Test Fixtures
 
 ```go

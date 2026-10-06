@@ -1144,7 +1144,7 @@ func (f *dependencyFrame) sortedDependencies() []dependency {
 func (f *dependencyFrame) sortedInputs() []InputRevision {
 	inputs := f.inputValues()
 	slices.SortFunc(inputs, func(left, right InputRevision) int {
-		return cmp.Compare(left.Key.value, right.Key.value)
+		return cmp.Compare(left.Key.id.String(), right.Key.id.String())
 	})
 	return inputs
 }

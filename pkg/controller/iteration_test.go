@@ -102,7 +102,7 @@ func TestFinishIterationStartupRejectsCanceledIteration(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	authority := newIterationReloadAuthority()
-	err := finishIterationStartup(&componentSetup{IterCtx: iterCtx}, state, infra, authority, nil, logger)
+	err := finishIterationStartup(&componentSetup{IterCtx: iterCtx}, state, infra, authority, nil, nil, logger)
 	require.ErrorIs(t, err, failure)
 	assert.False(t, state.IsInitialized())
 	assert.False(t, authority.Serving())

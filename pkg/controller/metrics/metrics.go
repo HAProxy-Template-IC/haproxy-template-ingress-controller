@@ -144,6 +144,10 @@ type Metrics struct {
 	// serve the last-good one — the operator's config never took effect.
 	ConfigRejectedTotal *prometheus.CounterVec
 
+	// HTTPContentRevokedTotal counts accepted HTTP content taken back because
+	// HAProxy refused a render containing it (ADR-0030).
+	HTTPContentRevokedTotal prometheus.Counter
+
 	// ConfigPinned is 1 while the render gate is holding renders it has
 	// already refused once: nothing new reaches the fleet, which keeps serving
 	// the last config HAProxy accepted, until the operator's input changes.
@@ -408,6 +412,12 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			[]string{"validator"},
 		),
 
+		HTTPContentRevokedTotal: pkgmetrics.NewCounter(
+			registry,
+			"haptic_http_content_revoked_total",
+			"Total number of HTTP content acceptances revoked after a render was refused.",
+		),
+
 		ControllerReinitializationsTotal: pkgmetrics.NewCounter(
 			registry,
 			"haptic_controller_reinitializations_total",
@@ -641,6 +651,11 @@ func (m *Metrics) RecordHAProxyPodRejected(reason string) {
 // validator (the one whose check failed).
 func (m *Metrics) RecordConfigRejected(validator string) {
 	m.ConfigRejectedTotal.WithLabelValues(validator).Inc()
+}
+
+// RecordHTTPContentRevoked counts one revoked HTTP content acceptance.
+func (m *Metrics) RecordHTTPContentRevoked() {
+	m.HTTPContentRevokedTotal.Inc()
 }
 
 // SetRenderProfiles records how many distinct backend profiles the most recent

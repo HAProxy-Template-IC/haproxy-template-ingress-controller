@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"unique"
 )
 
 var (
@@ -30,33 +31,55 @@ type Options struct {
 }
 
 // InputKey is an opaque, comparable input identity.
+//
+// Keys are interned because a graph stores one per dependency edge, and edges
+// outnumber distinct keys by orders of magnitude (#284).
 type InputKey struct {
-	value string
+	id internedKey
 }
 
 // NewInputKey creates an input identity from caller-owned opaque data.
 func NewInputKey(value string) InputKey {
-	return InputKey{value: value}
+	return InputKey{id: internKey(value)}
 }
 
-// Opaque returns the caller-owned input identity without interpreting it.
+// Opaque returns the input identity without interpreting it.
 func (k InputKey) Opaque() string {
-	return k.value
+	return k.id.String()
 }
 
-// QueryKey is an opaque, comparable query identity.
+// QueryKey is an opaque, comparable query identity, interned like [InputKey].
 type QueryKey struct {
-	value string
+	id internedKey
 }
 
 // NewQueryKey creates a query identity from caller-owned opaque data.
 func NewQueryKey(value string) QueryKey {
-	return QueryKey{value: value}
+	return QueryKey{id: internKey(value)}
 }
 
-// Opaque returns the caller-owned query identity without interpreting it.
+// Opaque returns the query identity without interpreting it.
 func (k QueryKey) Opaque() string {
-	return k.value
+	return k.id.String()
+}
+
+// internedKey is a canonical key string; the zero value is the empty key.
+type internedKey struct {
+	handle unique.Handle[string]
+}
+
+func internKey(value string) internedKey {
+	if value == "" {
+		return internedKey{}
+	}
+	return internedKey{handle: unique.Make(value)}
+}
+
+func (k internedKey) String() string {
+	if k.handle == (unique.Handle[string]{}) {
+		return ""
+	}
+	return k.handle.Value()
 }
 
 // Revision is an exact, comparable input revision token.
@@ -230,7 +253,7 @@ type queryError struct {
 }
 
 func (e *queryError) Error() string {
-	return fmt.Sprintf("incremental query %q failed: %v", e.key.value, e.err)
+	return fmt.Sprintf("incremental query %q failed: %v", e.key.id.String(), e.err)
 }
 
 func (e *queryError) Unwrap() error {
@@ -250,7 +273,7 @@ type missingInputError struct {
 }
 
 func (e *missingInputError) Error() string {
-	return fmt.Sprintf("incremental query read input %q without an exact snapshot", e.key.value)
+	return fmt.Sprintf("incremental query read input %q without an exact snapshot", e.key.id.String())
 }
 
 func cloneBytes(value []byte) []byte {
@@ -258,11 +281,11 @@ func cloneBytes(value []byte) []byte {
 }
 
 func validInputKey(key InputKey) bool {
-	return key.value != ""
+	return key.id.String() != ""
 }
 
 func validQueryKey(key QueryKey) bool {
-	return key.value != ""
+	return key.id.String() != ""
 }
 
 func validRevision(revision Revision) bool {

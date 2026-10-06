@@ -204,7 +204,7 @@ validationTests:
       - {type: contains, target: "map:ing-ac-routes.map", pattern: '(?m)^default/allow-ingress ni:allow$'}
       - {type: contains, target: "map:ing-ac-allow.map", pattern: '(?m)^10\.0\.0\.0/8\|default/allow-ingress 1$'}
       - {type: contains, target: "map:ing-ac-allow.map", pattern: '(?m)^192\.168\.0\.0/16\|default/allow-ingress 1$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny if \{ var\(txn\.ac\) -m str "ni:allow" "ni:both" \} !\{ var\(txn\.ac_block\),concat\(\|,txn\.resource_id\),map\(\S*/ing-ac-allow\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny if \{ var\(txn\.ac\) -m str "ni:allow" "ni:both" \} !\{ var\(txn\.ac_block\),concat\(\|,txn\.resource_key\),map\(\S*/ing-ac-allow\.map\) -m found \}'}
 
   test-nginx-ingress-hsts:
     description: Nginx Ingress HSTS annotations generate correct header
@@ -963,7 +963,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-response replace-header Location http://backend\\.local https://public\.example\.com if \{ var\(txn\.resource_id\),concat\(\|ni\|http://backend\.local\|https://public\.example\.com\),map\(\S*/ing-location-rewrite-routes\.map\) -m found \}'
+        pattern: 'http-response replace-header Location http://backend\\.local https://public\.example\.com if \{ var\(txn\.resource_key\),concat\(\|ni\|http://backend\.local\|https://public\.example\.com\),map\(\S*/ing-location-rewrite-routes\.map\) -m found \}'
       - {type: contains, target: "map:ing-location-rewrite-routes.map", pattern: '(?m)^default/pr-ingress\|ni\|http://backend\.local\|https://public\.example\.com 1$'}
 
   test-nginx-ingress-rate-limit-rps:
@@ -1160,7 +1160,7 @@ validationTests:
       - {type: contains, target: "map:ing-rl-allow-members.map", pattern: '(?m)^192\.168\.1\.0/24\|default/rlwl-ingress 1$'}
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.vrl_allow\) bool\(true\) if \{ var\(txn\.vrl_allow_block\) -m found \} \{ var\(txn\.vrl_allow_block\),concat\(\|,txn\.resource_id\),map\(\S*/ing-rl-allow-members\.map\) -m found \}'
+        pattern: 'http-request set-var\(txn\.vrl_allow\) bool\(true\) if \{ var\(txn\.vrl_allow_block\) -m found \} \{ var\(txn\.vrl_allow_block\),concat\(\|,txn\.resource_key\),map\(\S*/ing-rl-allow-members\.map\) -m found \}'
       # The exemption is a map lookup, not per-route text in the deny rule.
       - {type: not_contains, target: haproxy.cfg, pattern: '!\{ src 10\.0\.0\.0/8'}
   test-nginx-ingress-config-snippet:

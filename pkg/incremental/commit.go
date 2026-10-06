@@ -263,7 +263,7 @@ func (s *Session) prepareReplacementCommit() (*graphCommitPlan, []InputRevision,
 func (s *Session) validateNodeChanges() error {
 	for key, entry := range s.nodeChanges {
 		if err := entry.value.validateOwned(s.graph.valueAuthority, key); err != nil {
-			return fmt.Errorf("incremental query %q value: %w", key.value, err)
+			return fmt.Errorf("incremental query %q value: %w", key.id.String(), err)
 		}
 	}
 	return nil
@@ -408,7 +408,7 @@ func (s *Session) validateReplacementRemovedQueries(
 			return fmt.Errorf("checking removed replacement query dependents: %w", err)
 		}
 		if size != 0 {
-			return fmt.Errorf("removed incremental query %q retains dependents", key.value)
+			return fmt.Errorf("removed incremental query %q retains dependents", key.id.String())
 		}
 	}
 	return nil
@@ -463,7 +463,7 @@ func (s *Session) applyReplacementCounterDeltas(
 		}
 		next, err := addCountersChecked(counters[change.key], change.delta)
 		if err != nil {
-			return nil, fmt.Errorf("incremental query %q counters: %w", change.key.value, err)
+			return nil, fmt.Errorf("incremental query %q counters: %w", change.key.id.String(), err)
 		}
 		counters[change.key] = next
 	}
@@ -471,7 +471,7 @@ func (s *Session) applyReplacementCounterDeltas(
 		if _, removed := s.removedQueries[key]; !removed {
 			next, err := addCountersChecked(counters[key], delta)
 			if err != nil {
-				return nil, fmt.Errorf("incremental query %q counters: %w", key.value, err)
+				return nil, fmt.Errorf("incremental query %q counters: %w", key.id.String(), err)
 			}
 			counters[key] = next
 		}
@@ -530,12 +530,12 @@ func applyIncrementalCommittedInputs(
 			if err == nil {
 				err = fmt.Errorf("changed generation %d exceeds %d", entry.changedAt, plan.generation)
 			}
-			return fmt.Errorf("incremental committed input %q: %w", key.value, err)
+			return fmt.Errorf("incremental committed input %q: %w", key.id.String(), err)
 		}
-		inputs.Insert([]byte(key.value), entry)
+		inputs.Insert([]byte(key.id.String()), entry)
 	}
 	for _, key := range plan.retiredInputs {
-		inputs.Delete([]byte(key.value))
+		inputs.Delete([]byte(key.id.String()))
 	}
 	return nil
 }
@@ -590,20 +590,20 @@ func buildIncrementalGraphGeneration(
 	dirty := base.dirty.Txn()
 	counters := base.counters.Txn()
 	for _, key := range plan.removed {
-		nodes.Delete([]byte(key.value))
-		dirty.Delete([]byte(key.value))
-		counters.Delete([]byte(key.value))
+		nodes.Delete([]byte(key.id.String()))
+		dirty.Delete([]byte(key.id.String()))
+		counters.Delete([]byte(key.id.String()))
 	}
 	for _, key := range sortedNodeEntryKeys(plan.nodes) {
 		entry, err := sealCommittedNodeEntry(graph, key, plan.nodes[key], plan.generation)
 		if err != nil {
-			return nil, fmt.Errorf("incremental committed query %q: %w", key.value, err)
+			return nil, fmt.Errorf("incremental committed query %q: %w", key.id.String(), err)
 		}
-		nodes.Insert([]byte(key.value), entry)
+		nodes.Insert([]byte(key.id.String()), entry)
 		if entry.dirty {
-			dirty.Insert([]byte(key.value), struct{}{})
+			dirty.Insert([]byte(key.id.String()), struct{}{})
 		} else {
-			dirty.Delete([]byte(key.value))
+			dirty.Delete([]byte(key.id.String()))
 		}
 	}
 	counterKeys := make([]QueryKey, 0, len(plan.counters))
@@ -612,7 +612,7 @@ func buildIncrementalGraphGeneration(
 	}
 	sortQueryKeys(counterKeys)
 	for _, key := range counterKeys {
-		counters.Insert([]byte(key.value), plan.counters[key])
+		counters.Insert([]byte(key.id.String()), plan.counters[key])
 	}
 
 	reverse := base.reverse.Txn()
@@ -668,7 +668,7 @@ func (s *Session) incrementalRetirementCandidates(
 		}
 	}
 	for _, key := range removed {
-		if previous, exists := s.graph.current.nodes.Root().Get([]byte(key.value)); exists {
+		if previous, exists := s.graph.current.nodes.Root().Get([]byte(key.id.String())); exists {
 			entry, err := openCommittedNodeEntry(s.graph, key, previous)
 			if err != nil {
 				return nil, err
@@ -678,7 +678,7 @@ func (s *Session) incrementalRetirementCandidates(
 	}
 	for _, key := range sortedNodeEntryKeys(nodes) {
 		entry := nodes[key]
-		committed, exists := s.graph.current.nodes.Root().Get([]byte(key.value))
+		committed, exists := s.graph.current.nodes.Root().Get([]byte(key.id.String()))
 		var previous nodeEntry
 		if exists {
 			var err error
@@ -736,7 +736,7 @@ func (s *Session) retireRemovedReverseDependencies(
 	removed []QueryKey,
 ) error {
 	for _, key := range removed {
-		committed, exists := s.graph.current.nodes.Root().Get([]byte(key.value))
+		committed, exists := s.graph.current.nodes.Root().Get([]byte(key.id.String()))
 		if !exists {
 			continue
 		}
@@ -757,7 +757,7 @@ func (s *Session) replaceChangedReverseDependencies(
 ) error {
 	for _, key := range sortedNodeEntryKeys(nodes) {
 		entry := nodes[key]
-		committed, exists := s.graph.current.nodes.Root().Get([]byte(key.value))
+		committed, exists := s.graph.current.nodes.Root().Get([]byte(key.id.String()))
 		var previous nodeEntry
 		if exists {
 			var err error
@@ -832,18 +832,18 @@ func (e *reverseSetEditor) setMembership(dependency dependencyKey, dependent Que
 	if err != nil {
 		return err
 	}
-	current, pending := e.pending[dependency][dependent.value]
+	current, pending := e.pending[dependency][dependent.id.String()]
 	if !pending {
-		current, err = root.Contains(e.graph.reverseAuthority, reverseScope(dependency), dependent.value)
+		current, err = root.Contains(e.graph.reverseAuthority, reverseScope(dependency), dependent.id.String())
 		if err != nil {
 			return fmt.Errorf("reading incremental reverse dependency: %w", err)
 		}
 	}
 	if current == present {
 		if present {
-			return fmt.Errorf("incremental reverse dependency already contains query %q", dependent.value)
+			return fmt.Errorf("incremental reverse dependency already contains query %q", dependent.id.String())
 		}
-		return fmt.Errorf("incremental reverse dependency does not contain query %q", dependent.value)
+		return fmt.Errorf("incremental reverse dependency does not contain query %q", dependent.id.String())
 	}
 	if e.pending == nil {
 		e.pending = make(map[dependencyKey]map[string]bool)
@@ -851,7 +851,7 @@ func (e *reverseSetEditor) setMembership(dependency dependencyKey, dependent Que
 	if e.pending[dependency] == nil {
 		e.pending[dependency] = make(map[string]bool)
 	}
-	e.pending[dependency][dependent.value] = present
+	e.pending[dependency][dependent.id.String()] = present
 	return nil
 }
 
@@ -893,7 +893,7 @@ func (e *reverseSetEditor) validateRemovedQueries(removed []QueryKey) error {
 			return fmt.Errorf("checking removed incremental query dependents: %w", err)
 		}
 		if size != 0 {
-			return fmt.Errorf("removed incremental query %q retains dependents", key.value)
+			return fmt.Errorf("removed incremental query %q retains dependents", key.id.String())
 		}
 		e.roots[dependency] = root
 	}
@@ -943,10 +943,10 @@ func (s *Session) incrementalCounterChanges() (map[QueryKey]NodeCounters, error)
 	counters := make(map[QueryKey]NodeCounters, len(s.counterDeltas))
 	for key, delta := range s.counterDeltas {
 		if _, isRemoved := s.removedQueries[key]; !isRemoved {
-			current, _ := s.graph.current.counters.Root().Get([]byte(key.value))
+			current, _ := s.graph.current.counters.Root().Get([]byte(key.id.String()))
 			next, err := addCountersChecked(current, delta)
 			if err != nil {
-				return nil, fmt.Errorf("incremental query %q counters: %w", key.value, err)
+				return nil, fmt.Errorf("incremental query %q counters: %w", key.id.String(), err)
 			}
 			counters[key] = next
 		}
@@ -1000,12 +1000,12 @@ func addReverseEdges(
 		if !exists {
 			root = authority.Empty()
 		}
-		next, changed, err := root.Add(authority, reverseScope(dep.key), dependent.value)
+		next, changed, err := root.Add(authority, reverseScope(dep.key), dependent.id.String())
 		if err != nil {
 			return fmt.Errorf("building incremental reverse dependencies: %w", err)
 		}
 		if !changed {
-			return fmt.Errorf("incremental query %q contains a duplicate dependency", dependent.value)
+			return fmt.Errorf("incremental query %q contains a duplicate dependency", dependent.id.String())
 		}
 		reverse[dep.key] = next
 	}

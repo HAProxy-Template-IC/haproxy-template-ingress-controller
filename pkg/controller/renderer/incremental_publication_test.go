@@ -262,9 +262,10 @@ func TestPublicationCallbacksRunExactlyOnceAfterSuccessfulCommit(t *testing.T) {
 	assert.Equal(t, int32(1), aborts.Load())
 }
 
+// An admission commit must match the live store, so a moved input rejects it.
 func TestPublicationCallbacksDoNotRunAfterRejectedCommit(t *testing.T) {
 	fixture := newIncrementalHTTPTestFixture(t)
-	result, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
+	result, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeAdmission)
 	require.NoError(t, err)
 	transaction, ok := result.InputTransaction.(*combinedRenderInputTransaction)
 	require.True(t, ok)
@@ -389,7 +390,11 @@ func TestPostProcessPublicationSharesCombinedInputCommitOutcome(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			fixture := newIncrementalHTTPTestFixture(t)
-			result, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
+			mode := rendercontext.RenderModeReconcile
+			if test.mutate {
+				mode = rendercontext.RenderModeAdmission
+			}
+			result, err := fixture.service.Render(t.Context(), fixture.provider, mode)
 			require.NoError(t, err)
 			transaction, ok := result.InputTransaction.(*combinedRenderInputTransaction)
 			require.True(t, ok)

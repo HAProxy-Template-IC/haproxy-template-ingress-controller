@@ -882,7 +882,7 @@ func validateAuthenticatedCacheEntries(
 	for url, expected := range auth.cache {
 		entry := cache[url]
 		if entry == nil || entry != expected.entry || entry.Auth != expected.authPointer ||
-			!samePreparedCacheEntry(entry, &expected.value) {
+			!sameCacheEntry(entry, &expected.value) {
 			return errors.New("prepared HTTP cache entry failed authentication")
 		}
 	}

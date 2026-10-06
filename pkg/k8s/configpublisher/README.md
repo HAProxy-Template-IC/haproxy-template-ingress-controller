@@ -34,7 +34,7 @@ result, err := p.PublishConfig(ctx, &configpublisher.PublishRequest{
 // GeneralFileNames, CRTListFileNames
 ```
 
-`NewWithListers` is the production path — passing the informer-backed listers means status updates check the cache before issuing a GET, cutting API-server load on busy clusters.
+`NewWithListers` is the production path — passing the informer-backed listers means status updates check the cache before issuing a GET, cutting API-server load on busy clusters. A changed `HAProxyCfg` is updated from the cached copy; a stale copy fails the update's resourceVersion check and the retry reads the live object. Call `SetMetadataClient` as well: the cleanup fence then re-reads only the `HAProxyCfg` metadata before each stale-child deletion and reads the whole object only when its resourceVersion has moved.
 
 ## What Gets Published
 

@@ -290,7 +290,7 @@ make check-all
 
 ### CI minutes
 
-The GitLab compute-minute budget is finite; quota bills job time × runner factor (2xlarge = 12×). Measured 2026-10: a Go/chart MR pipeline ≈ 3,000–3,800 compute-min, main post-merge ≈ 5,000, a nightly or `PUBLISH_MAIN_SNAPSHOT` run ≈ 4,500, a docs-only MR ≈ 20.
+The GitLab compute-minute budget is finite. HAPTIC receives the [GitLab for Open Source cost factor](https://docs.gitlab.com/ci/pipelines/compute_minutes/#cost-factors): 0.5 compute-minutes per minute of job time across hosted runner sizes. Checked on 2026-10-06 against project billing: MR pipeline 2915500308 used about 369 compute-minutes and main pipeline 2914875982 about 469. Estimate each campaign from its expected jobs and current billing factor; check the namespace's remaining quota before a full matrix.
 
 - Push each MR once, after `make lint`, `make test`, and (for `charts/`) `./scripts/test-templates.sh` pass locally; fold fixups, changelog, and review fixes into that push.
 - When you do push again, cancel the superseded pipeline.

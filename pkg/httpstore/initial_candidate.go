@@ -175,7 +175,7 @@ func (s *HTTPStore) validateStagedCandidateSnapshotLocked(snapshot *stagedCandid
 		return nil
 	}
 	entry := s.cache[snapshot.source.url]
-	if entry != snapshot.entry || entry.mutationRevision != snapshot.mutationRevision ||
+	if !sameCacheEntryVersion(entry, snapshot.entry) || entry.mutationRevision != snapshot.mutationRevision ||
 		entry.AcceptedChecksum != "" || entry.HasPending {
 		return fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", RedactURL(snapshot.source.url))
 	}
@@ -341,7 +341,7 @@ func (s *HTTPStore) initialCandidateSnapshot(
 
 func (s *HTTPStore) validateInitialSnapshotLocked(url string, snapshot *initialCandidateSnapshot) error {
 	entry, exists := s.cache[url]
-	if !exists || entry != snapshot.entry || entry.sourceDescriptor != snapshot.sourceDescriptor ||
+	if !exists || !sameCacheEntryVersion(entry, snapshot.entry) || entry.sourceDescriptor != snapshot.sourceDescriptor ||
 		entry.sourceGeneration != snapshot.sourceGeneration ||
 		entry.mutationRevision != snapshot.mutationRevision || entry.AcceptedChecksum != "" || entry.HasPending {
 		return fmt.Errorf("HTTP source %s changed while it was being fetched; retry the render", RedactURL(url))

@@ -159,6 +159,30 @@ class ChartRulesTests(unittest.TestCase):
                                 and "--strict" in command for command in commands))
         self.assertEqual(rules(self.config, "lint")[-1], {"when": "on_success"})
 
+    def test_schema_generator_bump_runs_the_schema_check(self):
+        for path in ("Makefile", "charts/haptic/values.yaml", "charts/haptic/values.schema.extras.yaml",
+                     "charts/haptic/values.schema.json"):
+            with self.subTest(path=path):
+                self.assertTrue(selects(self.config, "chart-schema-check", path))
+        self.assertIn("make chart-schema-check", self.config["chart-schema-check"]["script"])
+        self.assertFalse(selects(self.config, ".rules-helm", "Makefile"),
+                         "a Makefile change must not pull in the chart matrix")
+
+    def test_mirror_refresh_schedule_runs_only_the_mirror_job(self):
+        mirror_only = {"if": '$MIRROR_IMAGES == "true"', "when": "never"}
+        self.assertNotIn(mirror_only, expand(self.config["workflow"]["rules"], self.config))
+        reserved = {"include", "stages", "default", "workflow", "variables"}
+        jobs = [name for name, job in self.config.items()
+                if name not in reserved and not name.startswith(".") and isinstance(job, dict)]
+        for job in jobs:
+            with self.subTest(job=job):
+                first = rules(self.config, job)[0]
+                if job == "mirror-ingress-conformance-image":
+                    self.assertEqual(first, {"if": '$MIRROR_IMAGES == "true"'})
+                    self.assertEqual(self.config[job]["needs"], [])
+                else:
+                    self.assertEqual(first, mirror_only)
+
     def test_main_publication_keeps_its_exact_playground_bundle(self):
         default_branch = {"if": "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH"}
         self.assertIn(default_branch, rules(self.config, "build-playground-wasm"))

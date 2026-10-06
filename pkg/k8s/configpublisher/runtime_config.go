@@ -34,12 +34,10 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 	runtimeConfig := p.buildRuntimeConfig(name, req)
 
 	var result *haproxyv1alpha1.HAProxyCfg
+	firstAttempt := true
 	err := retry.OnError(retry.DefaultRetry, retriableWrite, func() error {
-		// Get existing resource (must be inside retry loop for fresh resourceVersion)
-		existing, err := p.crdClient.HaproxyTemplateICV1alpha1().
-			HAProxyCfgs(req.TemplateConfigNamespace).
-			Get(ctx, name, metav1.GetOptions{})
-
+		existing, err := p.runtimeConfigToWrite(ctx, req.TemplateConfigNamespace, name, runtimeConfig, firstAttempt)
+		firstAttempt = false
 		if err != nil {
 			if !apierrors.IsNotFound(err) {
 				return fmt.Errorf("getting existing runtime config: %w", err)
@@ -55,7 +53,7 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 			return nil
 		}
 
-		// Update existing resource with fresh copy
+		// Update the existing resource
 		updated, updateErr := p.updateRuntimeConfig(ctx, req, existing, runtimeConfig)
 		if updateErr != nil {
 			return updateErr
@@ -74,6 +72,29 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 		return nil, fmt.Errorf("creating or updating runtime config: %w", interruptedErr(ctx))
 	}
 	return result, nil
+}
+
+// runtimeConfigToWrite returns the HAProxyCfg the write starts from. A first
+// attempt uses the informer's copy when it differs from desired, saving a read
+// of the whole object: the update carries the cached resourceVersion, so a
+// stale copy is refused with a conflict and the retry reads the live object.
+// An unchanged object is confirmed by a live read, because skipping the write
+// trusts it.
+func (p *Publisher) runtimeConfigToWrite(ctx context.Context, namespace, name string, desired *haproxyv1alpha1.HAProxyCfg, firstAttempt bool) (*haproxyv1alpha1.HAProxyCfg, error) {
+	if firstAttempt && p.listers != nil && p.listers.HAProxyCfgs != nil {
+		cached, err := p.listers.HAProxyCfgs.HAProxyCfgs(namespace).Get(name)
+		if err == nil && !runtimeConfigUpToDate(cached, desired) {
+			return cached.DeepCopy(), nil
+		}
+	}
+	return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).Get(ctx, name, metav1.GetOptions{})
+}
+
+func runtimeConfigUpToDate(existing, desired *haproxyv1alpha1.HAProxyCfg) bool {
+	return apiequality.Semantic.DeepEqual(existing.Spec, desired.Spec) &&
+		apiequality.Semantic.DeepEqual(existing.Annotations, desired.Annotations) &&
+		apiequality.Semantic.DeepEqual(existing.Labels, desired.Labels) &&
+		apiequality.Semantic.DeepEqual(existing.OwnerReferences, desired.OwnerReferences)
 }
 
 // interruptedErr names why a retry loop ended without a result.
@@ -150,10 +171,7 @@ func (p *Publisher) updateValidationErrorStatus(ctx context.Context, cfg *haprox
 // Skips the update when the desired spec and ownership metadata are unchanged.
 func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest, existing, runtimeConfig *haproxyv1alpha1.HAProxyCfg) (*haproxyv1alpha1.HAProxyCfg, error) {
 	updated := existing
-	if apiequality.Semantic.DeepEqual(existing.Spec, runtimeConfig.Spec) &&
-		apiequality.Semantic.DeepEqual(existing.Annotations, runtimeConfig.Annotations) &&
-		apiequality.Semantic.DeepEqual(existing.Labels, runtimeConfig.Labels) &&
-		apiequality.Semantic.DeepEqual(existing.OwnerReferences, runtimeConfig.OwnerReferences) {
+	if runtimeConfigUpToDate(existing, runtimeConfig) {
 		p.logger.Debug("Skipping HAProxyCfg update, desired state unchanged",
 			"name", existing.Name,
 			"checksum", existing.Spec.Checksum,
@@ -184,7 +202,17 @@ func (p *Publisher) updateRuntimeConfig(ctx context.Context, req *PublishRequest
 // updateRuntimeConfigStatus updates the HAProxyCfg status with child resource references.
 // Unchanged references still require the same publication identity.
 func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, result *PublishResult) error {
-	// Get the latest version
+	newAux := buildAuxiliaryFileReferences(
+		runtimeConfig.Namespace,
+		result,
+		runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey],
+	)
+	// The patch's test operations verify the publication identity on the
+	// server, so a change needs no prior read of the whole object.
+	if !auxiliaryRefsEqual(runtimeConfig.Status.AuxiliaryFiles, newAux) {
+		return p.patchRuntimeConfigStatusField(ctx, runtimeConfig, runtimeConfig, "auxiliaryFiles", newAux)
+	}
+
 	current, err := p.crdClient.HaproxyTemplateICV1alpha1().
 		HAProxyCfgs(runtimeConfig.Namespace).
 		Get(ctx, runtimeConfig.Name, metav1.GetOptions{})
@@ -194,12 +222,6 @@ func (p *Publisher) updateRuntimeConfigStatus(ctx context.Context, runtimeConfig
 	if err := validateRuntimePublication(runtimeConfig, current); err != nil {
 		return err
 	}
-
-	newAux := buildAuxiliaryFileReferences(
-		runtimeConfig.Namespace,
-		result,
-		runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey],
-	)
 
 	if auxiliaryRefsEqual(current.Status.AuxiliaryFiles, newAux) {
 		p.logger.Debug("Skipping HAProxyCfg status update, references unchanged",

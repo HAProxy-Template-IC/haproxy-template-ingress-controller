@@ -516,7 +516,7 @@ func (s *Session) invalidateQuery(
 	dirtyEntries map[QueryKey]nodeEntry,
 ) (bool, error) {
 	if s.wasQueried(key) {
-		return false, fmt.Errorf("incremental input invalidated query %q after it was evaluated", key.value)
+		return false, fmt.Errorf("incremental input invalidated query %q after it was evaluated", key.id.String())
 	}
 	entry, exists, err := s.currentNode(key)
 	if err != nil || !exists || entry.dirty {
@@ -565,7 +565,7 @@ func (s *Session) borrowInput(key InputKey) (inputEntry, bool, error) {
 	if !s.baseValidLocked() {
 		return inputEntry{}, false, errInvalidBaseGeneration
 	}
-	committed, exists := s.base.inputs.Root().Get([]byte(key.value))
+	committed, exists := s.base.inputs.Root().Get([]byte(key.id.String()))
 	if exists {
 		entry := openCommittedInputEntry(committed)
 		s.baseInputs[key] = entry
@@ -593,7 +593,7 @@ func (s *Session) baseInput(key InputKey) (inputEntry, bool, error) {
 	if !s.baseValidLocked() {
 		return inputEntry{}, false, errInvalidBaseGeneration
 	}
-	committed, exists := s.base.inputs.Root().Get([]byte(key.value))
+	committed, exists := s.base.inputs.Root().Get([]byte(key.id.String()))
 	if exists {
 		entry := openCommittedInputEntry(committed)
 		s.baseInputs[key] = entry
@@ -631,7 +631,7 @@ func (s *Session) baseNode(key QueryKey) (nodeEntry, bool, error) {
 	if !s.baseValidLocked() {
 		return nodeEntry{}, false, errInvalidBaseGeneration
 	}
-	committed, exists := s.base.nodes.Root().Get([]byte(key.value))
+	committed, exists := s.base.nodes.Root().Get([]byte(key.id.String()))
 	if exists {
 		entry, err := openCommittedNodeEntry(s.graph, key, committed)
 		if err != nil {
@@ -824,13 +824,13 @@ func buildReplacementReverseRoots(
 		}
 		for _, dependency := range nodes[key].deps {
 			values := dependents[dependency.key]
-			if len(values) > 0 && values[len(values)-1] == key.value {
+			if len(values) > 0 && values[len(values)-1] == key.id.String() {
 				return nil, fmt.Errorf(
 					"incremental query %q contains a duplicate dependency",
-					key.value,
+					key.id.String(),
 				)
 			}
-			dependents[dependency.key] = append(values, key.value)
+			dependents[dependency.key] = append(values, key.id.String())
 		}
 	}
 
@@ -892,10 +892,10 @@ func mergeQueryKeys(left, right []QueryKey) []QueryKey {
 	merged := make([]QueryKey, 0, len(left)+len(right))
 	for len(left) != 0 && len(right) != 0 {
 		switch {
-		case left[0].value < right[0].value:
+		case left[0].id.String() < right[0].id.String():
 			merged = append(merged, left[0])
 			left = left[1:]
-		case left[0].value > right[0].value:
+		case left[0].id.String() > right[0].id.String():
 			merged = append(merged, right[0])
 			right = right[1:]
 		default:
@@ -925,7 +925,7 @@ func (q *queryKeyQueue) Add(key QueryKey) {
 	q.values = append(q.values, key)
 	for index := len(q.values) - 1; index > 0; {
 		parent := (index - 1) / 2
-		if q.values[parent].value <= q.values[index].value {
+		if q.values[parent].id.String() <= q.values[index].id.String() {
 			break
 		}
 		q.values[parent], q.values[index] = q.values[index], q.values[parent]
@@ -949,10 +949,10 @@ func (q *queryKeyQueue) Pop() (QueryKey, bool) {
 		}
 		right := left + 1
 		smallest := left
-		if right < len(q.values) && q.values[right].value < q.values[left].value {
+		if right < len(q.values) && q.values[right].id.String() < q.values[left].id.String() {
 			smallest = right
 		}
-		if q.values[index].value <= q.values[smallest].value {
+		if q.values[index].id.String() <= q.values[smallest].id.String() {
 			break
 		}
 		q.values[index], q.values[smallest] = q.values[smallest], q.values[index]
@@ -978,13 +978,13 @@ func (s *Session) stageNodeChange(key QueryKey, entry *nodeEntry) error {
 		next, changed, err := root.Add(
 			s.graph.reverseAuthority,
 			reverseScope(dependency.key),
-			key.value,
+			key.id.String(),
 		)
 		if err != nil {
 			return fmt.Errorf("staging incremental reverse dependency: %w", err)
 		}
 		if !changed {
-			return fmt.Errorf("incremental staged reverse dependency already contains query %q", key.value)
+			return fmt.Errorf("incremental staged reverse dependency already contains query %q", key.id.String())
 		}
 		s.stagedReverse[dependency.key] = next
 	}
@@ -1009,13 +1009,13 @@ func (s *Session) unstageNodeChange(key QueryKey) error {
 		next, changed, err := root.Delete(
 			s.graph.reverseAuthority,
 			reverseScope(dependency.key),
-			key.value,
+			key.id.String(),
 		)
 		if err != nil {
 			return fmt.Errorf("unstaging incremental reverse dependency: %w", err)
 		}
 		if !changed {
-			return fmt.Errorf("incremental staged reverse dependency does not contain query %q", key.value)
+			return fmt.Errorf("incremental staged reverse dependency does not contain query %q", key.id.String())
 		}
 		size, err := next.Len(s.graph.reverseAuthority, reverseScope(dependency.key))
 		if err != nil {
@@ -1048,7 +1048,7 @@ func (s *Session) wasQueried(key QueryKey) bool {
 	}
 	for _, batch := range s.queriedBatches {
 		_, exists := slices.BinarySearchFunc(batch, key, func(left, right QueryKey) int {
-			return cmp.Compare(left.value, right.value)
+			return cmp.Compare(left.id.String(), right.id.String())
 		})
 		if exists {
 			return true
@@ -1214,7 +1214,7 @@ func (s *Session) BaseValue(key QueryKey) ([]byte, bool) {
 	if !s.baseValidLocked() {
 		return nil, false
 	}
-	entry, exists := s.base.nodes.Root().Get([]byte(key.value))
+	entry, exists := s.base.nodes.Root().Get([]byte(key.id.String()))
 	if !exists || entry.dirty {
 		return nil, false
 	}

@@ -77,7 +77,7 @@ func benchmarkSortedEdgeReplacementReverseBuild(
 		if comparison := compareDependencyKeys(left.dependency, right.dependency); comparison != 0 {
 			return comparison
 		}
-		return cmp.Compare(left.dependent.value, right.dependent.value)
+		return cmp.Compare(left.dependent.id.String(), right.dependent.id.String())
 	})
 	roots := make(map[dependencyKey]orderedset.Root)
 	values := make([]string, 0)
@@ -88,7 +88,7 @@ func benchmarkSortedEdgeReplacementReverseBuild(
 		}
 		values = values[:0]
 		for index := start; index < end; index++ {
-			values = append(values, edges[index].dependent.value)
+			values = append(values, edges[index].dependent.id.String())
 		}
 		root, err := orderedset.BuildSorted(authority, reverseScope(edges[start].dependency), values)
 		if err != nil {

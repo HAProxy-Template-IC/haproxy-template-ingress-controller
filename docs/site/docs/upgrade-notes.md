@@ -73,7 +73,30 @@ Free-form maps keep accepting any key: labels, annotations, selectors,
 `resources`, security contexts, affinity, and the top level of
 `controller.config.templatingSettings.extraContext`.
 
-### 3. Upgrade the release
+### 3. Check auth-headers-request header names
+
+`haproxy-haptic.org/auth-headers-request` and
+`haproxy-ingress.github.io/auth-headers-request` no longer forward header names
+that contain `_`. List them; this needs `kubectl` and `jq`:
+
+```bash
+kubectl get ingress --all-namespaces --output json |
+  jq -r '.items[] | .metadata as $m | ($m.annotations // {}) | to_entries[]
+    | select(.key == "haproxy-haptic.org/auth-headers-request"
+        or .key == "haproxy-ingress.github.io/auth-headers-request")
+    | select(.value | contains("_"))
+    | "\($m.namespace)/\($m.name) \(.key): \(.value)"'
+```
+
+Replace `_` with `-` in each listed header name, and have clients send the
+dashed header. The auth service needs no change: HAPTIC already delivered these
+headers to it with `-` in their names.
+
+**If you don't:** the header isn't forwarded to the auth service, the Ingress
+gets an `InvalidAuthHeader` Warning Event, and the admission webhook denies new
+or changed Ingresses that list one.
+
+### 4. Upgrade the release
 
 Pass the checked values file. `--reset-values` starts from the new chart's
 defaults, so the release doesn't carry rejected keys forward:

@@ -458,13 +458,13 @@ func TestPoisonedExactRootsFailClosed(t *testing.T) {
 	mustCommit(t, session)
 
 	graph.mu.Lock()
-	entry, exists := graph.current.nodes.Root().Get([]byte(left.value))
+	entry, exists := graph.current.nodes.Root().Get([]byte(left.id.String()))
 	if !exists {
 		graph.mu.Unlock()
 		t.Fatal("committed left query is missing")
 	}
 	entry.value = results[1].Value
-	poisoned, _, _ := graph.current.nodes.Insert([]byte(left.value), entry)
+	poisoned, _, _ := graph.current.nodes.Insert([]byte(left.id.String()), entry)
 	graph.current.nodes = poisoned
 	graph.mu.Unlock()
 

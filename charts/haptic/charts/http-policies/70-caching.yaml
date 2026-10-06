@@ -86,7 +86,7 @@ templateSnippets:
   # ==========================================================================
   # Build the reload-free per-route cache maps (always registered when the tier
   # is on, so map() references resolve even with no entries). Keyed by
-  # resource_id (ns/name), which base routing sets before frontend-filters.
+  # resource_key (ns/name for an Ingress), which base routing sets before frontend-filters.
   # ==========================================================================
   features-870-haptic-cache-maps:
     template: |

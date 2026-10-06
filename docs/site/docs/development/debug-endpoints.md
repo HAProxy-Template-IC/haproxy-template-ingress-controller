@@ -86,7 +86,7 @@ check the controller's health.
 |---|---|---|
 | `/healthz` | startup | Whether the newest configuration loaded and every component runs |
 | `/livez` | liveness | The same for the configuration this replica serves |
-| `/readyz` | readiness | `/livez`, plus whether admission validators are installed |
+| `/readyz` | readiness | `/livez`, plus whether admission validators are installed and the first full render finished |
 
 During reinitialization, `/healthz` allows up to 165 seconds for the new
 configuration to load. A failure that persists beyond this window returns HTTP
@@ -98,6 +98,23 @@ previous one. Its `/readyz` and `/livez` stay 200, so admission keeps validating
 against the configuration your HAProxy pods run. Other replicas return 503 and
 restart. The leader's exemption ends when any replica reports a healthy
 `/healthz`, or when a startup attempt runs longer than 165 seconds.
+
+## Health checks after a restart
+
+A replica validates admission requests against its first full render, which
+covers every watched resource and can take minutes on a large cluster with
+little memory headroom. Until that render finishes, the replica's `/readyz`
+entry `render-graph` reports it:
+
+- If another replica has finished its first render, `/readyz` returns 503, so
+  only replicas that can validate receive admission requests.
+- If no other replica can validate, `/readyz` stays 200 with a note in
+  `render-graph`, and the replica denies admission requests with a message
+  that tells you to retry.
+
+The controller logs `First full render is still running past the render
+timeout` when that render passes 30 seconds. If it never finishes, raise the
+controller's memory and CPU limits.
 
 ## Performance profiles
 

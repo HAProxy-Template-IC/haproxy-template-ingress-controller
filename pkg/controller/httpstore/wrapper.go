@@ -55,6 +55,7 @@ type HTTPStoreWrapper struct {
 	mu             sync.Mutex
 	declared       map[string]httpstore.SourceDescriptor
 	snapshots      map[string]httpstore.ContentSnapshot
+	renderFailure  error
 }
 
 // NewHTTPStoreWrapper creates a new HTTPStoreWrapper.
@@ -91,7 +92,9 @@ func NewHTTPStoreWrapperWithRetrySeed(
 		snapshots:      make(map[string]httpstore.ContentSnapshot),
 	}
 	if sourceMode == SourceModeAuthoritative {
-		wrapper.transaction = newInputTransaction(component, retrySeed)
+		deferred := deferredCandidatesFromContext(ctx)
+		wrapper.transaction = newInputTransaction(component, deferred.retrySeed(retrySeed))
+		wrapper.transaction.deferredCandidates = deferred
 		wrapper.transaction.withholdCandidates = CandidatesWithheld(ctx)
 	}
 	return wrapper
@@ -274,8 +277,7 @@ func (w *HTTPStoreWrapper) CommittedAcceptedReplayState() (*httpstore.AcceptedRe
 //	Basic fetch (no refresh):
 //	  {{ http.Fetch("https://example.com/data.txt") }}
 //
-//	With refresh interval — the first fetch is synchronous either way; this
-//	only sets how often the content is re-checked afterwards:
+//	With a refresh interval for re-checking accepted content:
 //	  {{ http.Fetch("https://example.com/data.txt", {"interval": "60s"}) }}
 //
 //	With options:
@@ -304,6 +306,31 @@ func (w *HTTPStoreWrapper) FetchSnapshot(args ...any) (any, httpstore.ContentSna
 	if err != nil {
 		return nil, httpstore.ContentSnapshot{}, err
 	}
+	content, snapshot, err := w.fetchSnapshot(url, opts, auth)
+	if err != nil && (opts.Critical || errors.Is(err, ErrCandidatePending)) {
+		w.mu.Lock()
+		if w.renderFailure == nil {
+			w.renderFailure = err
+		}
+		w.mu.Unlock()
+	}
+	if !opts.Critical && errors.Is(err, ErrCandidatePending) {
+		return "", snapshot, nil
+	}
+	return content, snapshot, err
+}
+
+// RenderFailure preserves required fetch errors even when Scriggo discards a call's error value.
+func (w *HTTPStoreWrapper) RenderFailure() error {
+	if w == nil {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.renderFailure
+}
+
+func (w *HTTPStoreWrapper) fetchSnapshot(url string, opts httpstore.FetchOptions, auth *httpstore.AuthConfig) (any, httpstore.ContentSnapshot, error) {
 	descriptor, err := httpstore.DescribeSource(opts, auth)
 	if err != nil {
 		return nil, httpstore.ContentSnapshot{}, fmt.Errorf("http.Fetch: %w", err)

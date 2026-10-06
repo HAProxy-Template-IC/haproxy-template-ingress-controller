@@ -95,7 +95,7 @@ func generationPublicationProbe(
 					publicationErr = errors.New("graph generation was not atomically replaced")
 					return
 				}
-				entry, found := graph.current.nodes.Root().Get([]byte(queryKey.value))
+				entry, found := graph.current.nodes.Root().Get([]byte(queryKey.id.String()))
 				if !found || entry.value.value != replacementRoot.value {
 					publicationErr = errors.New("published generation contains a substituted query root")
 				}
@@ -177,7 +177,7 @@ func TestConcurrentColdGenerationReadersNeverObservePartialPublication(t *testin
 					graph.mu.RUnlock()
 					return
 				}
-				entry, exists := generation.nodes.Root().Get([]byte(queryKey.value))
+				entry, exists := generation.nodes.Root().Get([]byte(queryKey.id.String()))
 				if !exists || entry.dirty || entry.changedAt > generation.number ||
 					entry.value.validateOwned(graph.valueAuthority, queryKey) != nil {
 					failure := "reader observed a partial generation"

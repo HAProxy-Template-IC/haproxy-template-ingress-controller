@@ -45,16 +45,16 @@ func TestCommittedGenerationAuthenticationFailsClosed(t *testing.T) {
 		{
 			name: "input root substitution",
 			poison: func(graph *Graph, _ *graphGeneration, inputKey InputKey, _ QueryKey) {
-				entry, _ := graph.current.inputs.Root().Get([]byte(inputKey.value))
-				inputs, _, _ := graph.current.inputs.Insert([]byte(inputKey.value), entry)
+				entry, _ := graph.current.inputs.Root().Get([]byte(inputKey.id.String()))
+				inputs, _, _ := graph.current.inputs.Insert([]byte(inputKey.id.String()), entry)
 				graph.current.inputs = inputs
 			},
 		},
 		{
 			name: "query root substitution",
 			poison: func(graph *Graph, _ *graphGeneration, _ InputKey, queryKey QueryKey) {
-				entry, _ := graph.current.nodes.Root().Get([]byte(queryKey.value))
-				nodes, _, _ := graph.current.nodes.Insert([]byte(queryKey.value), entry)
+				entry, _ := graph.current.nodes.Root().Get([]byte(queryKey.id.String()))
+				nodes, _, _ := graph.current.nodes.Insert([]byte(queryKey.id.String()), entry)
 				graph.current.nodes = nodes
 			},
 		},
@@ -70,15 +70,15 @@ func TestCommittedGenerationAuthenticationFailsClosed(t *testing.T) {
 		{
 			name: "dirty root substitution",
 			poison: func(graph *Graph, _ *graphGeneration, _ InputKey, queryKey QueryKey) {
-				dirty, _, _ := graph.current.dirty.Insert([]byte(queryKey.value), struct{}{})
+				dirty, _, _ := graph.current.dirty.Insert([]byte(queryKey.id.String()), struct{}{})
 				graph.current.dirty = dirty
 			},
 		},
 		{
 			name: "counter root substitution",
 			poison: func(graph *Graph, _ *graphGeneration, _ InputKey, queryKey QueryKey) {
-				entry, _ := graph.current.counters.Root().Get([]byte(queryKey.value))
-				counters, _, _ := graph.current.counters.Insert([]byte(queryKey.value), entry)
+				entry, _ := graph.current.counters.Root().Get([]byte(queryKey.id.String()))
+				counters, _, _ := graph.current.counters.Insert([]byte(queryKey.id.String()), entry)
 				graph.current.counters = counters
 			},
 		},
@@ -106,8 +106,8 @@ func TestCommittedGenerationAuthenticationFailsClosed(t *testing.T) {
 func TestCommittedLeavesDoNotExposeMutableAliases(t *testing.T) {
 	graph, _, inputKey, queryKey := committedGenerationAuthenticationFixture(t)
 	graph.mu.RLock()
-	input, inputExists := graph.current.inputs.Root().Get([]byte(inputKey.value))
-	node, nodeExists := graph.current.nodes.Root().Get([]byte(queryKey.value))
+	input, inputExists := graph.current.inputs.Root().Get([]byte(inputKey.id.String()))
+	node, nodeExists := graph.current.nodes.Root().Get([]byte(queryKey.id.String()))
 	graph.mu.RUnlock()
 	if !inputExists || !nodeExists {
 		t.Fatal("committed fixture is incomplete")
@@ -131,7 +131,7 @@ func TestCommittedLeavesDoNotExposeMutableAliases(t *testing.T) {
 		t.Fatal("detached-leaf mutation changed committed graph state")
 	}
 	graph.mu.RLock()
-	committedInput, _ := graph.current.inputs.Root().Get([]byte(inputKey.value))
+	committedInput, _ := graph.current.inputs.Root().Get([]byte(inputKey.id.String()))
 	graph.mu.RUnlock()
 	if committedInput.value == input.value {
 		t.Fatal("committed input aliases the detached copy")

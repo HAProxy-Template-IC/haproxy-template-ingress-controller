@@ -7,6 +7,12 @@ kind: ConfigMap
 metadata: {name: auth-server-config, namespace: echo}
 data:
   default.conf: |
+    # /gw-check (Gateway ExternalAuth test): 200 only for exactly these
+    # forwarded headers, so a header that leaks or goes missing fails it.
+    map "$http_authorization|$http_x_api_key|$http_cookie" $gw_check_ok {
+        default 0;
+        "Bearer good|k1|" 1;
+    }
     server {
         listen 80;
         access_log /dev/stdout;
@@ -29,6 +35,17 @@ data:
             }
             add_header X-Auth-User "alice" always;
             return 200 "OK (POST)\n";
+        }
+        location /gw-check {
+            if ($gw_check_ok = 0) {
+                return 401 "Unauthorized\n";
+            }
+            if ($host !~ "^gw-extauth\.") {
+                return 403 "Host not forwarded\n";
+            }
+            add_header X-Auth-User "alice" always;
+            add_header X-Auth-Roles "admin" always;
+            return 200 "OK\n";
         }
         location /deny {
             return 401 "Unauthorized\n";

@@ -90,13 +90,18 @@ func controllerPod(name, hash string, ready bool, port int32) *corev1.Pod {
 	}
 }
 
-func newTestSiblings(t *testing.T, pods ...runtime.Object) *siblingConvergence {
+func newTestSiblingProbes(t *testing.T, pods ...runtime.Object) *siblingProbes {
 	t.Helper()
 	self := controllerPod("self", "a", true, 1)
-	siblings, err := newSiblingConvergence(context.Background(), fake.NewClientset(append(pods, self)...),
+	probes, err := newSiblingProbes(context.Background(), fake.NewClientset(append(pods, self)...),
 		siblingTestNamespace, "self", controllerSelector, slog.Default())
 	require.NoError(t, err)
-	return siblings
+	return probes
+}
+
+func newTestSiblings(t *testing.T, pods ...runtime.Object) *siblingProbe {
+	t.Helper()
+	return newTestSiblingProbes(t, pods...).converged
 }
 
 const (
@@ -190,14 +195,14 @@ func TestSiblingConvergence_NoneConvergedIsCachedAndFailsSafe(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
 	siblings.now = func() time.Time { return now }
 
-	assert.False(t, siblings.NoneConverged(), "no result yet")
-	require.Eventually(t, siblings.NoneConverged, 5*time.Second, 10*time.Millisecond)
+	assert.False(t, siblings.NoneMatch(), "no result yet")
+	require.Eventually(t, siblings.NoneMatch, 5*time.Second, 10*time.Millisecond)
 
 	now = now.Add(2 * siblingRefreshInterval)
 	siblings.mu.Lock()
 	siblings.refreshing = true
 	siblings.mu.Unlock()
-	assert.False(t, siblings.NoneConverged(), "an outdated result cannot rule out a converged sibling")
+	assert.False(t, siblings.NoneMatch(), "an outdated result cannot rule out a converged sibling")
 }
 
 // After a chart upgrade the old leader must still see the new ReplicaSet,
@@ -214,7 +219,35 @@ func TestSiblingConvergence_FindsUpgradedReplicas(t *testing.T) {
 
 func TestNewSiblingConvergence_RejectsUnusableSelectors(t *testing.T) {
 	for _, selector := range []string{"", "app.kubernetes.io/instance in (", "!!"} {
-		_, err := newSiblingConvergence(context.Background(), fake.NewClientset(), siblingTestNamespace, "self", selector, slog.Default())
+		_, err := newSiblingProbes(context.Background(), fake.NewClientset(), siblingTestNamespace, "self", selector, slog.Default())
 		assert.Error(t, err, "selector %q", selector)
+	}
+}
+
+func TestSiblingRenderGraphProbe(t *testing.T) {
+	const (
+		publishedBody = `{"status":"ok","components":{"admission":{"healthy":true},"render-graph":{"healthy":true}}}`
+		aloneBody     = `{"status":"ok","components":{"render-graph":{"healthy":true,"error":"first full render still running"}}}`
+		olderBody     = `{"status":"ok","components":{"admission":{"healthy":true}}}`
+		waitingBody   = `{"status":"degraded","components":{"render-graph":{"healthy":false,"error":"first full render still running"}}}`
+	)
+	tests := []struct {
+		name     string
+		status   int
+		body     string
+		wantNone bool
+	}{
+		{name: "sibling with a published graph", status: http.StatusOK, body: publishedBody, wantNone: false},
+		{name: "sibling answering alone while its first render runs", status: http.StatusOK, body: aloneBody, wantNone: true},
+		{name: "sibling of a release without the entry", status: http.StatusOK, body: olderBody, wantNone: false},
+		{name: "sibling waiting for its first render", status: http.StatusServiceUnavailable, body: waitingBody, wantNone: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			probes := newTestSiblingProbes(t, controllerPod("peer", "a", true, healthzServer(t, tt.status, tt.body)))
+			none, err := probes.renderGraph.check(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantNone, none)
+		})
 	}
 }

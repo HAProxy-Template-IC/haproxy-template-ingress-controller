@@ -203,7 +203,7 @@ func (f *agentTLSRotation) oldControllerClient(ctx context.Context, t *testing.T
 	t.Cleanup(func() {
 		require.NoError(t, f.clientset.CoreV1().Services(ControllerNamespace).Delete(context.WithoutCancel(ctx), service.Name, metav1.DeleteOptions{}))
 	})
-	command, ports, err := startForwardTunnel(ctx, service.Name, []string{":5555"}, 1)
+	command, ports, err := startForwardTunnel(ctx, "service/"+service.Name, []string{":5555"}, 1)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
 	directory := filepath.Join(t.TempDir(), "active")

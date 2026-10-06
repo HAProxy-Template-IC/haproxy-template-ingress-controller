@@ -16,13 +16,16 @@ EPYC = "AMD EPYC 7B13"
 XEON = "Intel(R) Xeon(R) CPU @ 2.20GHz"
 
 
-def run(job_id, p95=2.0, rss=900e6, model=EPYC):
+def run(job_id, p95=2.0, rss=900e6, model=EPYC, publication_p95=3.0):
     return {
         "_job_id": job_id,
+        "scale_metrics_version": 2,
         "runner_cpu_model": model,
         "change_convergence_seconds_p95": p95,
+        "haproxycfg_publication_seconds_p95": publication_p95,
         "controller_rss_bytes": rss,
         "change_convergence_seconds_median": 1.5,
+        "haproxycfg_publication_seconds_median": 2.0,
         "seed_to_converged_seconds": 44.0,
         "controller_container_cpu_seconds_delta": 330.0,
         "haproxy_reloads_total_delta": 4,
@@ -88,7 +91,24 @@ class EvaluateTest(unittest.TestCase):
         del cur["controller_rss_bytes"]
         report, failed = self.verdict(cur, [run(1), run(2), run(3)])
         self.assertFalse(failed)
-        self.assertIn("trend: controller_rss_bytes: no comparable baseline", report)
+        self.assertIn("TREND UNGATED: controller_rss_bytes: no comparable baseline", report)
+
+    def test_redefined_metric_ignores_baselines_from_before_the_redefinition(self):
+        history = [run(1), run(2), run(3)]
+        for old in history:
+            old["change_convergence_seconds_p95"] = 0.5
+            del old["scale_metrics_version"]
+        report, failed = self.verdict(run(0, p95=2.0), history)
+        self.assertFalse(failed, report)
+        self.assertIn("TREND UNGATED: change_convergence_seconds_p95: no comparable baseline (0 values)", report)
+
+    def test_renamed_metric_keeps_its_history(self):
+        history = [run(1), run(2), run(3)]
+        for old in history:
+            old["change_marker_seconds_p95"] = old.pop("haproxycfg_publication_seconds_p95")
+        report, failed = self.verdict(run(0, publication_p95=4.6), history)
+        self.assertTrue(failed)
+        self.assertIn("TREND FAIL: haproxycfg_publication_seconds_p95: median 3 -> 4.6 (+53%) > +50%", report)
 
 
 class FetchHistoryTest(unittest.TestCase):

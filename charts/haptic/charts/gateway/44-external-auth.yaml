@@ -1,0 +1,219 @@
+# HTTPRoute ExternalAuth filter (protocol HTTP) on the SPOA hub external-auth
+# plugin. The rule's entries join the spoa-hub auth-*.map files keyed by its
+# txn.policy_id (gateway/<rule id>), so the shared check-auth flow in spoa-hub
+# runs the subrequest and denies on failure.
+templateSnippets:
+  util-gateway-external-auth-settings:
+    template: |-
+      {%- var GatewayExternalAuthSettings = func() map[string]any {
+        var messages = toStringSlice(extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}))
+        var plaintext = false
+        for _, plugin := range toSlice(extraContext | dig("spoaHub", "plugins") | fallback([]any{})) {
+          if dig_string(plugin, "", "name") == "external_auth" &&
+            regex_search(dig_string(plugin, "", "params"), "(?m)^[ \\t]*allow_plaintext[ \\t]*=[ \\t]*true[ \\t]*(#.*)?$") {
+            plaintext = true
+          }
+        }
+        return map[string]any{"available": messages contains "check-auth", "allowPlaintext": plaintext}
+      } -%}
+
+  # One verdict per rule, shared by the data plane and route status so a rule
+  # status reports as invalid is exactly a rule the frontend denies.
+  util-gateway-external-auth:
+    requires: [referencegrants, services]
+    template: |-
+      {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted -%}
+      {%- macro GatewayExternalAuth(route any, kind string, rule any, settings any, result map[string]any) -%}
+        {%%
+          result["attached"] = false
+          result["error"] = ""
+          result["reason"] = "UnsupportedValue"
+          var namespace = dig_string(route, "", "metadata", "namespace")
+          var name = dig_string(route, "", "metadata", "name")
+          var subject = kind + " " + namespace + "/" + name
+          var reject = func(message string) { result["error"] = subject + " " + message }
+          var unresolved = func(reason string, message string) {
+            result["resolvedReason"] = reason
+            reject(message)
+          }
+          var filters = []any{}
+          for _, filter := range toSlice(dig(rule, "filters")) {
+            if dig_string(filter, "", "type") == "ExternalAuth" { filters = append(filters, filter) }
+          }
+          for _, backend := range toSlice(dig(rule, "backendRefs")) {
+            for _, filter := range toSlice(dig(backend, "filters")) {
+              if dig_string(filter, "", "type") == "ExternalAuth" {
+                result["attached"] = true
+                reject("has an ExternalAuth filter on a backendRef, so its requests would skip authentication. Move the filter to the rule's filters.")
+                return
+              }
+            }
+          }
+          if len(filters) == 0 { return }
+          result["attached"] = true
+          if kind != "HTTPRoute" {
+            reject("has an ExternalAuth filter, which only HTTPRoute supports. Remove the filter.")
+            return
+          }
+          if len(filters) > 1 {
+            reject("has more than one ExternalAuth filter on a rule. Keep one.")
+            return
+          }
+          var auth = dig(filters[0], "externalAuth")
+          if auth == nil {
+            reject("has an ExternalAuth filter without settings the controller can read. Install the Gateway API experimental channel CRDs and restart the controller.")
+            return
+          }
+          if dig_string(auth, "", "protocol") != "HTTP" {
+            reject("uses ExternalAuth protocol '" + dig_string(auth, "", "protocol") + "'. Set protocol: HTTP; GRPC is not supported.")
+            return
+          }
+          if toint(dig(auth, "forwardBody", "maxSize") | fallback(0)) > 0 {
+            reject("sets ExternalAuth forwardBody, which is not supported. Remove forwardBody.")
+            return
+          }
+          var backendRef = dig(auth, "backendRef")
+          var group = dig_string(backendRef, "", "group")
+          var backendKind = dig_string(backendRef, "Service", "kind")
+          if (group != "" && group != "core") || backendKind != "Service" {
+            unresolved("InvalidKind", "has an ExternalAuth backendRef of kind " + group + "/" + backendKind + ". Reference a Service.")
+            return
+          }
+          var backendName = dig_string(backendRef, "", "name")
+          var backendNamespace = dig_string(backendRef, namespace, "namespace")
+          if backendNamespace == "" { backendNamespace = namespace }
+          var port = toint(dig(backendRef, "port") | fallback(0))
+          if port < 1 || port > 65535 {
+            reject("has an ExternalAuth backendRef without a port in 1-65535. Set backendRef.port.")
+            return
+          }
+          if ReferenceGrantPermitted("gateway.networking.k8s.io", kind, namespace, "", "Service", backendNamespace, backendName) != "true" {
+            unresolved("RefNotPermitted", "references ExternalAuth Service " + backendNamespace + "/" + backendName + " without a ReferenceGrant. Add a ReferenceGrant in " + backendNamespace + ".")
+            return
+          }
+          var service = resources.services.GetSingle(backendNamespace, backendName)
+          if service == nil {
+            unresolved("BackendNotFound", "references ExternalAuth Service " + backendNamespace + "/" + backendName + ", which does not exist. Create it or correct backendRef.")
+            return
+          }
+          var scheme = "http"
+          for _, servicePort := range service.Spec.Ports {
+            if toint(servicePort.Port) == port &&
+              (servicePort.AppProtocol == "https" || servicePort.AppProtocol == "kubernetes.io/https" || servicePort.Name == "https") {
+              scheme = "https"
+            }
+          }
+          if dig(settings, "available") != true {
+            reject("has an ExternalAuth filter, but the SPOA hub external-auth plugin is disabled. Enable spoaHub.plugins.external-auth.")
+            return
+          }
+          if scheme == "http" && dig(settings, "allowPlaintext") != true {
+            reject("sends ExternalAuth requests over plain HTTP, which the external-auth plugin refuses. Set allow_plaintext = true in spoaHub.plugins.external-auth.params.")
+            return
+          }
+          var prefix = dig_string(auth, "", "http", "path")
+          if !regex_search(prefix, "^(?:[-A-Za-z0-9/._~!$&'()*+,;=:@]|%[0-9a-fA-F]{2})*$") {
+            reject("has an ExternalAuth http.path with characters outside the Gateway API path syntax. Correct http.path.")
+            return
+          }
+          if prefix != "" && !hasPrefix(prefix, "/") { prefix = "/" + prefix }
+          for hasSuffix(prefix, "/") { prefix = prefix[:len(prefix)-1] }
+          var tokenOk = func(header string) bool { return regex_search(header, "^[A-Za-z0-9-]+$") }
+          var forward = []string{"authorization", "host"}
+          var requestHeaders = []string{}
+          for _, headerAny := range toSlice(dig(auth, "http", "allowedHeaders")) {
+            var header = toLower(tostring(headerAny))
+            if !tokenOk(header) {
+              reject("allows ExternalAuth request header '" + header + "'. Use letters, digits and '-' in header names.")
+              return
+            }
+            var arg = replace(header, "-", "_")
+            if !(forward contains arg) {
+              forward = append(forward, arg)
+              requestHeaders = append(requestHeaders, header)
+            }
+          }
+          var reserved = map[string]bool{"allowed": true, "status-code": true, "redirect-url": true, "error": true,
+            "host": true, "content-length": true, "transfer-encoding": true, "connection": true, "keep-alive": true,
+            "te": true, "trailer": true, "upgrade": true, "proxy-connection": true}
+          var responseHeaders = []string{}
+          for _, headerAny := range toSlice(dig(auth, "http", "allowedResponseHeaders")) {
+            var header = tostring(headerAny)
+            if !tokenOk(header) || reserved[toLower(header)] {
+              reject("copies ExternalAuth response header '" + header + "', which cannot be copied. List other headers in http.allowedResponseHeaders.")
+              return
+            }
+            responseHeaders = append(responseHeaders, header)
+          }
+          if len(responseHeaders) == 0 {
+            reject("has an ExternalAuth filter without http.allowedResponseHeaders. List the auth response headers to copy to the backend.")
+            return
+          }
+          result["url"] = scheme + "://" + backendName + "." + backendNamespace + ".svc.cluster.local:" + tostring(port) + prefix
+          result["forward"] = join(forward, ",")
+          result["requestHeaders"] = requestHeaders
+          result["responseHeaders"] = responseHeaders
+        %%}
+      {%- end macro -%}
+
+  # The plugin forwards a request header only when its hdr_<name> argument is
+  # on the check-auth message; host and the rule's allowedHeaders are added here.
+  spoe-message-check-auth-extra-args-600-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |-
+      {{- render "util-gateway-route-filter-publications" -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-extauth-args") -}}
+
+  map-auth-url-600-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |-
+      {{- render "util-gateway-route-filter-publications" -}}
+      {{ "\n" }}{{- incremental_ranked_fragments("gateway-route-filter-maps", "extauth-url") -}}
+
+  map-auth-forward-headers-600-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |-
+      {{- render "util-gateway-route-filter-publications" -}}
+      {{ "\n" }}{{- incremental_ranked_fragments("gateway-route-filter-maps", "extauth-forward") -}}
+
+  map-auth-extract-headers-600-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |-
+      {{- render "util-gateway-route-filter-publications" -}}
+      {{ "\n" }}{{- incremental_ranked_fragments("gateway-route-filter-maps", "extauth-extract") -}}
+
+  # The auth request carries the client's method (spec: Method is always sent).
+  frontend-spoe-auth-request-600-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |-
+      {%- if strip(render "map-auth-url-600-gateway") != "" %}
+      {%- var authURLMap, _ = pathResolver.GetPath("auth-url.map", "map") %}
+      http-request set-var(txn.gw_extauth) bool(true) if { var(txn.gw_rule_id) -m found } { var(txn.auth_key),map({{ authURLMap }}) -m found }
+      http-request set-var(txn.auth_method) method if { var(txn.gw_extauth) -m bool }
+      {%- end %}
+
+  # Gateway API accepts only a 200 from the auth server, and the plugin's
+  # fail_open must not open a Gateway route.
+  frontend-spoe-auth-verdict-600-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |-
+      {%- if strip(render "map-auth-url-600-gateway") != "" %}
+      http-request set-var(txn.hub.external_auth.allowed) bool(false) if { var(txn.gw_extauth) -m bool } !{ var(txn.hub.external_auth.status_code) -m int 200 }
+      {%- end %}
+
+  frontend-spoe-set-pass-headers-600-gateway:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |-
+      {{- render "util-gateway-route-filter-publications" -}}
+      {{- incremental_ranked_text_fragment("gateway-route-filter-maps", "cfg-extauth-pass") -}}
+
+  frontend-filters-007-gateway-external-auth-unavailable:
+    requires: [gateways, grpcroutes, httproutes, referencegrants]
+    template: |
+      {{- render "util-gateway-route-maps" -}}
+      {%- if incremental_ranked_fragment_bytes("gateway-route-filter-maps", "extauth-error") > 0 %}
+      {%- var gwm, _ = shared.ComputeIfAbsent("gatewayRouteMaps", func() any { return nil }) %}
+      {%- var errorMap = tostring(dig(gwm, "extauthErrorPath")) %}
+      http-request set-var(txn.denied_by) str(external_auth_unavailable) if { var(txn.gw_rule_id),map({{ errorMap }}) -m found }
+      http-request deny deny_status 500 if { var(txn.gw_rule_id),map({{ errorMap }}) -m found }
+      {%- end %}

@@ -77,6 +77,7 @@ The script:
 - Writes `<version>` to the `VERSION` file
 - Updates `Chart.yaml` `version`, `appVersion`, and the `artifacthub.io/images` annotation (controller and spoa-hub image tags)
 - Updates the `helm install ... --version <version>` examples in the READMEs and docs, and the landing page's fallback version
+- Keeps commands under `Upgrading to <version>` headings within that version line; older migration steps retain their target version
 - Re-pins the controller image tag in the docs' `migrate-check` docker one-liner (`haptic:<version>-haproxy<series>`, with the series taken from `versions.env`'s `DEFAULT_HAPROXY`)
 - Rewrites hosted-docs links (`/docs/dev/` → `/docs/<version>/`) and repo-blob links (`/-/blob/main/` → `/-/blob/v<version>/`) so a released page links to the matching sources
 - Stages and commits everything as `release: haptic v<version>`

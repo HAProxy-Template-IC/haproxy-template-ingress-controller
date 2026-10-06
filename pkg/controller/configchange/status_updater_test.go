@@ -668,3 +668,28 @@ func TestStatusUpdater_SkipsNoOpStatusWrites(t *testing.T) {
 	}))
 	assert.Equal(t, 1, writes, "a changed status must still be written")
 }
+
+func TestStatusUpdaterEmitsHTTPContentRevocationEffects(t *testing.T) {
+	tests := map[string]struct {
+		restored bool
+		critical bool
+		message  string
+	}{
+		"optional": {message: "Templates render without it"},
+		"critical": {critical: true, message: "nothing new deploys"},
+		"restored": {restored: true, critical: true, message: "previously accepted content is served"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			updater, _ := newStatusUpdaterFixture(t)
+			recorder := record.NewFakeRecorder(1)
+			updater.recorder = recorder
+			updater.cacheConfigRefs([]events.ConfigSourceRef{{Namespace: testNamespace, Name: testName}})
+
+			updater.HandleEvent(events.NewHTTPContentRevokedEvent(
+				"https://example.test/page", "checksum", test.restored, test.critical))
+
+			assertNextEvent(t, recorder, "Warning", eventReasonContentRevoked, test.message)
+		})
+	}
+}

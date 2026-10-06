@@ -43,35 +43,31 @@ func TestRuntimeConfigStatusConcurrentWriters(t *testing.T) {
 			cfg.OwnerReferences[0].UID = "replacement-template"
 		}},
 	}
+	// Changed references are written without a prior read, so a concurrent
+	// writer can only land before the status patch.
 	for _, tt := range tests {
-		for _, beforeRead := range []bool{true, false} {
-			phase := "during write"
-			if beforeRead {
-				phase = "before read"
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, _, client, publisher := newTestPublisher(t)
+			cfg := runtimeStatusFixture(t, publisher)
+			_, err := client.HaproxyTemplateICV1alpha1().HAProxyCfgs(cfg.Namespace).Create(ctx, cfg, metav1.CreateOptions{})
+			require.NoError(t, err)
+			installRuntimeStatusMutation(t, client, false, tt.change)
+			result := &PublishResult{MapFileNames: []string{"new-map"}}
+			err = publisher.updateRuntimeConfigStatus(ctx, cfg, result)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
 			}
-			t.Run(tt.name+"/"+phase, func(t *testing.T) {
-				ctx, _, client, publisher := newTestPublisher(t)
-				cfg := runtimeStatusFixture(t, publisher)
-				_, err := client.HaproxyTemplateICV1alpha1().HAProxyCfgs(cfg.Namespace).Create(ctx, cfg, metav1.CreateOptions{})
-				require.NoError(t, err)
-				installRuntimeStatusMutation(t, client, beforeRead, tt.change)
-				result := &PublishResult{MapFileNames: []string{"new-map"}}
-				err = publisher.updateRuntimeConfigStatus(ctx, cfg, result)
-				if tt.wantErr {
-					require.Error(t, err)
-				} else {
-					require.NoError(t, err)
-				}
-				current, err := client.HaproxyTemplateICV1alpha1().HAProxyCfgs(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
-				require.NoError(t, err)
-				want := cfg.DeepCopy()
-				tt.change(want)
-				if !tt.wantErr {
-					want.Status.AuxiliaryFiles = buildAuxiliaryFileReferences(cfg.Namespace, result, cfg.Annotations[AuxiliarySetIDAnnotationKey])
-				}
-				assert.Equal(t, want.Status, current.Status)
-			})
-		}
+			current, err := client.HaproxyTemplateICV1alpha1().HAProxyCfgs(cfg.Namespace).Get(ctx, cfg.Name, metav1.GetOptions{})
+			require.NoError(t, err)
+			want := cfg.DeepCopy()
+			tt.change(want)
+			if !tt.wantErr {
+				want.Status.AuxiliaryFiles = buildAuxiliaryFileReferences(cfg.Namespace, result, cfg.Annotations[AuxiliarySetIDAnnotationKey])
+			}
+			assert.Equal(t, want.Status, current.Status)
+		})
 	}
 }
 
@@ -98,7 +94,8 @@ func TestRuntimeConfigStatusUnchangedReferencesRequirePublicationIdentity(t *tes
 		current.UID = "replacement"
 	})
 	require.Error(t, publisher.updateRuntimeConfigStatus(ctx, cfg, result))
-	require.Error(t, publisher.ensurePublicationCurrent(ctx, cfg, cfg.Status.AuxiliaryFiles))
+	_, err = publisher.ensurePublicationCurrent(ctx, cfg, cfg.Status.AuxiliaryFiles)
+	require.Error(t, err)
 }
 
 func TestRuntimeConfigStatusRequiresUID(t *testing.T) {
