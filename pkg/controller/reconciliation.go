@@ -35,6 +35,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/eventemitter"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/inputisolation"
 	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
@@ -76,6 +77,7 @@ type reconciliationWiring struct {
 	renderService         *renderer.RenderService
 	publishedCurrentFiles *publishedAuxFiles
 	freshStoreProvider    func(context.Context) (stores.StoreProvider, error)
+	inputIsolation        *inputisolation.Service
 	gvrMapper             meta.RESTMapper
 	// warmed is the follower warmer's first-render signal; a hand-over waits
 	// for it so the new leader's first render is warm.
@@ -211,18 +213,15 @@ func createReconciliationComponents(
 		}
 	})
 
-	// Two pipeline instances, because the two callers answer to different
-	// clocks. The reconcile instance renders and hands the bytes to the fleet;
-	// HAProxy's verdict on them arrives from the render gate (ADR-0022). The
-	// proposal instance answers an admission request, which must carry the
-	// verdict in its own reply, so it keeps the full synchronous check.
+	// Input acceptance requires complete validation before publication (ADR-0032).
 	proposalValidation := newProposalValidator(cfg, logger)
-	reconcilePipeline := pipeline.New(&pipeline.PipelineConfig{
+	inputSelector := newInputSelector(setup, cfg, pipeline.New(&pipeline.PipelineConfig{
 		Renderer:        renderService,
+		Validator:       proposalValidation,
 		OutputValidator: outputValidator,
 		CommitValidator: proposalValidation,
 		Logger:          logger,
-	})
+	}), logger)
 	proposalPipeline := pipeline.New(&pipeline.PipelineConfig{
 		Renderer:        renderService,
 		Validator:       proposalValidation,
@@ -233,7 +232,7 @@ func createReconciliationComponents(
 	// Coordinator: leader-side render + deploy.
 	coordinatorComponent := reconciler.NewCoordinator(&reconciler.CoordinatorConfig{
 		EventBus:       setup.Bus,
-		Pipeline:       reconcilePipeline,
+		Pipeline:       inputSelector,
 		StoreProvider:  storeProvider,
 		CurrentFiles:   currentFiles,
 		HTTPAcceptance: httpStoreComponent,
@@ -241,16 +240,10 @@ func createReconciliationComponents(
 		Logger:         logger,
 	})
 
-	// Warmer: a follower's render, committed for the graph and then dropped.
-	// Its own pipeline leaves out the pluggable output validators, which would
-	// otherwise run on every replica for a render nothing deploys.
+	// Followers establish the same validated input boundary before serving admission.
 	warmerComponent := warmer.New(&warmer.Config{
-		EventBus: setup.Bus,
-		Pipeline: pipeline.New(&pipeline.PipelineConfig{
-			Renderer:        renderService,
-			CommitValidator: proposalValidation,
-			Logger:          logger,
-		}),
+		EventBus:           setup.Bus,
+		Pipeline:           inputSelector,
 		StoreProvider:      storeProvider,
 		CurrentFilesSource: currentFiles.PublishedExactSource,
 		GraphWarm:          renderService.IncrementalGraphWarm,
@@ -260,10 +253,11 @@ func createReconciliationComponents(
 
 	// The event adapter validates HTTP-store content promotion.
 	proposalValidatorComponent := proposalvalidator.New(setup.Bus, &proposalvalidator.ServiceConfig{
-		Pipeline:             proposalPipeline,
-		BaseStoreProvider:    storeProvider,
-		CurrentFilesProvider: currentFiles.publishedSnapshot,
-		Logger:               logger,
+		Pipeline:              proposalPipeline,
+		BaseStoreProvider:     storeProvider,
+		AcceptedStoreProvider: inputSelector.AcceptedInputs,
+		CurrentFilesProvider:  currentFiles.publishedSnapshot,
+		Logger:                logger,
 	})
 
 	// RenderGate: the reconcile path's `haproxy -c`, off the wall clock, on its
@@ -378,6 +372,7 @@ func createReconciliationComponents(
 	return &reconciliationWiring{
 		renderService:         renderService,
 		publishedCurrentFiles: currentFiles.published,
+		inputIsolation:        inputSelector,
 		gvrMapper:             gvrMapper,
 		warmed:                warmerComponent.Warmed(),
 	}, nil

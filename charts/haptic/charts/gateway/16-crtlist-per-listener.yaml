@@ -39,8 +39,7 @@ templateSnippets:
   # the crt-list and bind roots for unrelated changes (#226). A listener is
   # servable when its first certificateRef resolved for THIS Gateway (the
   # ReferenceGrant verdict is per Gateway) and its frontend validation is not
-  # blocked; a listener whose tls.options would break the bind line is
-  # published with the offending kind so the bind root can reject or warn.
+  # blocked. Invalid TLS options are checked in the owning Gateway context.
   gateway-https-listeners-100-gateway:
     requires: [gateways, secrets]
     incremental:
@@ -48,9 +47,10 @@ templateSnippets:
       group: gateway-https-listeners
       consumes: [gateway-tls-certificates, gateway-pod-port-allocations]
       optionalConsumes: [gateway-listener-mtls]
-      effects: [publishValue]
+      effects: [publishValue, recordEvent]
     template: |-
       {%- import "util-gateway-listener-crtlist-name" for CrtlistName -%}
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- import "util-gateway-listener-tls-options" for TLSOptionsSuffix, TLSOptionsInjection -%}
       {%%
         var namespace = dig_string(item, "", "metadata", "namespace")
@@ -74,6 +74,11 @@ templateSnippets:
             var resolved, found = shared.Select("gateway-tls-certificates", "resolved",
               gatewayKey + "/" + tostring(listenerIndex) + "/0")
             if !found { continue }
+            var injection = TLSOptionsInjection(listener)
+            if injection != "" {
+              _ = WebhookRejectOrWarn(gateway, "InvalidTLSOptions", "Gateway " + gatewayKey + "/" + listener.Name + " has a tls.options value containing " + injection + ", which would break out of the bind directive; the listener is not applied. Remove whitespace, quotes and control characters from TLS options.")
+              continue
+            }
             var podPort = listenerPort
             var allocated, allocatedFound = shared.Select("gateway-pod-port-allocations", "ports",
               gatewayKey + ":" + listener.Name + ":" + tostring(listenerPort))
@@ -106,7 +111,6 @@ templateSnippets:
               "podPort": podPort,
               "ignoreErr": ignoreErr,
               "tlsSuffix": TLSOptionsSuffix(listener),
-              "injection": TLSOptionsInjection(listener),
             })
           }
         }

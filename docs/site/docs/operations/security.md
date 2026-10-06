@@ -251,7 +251,7 @@ annotations.
 
 ## Annotation input as a trust boundary
 
-Most annotation values reach the config as validated or escaped data: CIDR-list annotations are parsed as CIDRs (an invalid entry fails the render), and header, cookie, SNI, and rewrite-target values are checked against a strict character set that rejects control characters, so they can't break out of their directive and inject arbitrary HAProxy config.
+Most annotation values reach the config as validated or escaped data: CIDR-list annotations are parsed as CIDRs, and header, cookie, SNI, and rewrite-target values are checked against a strict character set that rejects control characters, so they can't break out of their directive and inject arbitrary HAProxy config. Invalid values reject the proposed resource change. If a watched change prevents complete configuration validation, [input isolation](input-isolation.md) keeps its previous validated revision while independent valid changes continue.
 
 The `*-config-snippet` annotations (`haproxy.org/backend-config-snippet`, `nginx.ingress.kubernetes.io/configuration-snippet`, and the like) are the deliberate exception: their value is inserted into the rendered config verbatim. Anyone who can create or edit an Ingress in a watched namespace can therefore inject arbitrary HAProxy directives. Treat Ingress edit permission in watched namespaces as equivalent to HAProxy config access, and restrict it with RBAC accordingly.
 

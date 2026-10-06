@@ -106,7 +106,8 @@ type Metrics struct {
 	ValidationErrors prometheus.Counter
 
 	// Resource metrics
-	ResourceCount *prometheus.GaugeVec
+	ResourceCount         *prometheus.GaugeVec
+	RejectedWatchedInputs prometheus.Gauge
 
 	// Event metrics
 	EventSubscribers           prometheus.Gauge
@@ -428,6 +429,11 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_config_pinned",
 			"1 while the render gate holds renders HAProxy refused: the fleet keeps serving the last accepted config and no new render reaches it until the input is fixed (leader-only; 0 on followers).",
+		),
+		RejectedWatchedInputs: pkgmetrics.NewGauge(
+			registry,
+			"haptic_rejected_watched_inputs",
+			"Watched resource changes held at their last validated revision while independent changes continue.",
 		),
 
 		RenderProfiles: pkgmetrics.NewGauge(

@@ -238,7 +238,13 @@ func createDryRunValidator(
 		GeneralDir:        dirConfig.GeneralDir,
 	})
 
-	return buildDryRunValidator(renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, wiring.freshStoreProvider, logger)
+	var admissionStoreProvider func(context.Context, stores.StoreProvider) (stores.StoreProvider, bool, error)
+	var observedStoreProvider func(context.Context, stores.StoreProvider) (stores.StoreProvider, error)
+	if wiring.inputIsolation != nil {
+		admissionStoreProvider = wiring.inputIsolation.IsolatedInputs
+		observedStoreProvider = wiring.inputIsolation.ObservedInputs
+	}
+	return buildDryRunValidator(renderService, validationService, storeProvider, outputValidator, wiring.gvrMapper, cfg.WatchedResources, wiring.publishedCurrentFiles.get, wiring.freshStoreProvider, admissionStoreProvider, observedStoreProvider, logger)
 }
 
 // buildDryRunValidator connects the admission service to resource overlay handling.
@@ -251,6 +257,8 @@ func buildDryRunValidator(
 	watchedResources map[string]coreconfig.WatchedResource,
 	currentFilesProvider func() (map[string]string, error),
 	freshStoreProvider func(context.Context) (stores.StoreProvider, error),
+	admissionStoreProvider func(context.Context, stores.StoreProvider) (stores.StoreProvider, bool, error),
+	observedStoreProvider func(context.Context, stores.StoreProvider) (stores.StoreProvider, error),
 	logger *slog.Logger,
 ) (*dryrunvalidator.Component, error) {
 	pipelineInstance := pipeline.New(&pipeline.PipelineConfig{
@@ -261,11 +269,13 @@ func buildDryRunValidator(
 	})
 
 	proposalValidatorInstance := proposalvalidator.NewService(&proposalvalidator.ServiceConfig{
-		Pipeline:             pipelineInstance,
-		BaseStoreProvider:    baseStoreProvider,
-		FreshStoreProvider:   freshStoreProvider,
-		CurrentFilesProvider: currentFilesProvider,
-		Logger:               logger,
+		Pipeline:               pipelineInstance,
+		BaseStoreProvider:      baseStoreProvider,
+		FreshStoreProvider:     freshStoreProvider,
+		AdmissionStoreProvider: admissionStoreProvider,
+		ObservedStoreProvider:  observedStoreProvider,
+		CurrentFilesProvider:   currentFilesProvider,
+		Logger:                 logger,
 	})
 
 	// The admission webhook only validates the *submitted* resource

@@ -9,6 +9,10 @@ gate keep step 3. ADR-0013's Option 1 reasoning is restated in HAProxy's terms
 rather than the API's. ADR-0013's `spec.json` reference is historical: the
 generated validators survive only for the WASM playground.
 
+[ADR-0032](0032-watched-input-isolation.md) supersedes the asynchronous-only
+reconciliation check: watched inputs now require synchronous validation before
+acceptance. The render gate and agent validation remain in place.
+
 ## Context
 
 Route propagation is HAPTIC's remaining measurable gap: create an HTTPRoute →

@@ -114,6 +114,7 @@ nav:
       - Networking: operations/networking.md
     - Observe and troubleshoot:
       - Fleet diagnostics: operations/diagnostics.md
+      - Rejected resource changes: operations/input-isolation.md
       - Access logging: operations/access-logging.md
       - Metrics, alerts, and dashboards: operations/monitoring.md
       - Debugging: operations/debugging.md

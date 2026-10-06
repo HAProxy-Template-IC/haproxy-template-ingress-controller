@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Isolate invalid watched resource changes so independent endpoint updates and admission requests can continue through complete configuration validation.
 - Preserve event correlation for updates triggered by external HTTP content.
 - Lower controller memory at large route counts: a controller restarting with 3,000 Ingresses completes within a 3 GiB limit instead of being `OOMKilled` on every attempt.
 - A restarted controller whose first full render takes longer than the render timeout now finishes it instead of retrying it forever, so it deploys and validates admission requests again.
@@ -44,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- Invalid Gateway TLS options no longer reject admission for unrelated resources.
 - `extraContext.tls.ciphers`, `ciphersuites`, and `minVersion` install; a chart guard rejected the documented TLS policy keys.
 - A WAF policy catalog set only through `waf.policies.configMapRefs` fails the install when the SPOA hub or the `hapticAnnotations` library is disabled, instead of rendering without the WAF.
 - An HTTPRoute or GRPCRoute no longer inherits Ingress annotation features (external auth, access control, CORS, method and header requirements, request validation and others) from an Ingress with the same namespace and name.

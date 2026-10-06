@@ -65,6 +65,11 @@ type incrementalComponent struct {
 type incrementalStoreCursor struct {
 	source   stores.RevisionSource
 	sequence uint64
+	diffBase *incrementalSnapshotDiffBase
+}
+
+type incrementalSnapshotDiffBase struct {
+	snapshot stores.ReadSnapshot
 }
 
 type incrementalHTTPCursor struct {

@@ -366,6 +366,9 @@ func journalChangesThrough(
 	if journal == nil || through < from {
 		return nil, false
 	}
+	if ranged, ok := journal.(stores.ExactRevisionRangeJournal); ok && ranged.ExactRevisionJournalSource() != 0 {
+		return ranged.ChangesBetween(from, through)
+	}
 	current, changes, complete := journal.ChangesSince(from)
 	if !complete || current < through {
 		return nil, false
@@ -389,4 +392,23 @@ func journalChangesThrough(
 		return nil, false
 	}
 	return bounded, true
+}
+
+func snapshotCursorChanges(ctx context.Context, journal stores.ExactRevisionJournal, cursor incrementalStoreCursor, snapshot stores.ReadSnapshot) ([]stores.RevisionChange, bool, error) {
+	changes, complete := journalChangesThrough(journal, cursor.sequence, snapshot.Sequence())
+	if complete {
+		return changes, true, nil
+	}
+	if cursor.diffBase == nil {
+		return nil, false, nil
+	}
+	previous := cursor.diffBase.snapshot
+	if previous.RevisionSource() != cursor.source || previous.Sequence() != cursor.sequence {
+		return nil, false, nil
+	}
+	differ, supported := snapshot.(stores.ExactSnapshotDiffer)
+	if !supported {
+		return nil, false, nil
+	}
+	return differ.ChangesFrom(ctx, previous)
 }

@@ -41,6 +41,13 @@ type ExactRevisionJournal interface {
 	ExactRevisionJournalSource() RevisionSource
 }
 
+// ExactRevisionRangeJournal certifies both endpoints belong to the same retained
+// history and returns every change between them, including atomic batches.
+type ExactRevisionRangeJournal interface {
+	ExactRevisionJournal
+	ChangesBetween(from, through uint64) (changes []RevisionChange, complete bool)
+}
+
 // IdentityGetter retrieves a resource without knowing its configured index keys.
 type IdentityGetter interface {
 	GetIdentity(namespace, name string) (resource any, found bool, err error)
@@ -64,6 +71,13 @@ type ReadSnapshot interface {
 	Sequence() uint64
 	Get(keys ...string) ([]any, error)
 	List() ([]any, error)
+}
+
+// ExactSnapshotDiffer proves the complete identity and index-key difference
+// between immutable roots, including divergent branches of one source.
+type ExactSnapshotDiffer interface {
+	ReadSnapshot
+	ChangesFrom(ctx context.Context, previous ReadSnapshot) (changes []RevisionChange, complete bool, err error)
 }
 
 // IdentityOrderedReadSnapshot guarantees List and Get order solely by namespace/name.

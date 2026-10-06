@@ -1089,15 +1089,22 @@ which is how it survived review.
 
 When a snippet validates a value that came off a **watched resource** (an Ingress
 annotation, a route field), do **not** reach for a bare `fail()` by default —
-`fail()` aborts the *entire* config render, so one already-present bad Ingress
-bricks the whole fleet and can crash-loop the controller at the load gate.
+`fail()` rejects the candidate configuration. The controller isolates invalid
+watched revisions before publication (ADR-0032), retaining their last validated
+revision while independent updates advance. Use a route-local result where the
+library already defines one.
 
 Instead decide by the render's `renderMode` (a global string: `"admission"` for a
 webhook dry-run of a proposed change, `"reconcile"` for the live config and the
 load gate). The shared macro `WebhookRejectOrWarn(resource, reason, message)` in
-`charts/haptic/charts/ingress-annotations-compat/library.yaml` encapsulates the split: it `fail()`s
+`charts/haptic/charts/base/library.yaml` encapsulates the split: it `fail()`s
 under admission (so the API server denies the proposed resource) but records a
 `Warning` Event and returns on any other render (so the fleet keeps serving).
+
+Run watched-object guards in the owning incremental component: its `renderMode`
+and `renderSubject.mode` identify whether that object is under admission. A root
+that iterates every object must not turn an existing warning into an unrelated
+admission failure. Keep the caller's skip or route-denial behavior intact.
 
 ```scriggo
 {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}

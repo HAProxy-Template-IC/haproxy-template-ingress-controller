@@ -919,7 +919,11 @@ func resourceSnapshotCursor(alias string, snapshot stores.ReadSnapshot) (increme
 			alias,
 		)
 	}
-	return incrementalStoreCursor{source: snapshot.RevisionSource(), sequence: snapshot.Sequence()}, nil
+	cursor := incrementalStoreCursor{source: snapshot.RevisionSource(), sequence: snapshot.Sequence()}
+	if _, supported := snapshot.(stores.ExactSnapshotDiffer); supported {
+		cursor.diffBase = &incrementalSnapshotDiffBase{snapshot: snapshot}
+	}
+	return cursor, nil
 }
 
 func (r *incrementalRenderSession) prepareBaseChanges(ctx context.Context) (bool, error) {
@@ -966,13 +970,15 @@ func (r *incrementalRenderSession) applyResourceJournals(ctx context.Context) (b
 			r.coldReason = "store-revision-source-changed:" + alias
 			return true, nil
 		}
-		changes, complete := journalChangesThrough(journal, cursor.sequence, snapshot.Sequence())
+		changes, complete, err := snapshotCursorChanges(ctx, journal, cursor, snapshot)
+		if err != nil {
+			return false, err
+		}
 		if !complete {
 			r.coldReason = "journal-incomplete:" + alias
 			return true, nil
 		}
 		_, isComponentSource := r.bindingPlan.bySource[alias]
-		var err error
 		if isComponentSource {
 			err = r.markSourceMembershipPin(alias, snapshot, true)
 		} else {

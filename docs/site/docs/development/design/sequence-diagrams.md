@@ -70,7 +70,7 @@ The controller runs iterations that respond to configuration changes:
 2. **Config load (Stage 2)**: On first start, fetch and validate the `HAProxyTemplateConfig` and credentials `Secret`. The immediate iteration after a live change consumes the exact accepted raw/effective config, discovery resolution, sources, and credentials from the previous iteration; it doesn't fetch a newer candidate. The handoff is single-use, so a failed replacement attempt fetches live state on retry. Fresh loads and schema re-resolutions run Basic, Template, JSONPath, and `validationTests` before activation.
 3. **Resource Watchers (Stage 3)**: Create bulk watchers for every `spec.watchedResources` entry and wait for initial sync.
 4. **Config/Secret SingleWatchers (Stage 4)**: Create `pkg/k8s/watcher.SingleWatcher`s for the CRD and credentials Secret. These use immediate callbacks (no debouncing) so configuration updates reinitialize with no artificial delay.
-5. **Reconciliation & Observability (Stage 5)**: Create reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Each subscribes in its constructor, and the initial trigger events are published — buffered — before the bus starts. Rendering and auxiliary-file validation run synchronously inside `Pipeline.Execute` from the Coordinator's call stack. The RenderGate runs HAProxy validation asynchronously ([ADR-0022](../adr/0022-haptic-agent.md)). The config validators (Basic, Template, JSONPath, and `validationTests`) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
+5. **Reconciliation & Observability (Stage 5)**: Create reconciliation components (Reconciler, Coordinator, DeploymentScheduler, Deployer, Discovery, ConfigPublisher, StatusApplier, DriftPreventionMonitor) and observability components (Metrics, Debug HTTP server). Each subscribes in its constructor, and the initial trigger events are published — buffered — before the bus starts. The input selector runs rendering, HAProxy checks, and auxiliary-file validation synchronously before accepting watched changes ([ADR-0032](../adr/0032-watched-input-isolation.md)). The RenderGate also checks each published render asynchronously ([ADR-0022](../adr/0022-haptic-agent.md)). The config validators (Basic, Template, JSONPath, and `validationTests`) are Stage 1 scatter-gather participants over `ConfigValidationRequest`, not Stage 5 components.
 6. **EventBus Start**: Call `EventBus.Start()` to replay the buffered events and begin normal operation.
 7. **Leader Election, Webhook, Debug (Stages 6–8)**: Start leader election (Stage 6), the admission webhook when a TLS cert directory is mounted (Stage 7), and register debug variables and the full health checker (Stage 8).
 8. **Reload authority**: Observe the config-change channel from the beginning of the iteration. An accepted request during startup cancels the startup's sync waits; once the iteration serves, it's recorded and the iteration keeps serving.
@@ -88,6 +88,7 @@ sequenceDiagram
     participant EventBus
     participant Reconciler as Reconciler<br/>(immediate trigger)
     participant Coordinator as Coordinator<br/>(leader-only)
+    participant Selector as Input selector
     participant Pipeline as Pipeline<br/>(synchronous)
     participant Scheduler as Deployment<br/>Scheduler<br/>(leader-only)
     participant RenderGate as RenderGate<br/>(leader-only)
@@ -107,9 +108,12 @@ sequenceDiagram
     EventBus->>Coordinator: ReconciliationTriggeredEvent
     Coordinator->>EventBus: Publish(ReconciliationStartedEvent)
 
-    Coordinator->>Pipeline: Execute(ctx, storeProvider) — synchronous call
-    Note over Pipeline: 1. RenderService.Render (templates → HAProxy config)<br/>2. ComputeContentChecksum<br/>3. configured auxiliary-file validators
-    Pipeline-->>Coordinator: *PipelineResult or *PipelineError
+    Coordinator->>Selector: Execute(ctx, observed stores)
+    Selector->>Pipeline: Validate candidate inputs
+    Note over Pipeline: Render, HAProxy check,<br/>and all auxiliary-file validators
+    Pipeline-->>Selector: Validated output or error
+    Note over Selector: On failure, validate smaller change groups<br/>against the last accepted inputs
+    Selector-->>Coordinator: Validated output or error
 
     alt Pipeline succeeded
         Coordinator->>EventBus: Publish(TemplateRenderedEvent)
@@ -145,23 +149,23 @@ sequenceDiagram
 
 1. **Resource Change**: ResourceWatcher receives Kubernetes events, updates the local index, and coalesces bursts within a per-resource debounce window before publishing one `ResourceIndexUpdatedEvent` per quiet window. The window defaults to 100 ms (`pkg/k8s/types.DefaultDebounceInterval`); each watched resource can override it via `spec.watchedResources.<name>.debounceInterval` (the bundled chart sets `"0"` on EndpointSlice). This is the only debounce layer.
 2. **Reconciliation Trigger**: Reconciler publishes `ReconciliationTriggeredEvent` immediately on every event it receives — there is no second reconciler-level refractory window. Whole-store events (`IndexSynchronizedEvent`, `BecameLeaderEvent`, `DriftPreventionTriggeredEvent`) trigger the same way; only the initial-sync variant of `ResourceIndexUpdatedEvent` is filtered out. Reload throttling happens downstream in the deployer's `minDeploymentInterval`.
-3. **Coordinator (leader-only)**: subscribes to `ReconciliationTriggeredEvent`, publishes `ReconciliationStartedEvent`, then calls `pkg/controller/pipeline.Pipeline.Execute(ctx, storeProvider)` **synchronously** — render and validation are one atomic step, not a multi-hop event chain.
-4. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs the configured auxiliary-file validators (the chart wires the SPOA hub validator automatically). The reconcile instance has no `ValidationService` at all — HAProxy's verdict is the render gate's job, off this path (ADR-0022).
+3. **Coordinator (leader-only)**: subscribes to `ReconciliationTriggeredEvent`, publishes `ReconciliationStartedEvent`, then calls the input selector **synchronously**. The selector validates observed changes through `Pipeline.Execute` and retains rejected revisions at their last accepted state.
+4. **Pipeline**: runs `RenderService.Render` (template engine + auxiliary files), computes the content checksum once, then runs the configured auxiliary-file validators (the chart wires the SPOA hub validator automatically). HAProxy validation must also succeed before the selector accepts the candidate input set (ADR-0032).
 5. **Coordinator post-pipeline**: on success, publishes `TemplateRenderedEvent` for downstream consumers; on failure, publishes `ReconciliationFailedEvent` carrying a `*PipelineError` (use `errors.AsType[*PipelineError]` to extract the failed phase).
 6. **DeploymentScheduler (leader-only)**: subscribes to `TemplateRenderedEvent` and `HAProxyPodsDiscoveredEvent`; deploys when both are present. Enforces `minDeploymentInterval` and "latest wins" coalescing. `RenderGateCompletedEvent` moves the gate's latch: a refusal holds every later render, and the pass that names the held one releases it.
 6a. **RenderGate (leader-only)**: runs `haproxy -c -dr` on the newest render, on a semaphore slot of its own, and publishes `RenderGateCompletedEvent`. A refusal reverts the pods that took the plan without loading it, and the deployer names each passing plan on its next apply so the agents may promote their rollback baseline.
 7. **Deployer (leader-only)**: diffs the render against each pod's baseline, applies the result to every endpoint in parallel, logs successful endpoints directly, and publishes per-endpoint `InstanceDeploymentFailedEvent` plus aggregate `DeploymentCompletedEvent`.
 8. **Completion**: Coordinator subscribes to `DeploymentCompletedEvent` and publishes `ReconciliationCompletedEvent` with duration metrics.
 
-Rendering is a synchronous service called by the Coordinator. HAProxy validation
-on the reconcile path belongs to the separate RenderGate component. Admission
-and configuration loading use a synchronous validation pipeline.
+The Coordinator calls rendering and full validation through the input selector.
+The separate RenderGate and agent checks remain in place. Admission and
+configuration loading also use a synchronous validation pipeline.
 
 ## Configuration validation process
 
-This is the strict proposal and load-gate path. Reconciliation runs the same
-HAProxy check asynchronously in `RenderGate`, after its render pipeline runs
-the configured rendered-output validators.
+Proposal validation, configuration loading, and watched-input acceptance all
+require synchronous validation. Reconciliation also checks published renders
+asynchronously in `RenderGate`.
 
 ```mermaid
 sequenceDiagram
@@ -204,7 +208,7 @@ sequenceDiagram
 3. **Built-in check**: each applicable call authenticates and materializes the snapshot, creates a fresh temp tree, and invokes `haproxy -c`. The tree mirrors the production `maps/`, `ssl/`, and `general/` layout.
 4. **Rendered-output validators**: every matching protocol-v1 validator receives the complete request on every pipeline invocation. Persistent connections reuse transport only.
 5. **Cancellation**: a context-aware gate removes cancelled waiters and terminates a running check. Cancellation immediately after a successful process exit still prevents a successful result.
-6. **Result**: the pipeline returns `*PipelineResult` or a phase-tagged `*PipelineError`. Reconciliation publishes from its pipeline and receives HAProxy's per-occurrence verdict later from `RenderGate`.
+6. **Result**: the pipeline returns `*PipelineResult` or a phase-tagged `*PipelineError`. Reconciliation publishes only after input acceptance passes full validation, then receives an additional per-occurrence verdict from `RenderGate`.
 
 ## Zero-reload deployment strategy
 

@@ -51,6 +51,13 @@ func ProjectImmutableSnapshotList(
 		}
 	case *cachedReadSnapshot:
 		items, err = typed.listImmutable(ctx)
+	case *SnapshotBranch:
+		var encodedItems [][]byte
+		var encoded bool
+		items, encodedItems, encoded, err = typed.readProjection(ctx, nil)
+		if err == nil {
+			return newEncodedImmutableSnapshotProjection(items, encodedItems, encoded), true, nil
+		}
 	default:
 		return nil, false, nil
 	}
@@ -80,6 +87,16 @@ func ProjectImmutableSnapshotGet(
 		}
 	case *cachedReadSnapshot:
 		items, err = typed.getImmutable(ctx, keys...)
+	case *SnapshotBranch:
+		if len(keys) == 0 {
+			return nil, true, fmt.Errorf("at least one index key is required")
+		}
+		var encodedItems [][]byte
+		var encoded bool
+		items, encodedItems, encoded, err = typed.readProjection(ctx, keys)
+		if err == nil {
+			return newEncodedImmutableSnapshotProjection(items, encodedItems, encoded), true, nil
+		}
 	default:
 		return nil, false, nil
 	}

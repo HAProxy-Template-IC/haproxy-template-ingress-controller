@@ -132,7 +132,7 @@ func createStoreTestPipeline(t *testing.T, template string) *pipeline.Pipeline {
 	cfg := &config.Config{
 		HAProxyConfig: config.HAProxyConfig{Template: template},
 		WatchedResources: map[string]config.WatchedResource{
-			"ingresses": {APIVersion: "networking.k8s.io/v1", Resources: "ingresses"},
+			"ingresses": {APIVersion: "networking.k8s.io/v1", Resources: "ingresses", IndexBy: []string{"metadata.namespace", "metadata.name"}},
 		},
 	}
 	declarations := typebootstrap.BuildEngineDeclarations(&typebootstrap.Result{}, "ingresses")
