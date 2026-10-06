@@ -539,7 +539,7 @@ Configure controller placement, pod metadata, and runtime settings under `contro
 | `controller.livenessProbe.initialDelaySeconds` | int | `10` | Initial delay |
 | `controller.livenessProbe.periodSeconds` | int | `10` | Probe period |
 | `controller.livenessProbe.failureThreshold` | int | `3` | Failure threshold |
-| `controller.readinessProbe.httpGet.path` | string | `/readyz` | Readiness probe path. `/readyz` also requires installed admission validators, so only replicas that can validate receive admission requests |
+| `controller.readinessProbe.httpGet.path` | string | `/readyz` | Readiness probe path. `/readyz` also requires installed admission validators and, while another replica can validate, a finished first full render, so only replicas that can validate receive admission requests |
 | `controller.readinessProbe.httpGet.port` | string | `healthz` | Named container port the probe targets |
 | `controller.readinessProbe.initialDelaySeconds` | int | `5` | Initial delay |
 | `controller.readinessProbe.periodSeconds` | int | `5` | Probe period |

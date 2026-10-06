@@ -33,9 +33,11 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
 	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
 
+	"golang.org/x/sync/errgroup"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 )
 
 // Publisher publishes HAProxy runtime configuration as Kubernetes resources.
@@ -55,6 +57,10 @@ type Publisher struct {
 	// When set, status updates first check the cache to determine if an update
 	// is needed, avoiding unnecessary API GETs.
 	listers *Listers
+
+	// resourceVersionOf reads a HAProxyCfg's resourceVersion without its
+	// content. Nil makes every publication re-check read the whole object.
+	resourceVersionOf func(ctx context.Context, namespace, name string) (string, error)
 
 	// auxStamps elides per-pod status re-stamps on auxiliary-file CRs whose
 	// value is unchanged (see aux_stamp_cache.go). Zero value is ready to use.
@@ -104,6 +110,19 @@ func (p *Publisher) SetRepublishInterval(d time.Duration) {
 	p.publishedMu.Lock()
 	defer p.publishedMu.Unlock()
 	p.republishInterval = d
+}
+
+// SetMetadataClient lets publication re-checks read a HAProxyCfg's
+// resourceVersion instead of its whole rendered content.
+func (p *Publisher) SetMetadataClient(client metadata.Interface) {
+	resource := haproxyv1alpha1.SchemeGroupVersion.WithResource("haproxycfgs")
+	p.resourceVersionOf = func(ctx context.Context, namespace, name string) (string, error) {
+		object, err := client.Resource(resource).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return "", err
+		}
+		return object.ResourceVersion, nil
+	}
 }
 
 // clonePublishResult deep-copies the slices so a consumer mutating a returned
@@ -442,7 +461,8 @@ func hashAuxiliaryContents[T auxiliaryfiles.FileItem](h hash.Hash, files []T) {
 	}
 }
 
-// publishAuxiliaryFiles creates or updates all auxiliary file resources.
+// publishAuxiliaryResource publishes under initialName and retries under a
+// scoped name when another HAProxyCfg owns it.
 func publishAuxiliaryResource(
 	initialName, baseName, suffix, identity, ownerName string,
 	publish func(string) (string, error),
@@ -461,153 +481,102 @@ func publishAuxiliaryResource(
 	return publishedName, scopedName, err
 }
 
+// publishAuxiliaryFiles creates or updates all auxiliary file resources.
 func (p *Publisher) publishAuxiliaryFiles(
 	ctx context.Context,
 	req *PublishRequest,
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
 	result *PublishResult,
 ) error {
-	resourceSuffix := auxiliaryResourceSuffix(req.auxiliarySetID, req.NameSuffix)
-	mapFileNames := resolveAuxiliaryResourceNames(
-		req.AuxiliaryFiles.MapFiles,
-		resourceSuffix,
-		func(file auxiliaryfiles.MapFile) string { return p.generateMapFileName(path.Base(file.Path)) },
-		func(file auxiliaryfiles.MapFile) string { return file.Path },
-	)
-	// Create or update map files
-	for i, mapFile := range req.AuxiliaryFiles.MapFiles {
-		baseName := p.generateMapFileName(path.Base(mapFile.Path))
-		mapFileName, name, err := publishAuxiliaryResource(
-			mapFileNames[i], baseName, resourceSuffix, mapFile.Path, runtimeConfig.Name,
-			func(name string) (string, error) {
-				return p.createOrUpdateMapFile(ctx, req, runtimeConfig, mapFile, name)
-			},
-		)
-		if err != nil {
-			return incompletePublicationError(
-				PublicationStageAuxiliary,
-				runtimeConfig.Namespace,
-				runtimeConfig.Name,
-				kindMapFile,
-				name,
-				err,
-			)
-		}
-		result.MapFileNames = append(result.MapFileNames, mapFileName)
+	suffix := auxiliaryResourceSuffix(req.auxiliarySetID, req.NameSuffix)
+	files := req.AuxiliaryFiles
+	var err error
+	if result.MapFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindMapFile, suffix, files.MapFiles,
+		func(file auxiliaryfiles.MapFile) (string, string) {
+			return p.generateMapFileName(path.Base(file.Path)), file.Path
+		},
+		func(ctx context.Context, file auxiliaryfiles.MapFile, name string) (string, error) {
+			return p.createOrUpdateMapFile(ctx, req, runtimeConfig, file, name)
+		}); err != nil {
+		return err
 	}
-
-	secretNames := resolveAuxiliaryResourceNames(
-		req.AuxiliaryFiles.SSLCertificates,
-		resourceSuffix,
-		func(file auxiliaryfiles.SSLCertificate) string { return p.generateSecretName(path.Base(file.Path)) },
-		func(file auxiliaryfiles.SSLCertificate) string { return file.Path },
-	)
-	// Create or update SSL certificate secrets
-	for i, cert := range req.AuxiliaryFiles.SSLCertificates {
-		baseName := p.generateSecretName(path.Base(cert.Path))
-		secretName, name, err := publishAuxiliaryResource(
-			secretNames[i], baseName, resourceSuffix, cert.Path, runtimeConfig.Name,
-			func(name string) (string, error) {
-				return p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, cert, name)
-			},
-		)
-		if err != nil {
-			return incompletePublicationError(
-				PublicationStageAuxiliary,
-				runtimeConfig.Namespace,
-				runtimeConfig.Name,
-				"Secret",
-				name,
-				err,
-			)
-		}
-		result.SecretNames = append(result.SecretNames, secretName)
+	if result.SecretNames, err = publishAuxiliaryKind(ctx, runtimeConfig, "Secret", suffix, files.SSLCertificates,
+		func(file auxiliaryfiles.SSLCertificate) (string, string) {
+			return p.generateSecretName(path.Base(file.Path)), file.Path
+		},
+		func(ctx context.Context, file auxiliaryfiles.SSLCertificate, name string) (string, error) {
+			return p.createOrUpdateSSLSecret(ctx, req, runtimeConfig, file, name)
+		}); err != nil {
+		return err
 	}
-
-	caSecretNames := resolveAuxiliaryResourceNames(
-		req.AuxiliaryFiles.SSLCaFiles,
-		resourceSuffix,
-		func(file auxiliaryfiles.SSLCaFile) string { return p.generateCASecretName(path.Base(file.Path)) },
-		func(file auxiliaryfiles.SSLCaFile) string { return file.Path },
-	)
-	for i, ca := range req.AuxiliaryFiles.SSLCaFiles {
-		baseName := p.generateCASecretName(path.Base(ca.Path))
-		secretName, name, err := publishAuxiliaryResource(
-			caSecretNames[i], baseName, resourceSuffix, ca.Path, runtimeConfig.Name,
-			func(name string) (string, error) {
-				return p.createOrUpdateSSLCASecret(ctx, req, runtimeConfig, ca, name)
-			},
-		)
-		if err != nil {
-			return incompletePublicationError(
-				PublicationStageAuxiliary,
-				runtimeConfig.Namespace,
-				runtimeConfig.Name,
-				"Secret",
-				name,
-				err,
-			)
-		}
-		result.SSLCaFileNames = append(result.SSLCaFileNames, secretName)
+	if result.SSLCaFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, "Secret", suffix, files.SSLCaFiles,
+		func(file auxiliaryfiles.SSLCaFile) (string, string) {
+			return p.generateCASecretName(path.Base(file.Path)), file.Path
+		},
+		func(ctx context.Context, file auxiliaryfiles.SSLCaFile, name string) (string, error) {
+			return p.createOrUpdateSSLCASecret(ctx, req, runtimeConfig, file, name)
+		}); err != nil {
+		return err
 	}
-
-	generalFileNames := resolveAuxiliaryResourceNames(
-		req.AuxiliaryFiles.GeneralFiles,
-		resourceSuffix,
-		func(file auxiliaryfiles.GeneralFile) string { return p.generateGeneralFileName(file.Filename) },
-		func(file auxiliaryfiles.GeneralFile) string { return file.Filename },
-	)
-	// Create or update general files
-	for i, generalFile := range req.AuxiliaryFiles.GeneralFiles {
-		baseName := p.generateGeneralFileName(generalFile.Filename)
-		generalFileName, name, err := publishAuxiliaryResource(
-			generalFileNames[i], baseName, resourceSuffix, generalFile.Filename, runtimeConfig.Name,
-			func(name string) (string, error) {
-				return p.createOrUpdateGeneralFile(ctx, req, runtimeConfig, generalFile, name)
-			},
-		)
-		if err != nil {
-			return incompletePublicationError(
-				PublicationStageAuxiliary,
-				runtimeConfig.Namespace,
-				runtimeConfig.Name,
-				kindGeneralFile,
-				name,
-				err,
-			)
-		}
-		result.GeneralFileNames = append(result.GeneralFileNames, generalFileName)
+	if result.GeneralFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindGeneralFile, suffix, files.GeneralFiles,
+		func(file auxiliaryfiles.GeneralFile) (string, string) {
+			return p.generateGeneralFileName(file.Filename), file.Filename
+		},
+		func(ctx context.Context, file auxiliaryfiles.GeneralFile, name string) (string, error) {
+			return p.createOrUpdateGeneralFile(ctx, req, runtimeConfig, file, name)
+		}); err != nil {
+		return err
 	}
+	result.CRTListFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindCRTListFile, suffix, files.CRTListFiles,
+		func(file auxiliaryfiles.CRTListFile) (string, string) {
+			return p.generateCRTListFileName(file.Path), file.Path
+		},
+		func(ctx context.Context, file auxiliaryfiles.CRTListFile, name string) (string, error) {
+			return p.createOrUpdateCRTListFile(ctx, req, runtimeConfig, file, name)
+		})
+	return err
+}
 
-	crtListFileNames := resolveAuxiliaryResourceNames(
-		req.AuxiliaryFiles.CRTListFiles,
-		resourceSuffix,
-		func(file auxiliaryfiles.CRTListFile) string { return p.generateCRTListFileName(file.Path) },
-		func(file auxiliaryfiles.CRTListFile) string { return file.Path },
+// auxiliaryPublishConcurrency bounds the parallel API writes of one
+// publication's children; every child of a new set is written, so a serial
+// loop made publication latency grow with the number of auxiliary files.
+const auxiliaryPublishConcurrency = 8
+
+// publishAuxiliaryKind writes one kind's children in parallel and returns
+// the names it published, in input order. identity returns a file's base name
+// and the identity that disambiguates it.
+func publishAuxiliaryKind[T any](
+	ctx context.Context,
+	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
+	kind, suffix string,
+	files []T,
+	identity func(T) (baseName, id string),
+	publish func(context.Context, T, string) (string, error),
+) ([]string, error) {
+	names := resolveAuxiliaryResourceNames(files, suffix,
+		func(file T) string { baseName, _ := identity(file); return baseName },
+		func(file T) string { _, id := identity(file); return id },
 	)
-	// Create or update crt-list files
-	for i, crtListFile := range req.AuxiliaryFiles.CRTListFiles {
-		baseName := p.generateCRTListFileName(crtListFile.Path)
-		crtListFileName, name, err := publishAuxiliaryResource(
-			crtListFileNames[i], baseName, resourceSuffix, crtListFile.Path, runtimeConfig.Name,
-			func(name string) (string, error) {
-				return p.createOrUpdateCRTListFile(ctx, req, runtimeConfig, crtListFile, name)
-			},
-		)
-		if err != nil {
-			return incompletePublicationError(
-				PublicationStageAuxiliary,
-				runtimeConfig.Namespace,
-				runtimeConfig.Name,
-				kindCRTListFile,
-				name,
-				err,
-			)
-		}
-		result.CRTListFileNames = append(result.CRTListFileNames, crtListFileName)
+	published := make([]string, len(files))
+	work, workCtx := errgroup.WithContext(ctx)
+	work.SetLimit(auxiliaryPublishConcurrency)
+	for i, file := range files {
+		work.Go(func() error {
+			baseName, id := identity(file)
+			name, attempted, err := publishAuxiliaryResource(names[i], baseName, suffix, id, runtimeConfig.Name,
+				func(name string) (string, error) { return publish(workCtx, file, name) })
+			if err != nil {
+				return incompletePublicationError(PublicationStageAuxiliary, runtimeConfig.Namespace,
+					runtimeConfig.Name, kind, attempted, err)
+			}
+			published[i] = name
+			return nil
+		})
 	}
-
-	return nil
+	if err := work.Wait(); err != nil {
+		return slices.DeleteFunc(published, func(name string) bool { return name == "" }), err
+	}
+	return published, nil
 }
 
 // DeleteRuntimeConfig deletes a HAProxyCfg resource.

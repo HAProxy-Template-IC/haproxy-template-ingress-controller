@@ -63,3 +63,42 @@ func NewHTTPResourceAcceptedEvent(url, checksum string, size int) *HTTPResourceA
 }
 
 func (e *HTTPResourceAcceptedEvent) EventType() string { return EventTypeHTTPResourceAccepted }
+
+// HTTPContentAcceptanceRequestedEvent is published when a deploying render left
+// out HTTP content no render has accepted yet. The leader answers it with an
+// acceptance attempt outside the reconcile loop.
+type HTTPContentAcceptanceRequestedEvent struct {
+	timestamped
+}
+
+// NewHTTPContentAcceptanceRequestedEvent creates a new HTTPContentAcceptanceRequestedEvent.
+func NewHTTPContentAcceptanceRequestedEvent() *HTTPContentAcceptanceRequestedEvent {
+	return &HTTPContentAcceptanceRequestedEvent{timestamped: newTimestamped()}
+}
+
+func (e *HTTPContentAcceptanceRequestedEvent) EventType() string {
+	return EventTypeHTTPContentAcceptanceRequested
+}
+
+// HTTPContentRevokedEvent is published when accepted HTTP content was taken
+// back because HAProxy refused a render containing it.
+type HTTPContentRevokedEvent struct {
+	URL             string // The URL whose content was revoked (credentials redacted)
+	ContentChecksum string // SHA256 checksum of the revoked content
+	Restored        bool   // The URL went back to its previous accepted content
+	Critical        bool   // Renders fail until the URL has accepted content again
+	timestamped
+}
+
+// NewHTTPContentRevokedEvent creates a new HTTPContentRevokedEvent.
+func NewHTTPContentRevokedEvent(url, checksum string, restored, critical bool) *HTTPContentRevokedEvent {
+	return &HTTPContentRevokedEvent{
+		URL:             url,
+		ContentChecksum: checksum,
+		Restored:        restored,
+		Critical:        critical,
+		timestamped:     newTimestamped(),
+	}
+}
+
+func (e *HTTPContentRevokedEvent) EventType() string { return EventTypeHTTPContentRevoked }

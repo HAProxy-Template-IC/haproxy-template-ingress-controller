@@ -710,12 +710,66 @@ validationTests:
         target: haproxy.cfg
         pattern: '(?s)frontend http_frontend_h2c\b.*?http-after-response set-header WWW-Authenticate'
 
-  test-haproxy-ingress-external-auth-headers-request-dash-underscore-collision:
+  test-haproxy-ingress-external-auth-headers-request-case-collision:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: Two header spellings that differ only in dashes vs underscores (e.g. `X-Request-Id` and `X_Request_Id`) lower-case to different strings but collapse to the same SPOE arg name after dash→underscore rep...
+    description: Two Ingresses listing one header in different case (X-Request-Id, x-request-id) produce a single SPOE capture; a repeated arg name is malformed SPOE.
     extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: titlecase
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/auth-headers-request: "X-Request-Id"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: titlecase.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: lowercase
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/auth-headers-request: "x-request-id"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: lowercase.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - type: contains
+        target: file:spoe.conf
+        pattern: "hdr_x_request_id=req\\.hdr\\((?i:x-request-id)\\)"
+      - type: not_contains
+        target: file:spoe.conf
+        pattern: "hdr_x_request_id=req\\.hdr\\([^)]+\\) .*hdr_x_request_id=req\\.hdr"
+
+  test-haproxy-ingress-external-auth-headers-request-underscore-not-captured:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: An underscore header is neither captured nor listed in the forward map; the plugin would match X_Forwarded_For to the built-in X-Forwarded-For capture.
+    extraContext: *extracontextSpoahubEnabled
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: underscores
+            annotations:
+              haproxy-ingress.github.io/auth-url: "https://auth.example/check"
+              haproxy-ingress.github.io/auth-headers-request: "X_Forwarded_For"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: underscores.example.com
+                http: *httpRoot
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -729,6 +783,23 @@ validationTests:
             rules:
               - host: dashes.example.com
                 http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: file:spoe.conf, pattern: "hdr_x_request_id=req\\.hdr\\(X-Request-Id\\)"}
+      - {type: not_contains, target: file:spoe.conf, pattern: "X_Forwarded_For"}
+      - {type: not_contains, target: map:auth-forward-headers.map, pattern: "default/underscores"}
+      - {type: not_contains, target: map:auth-forward-headers.map, pattern: "X_Forwarded_For"}
+      - {type: contains, target: map:auth-forward-headers.map, pattern: "(?m)^default/dashes X-Request-Id$"}
+      - {type: contains, target: events, pattern: "Warning InvalidAuthHeader networking\\.k8s\\.io/v1 Ingress default/underscores: "}
+
+  test-haproxy-ingress-external-auth-headers-request-underscore-rejected-at-admission:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: The admission webhook rejects an underscore in auth-headers-request.
+    extraContext:
+      <<: *extracontextSpoahubEnabled
+      renderMode: admission
+    fixtures:
+      ingresses:
         - apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -743,10 +814,9 @@ validationTests:
               - host: underscores.example.com
                 http: *httpRoot
     assertions:
-      - type: haproxy_valid
-      - type: not_contains
-        target: file:spoe.conf
-        pattern: "hdr_x_request_id=req\\.hdr\\([^)]+\\) .*hdr_x_request_id=req\\.hdr"
+      - type: contains
+        target: rendering_error
+        pattern: "Ingress default/underscores annotation 'haproxy-ingress\\.github\\.io/auth-headers-request' lists header 'X_Request_Id', which contains '_'"
 
   test-haproxy-ingress-external-auth-headers-request-overlaps-builtin:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
@@ -997,7 +1067,7 @@ validationTests:
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.hi_ba\) var\(txn\.resource_id\),map\(\S*/haproxy-ingress-basic-auth-routes.map\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.hi_ba\) var\(txn\.resource_key\),map\(\S*/haproxy-ingress-basic-auth-routes.map\)'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.hi_ba\) -m str missing \}'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.denied_by\) str\(basic_auth\) if \{ var\(txn\.hi_ba\) -m beg "ok hi_auth_default_hi-auth-secret " \} !\{ http_auth\(hi_auth_default_hi-auth-secret\) \}'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request auth realm "Zone A" if \{ var\(txn\.hi_ba\) -m str "ok hi_auth_default_hi-auth-secret Zone A" \} !\{ http_auth\(hi_auth_default_hi-auth-secret\) \}'}

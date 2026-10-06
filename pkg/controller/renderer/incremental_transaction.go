@@ -349,6 +349,8 @@ func (p *incrementalHTTPPublication) prepare(ctx context.Context, retainGraphPro
 		if err != nil {
 			return err
 		}
+	} else if p.session.httpLease != nil {
+		active = &httpstore.ActiveLeaseCommit{Snapshot: p.session.httpLease, VerifyOnly: true}
 	}
 	prepared, err := prepareHTTPInputCommit(
 		ctx, p.transaction, proofs, active, p.session.httpComponent, !retainGraphProofs,
@@ -590,7 +592,11 @@ func (r *incrementalRenderSession) startColdGraphCache(
 	}
 	// The commit that produced the graph is the only window in which nothing can
 	// overtake it, so it is where the graph gets to land.
-	awaitColdCacheBuild(ctx, build, maxColdCacheBuildWait)
+	wait := maxColdCacheBuildWait
+	if r.state.coldCommitAwaitsGraph {
+		wait = 0
+	}
+	awaitColdCacheBuild(ctx, build, wait)
 	return transferred, nil
 }
 
@@ -1567,10 +1573,7 @@ func prepareHTTPInputCommit(
 		return nil, fmt.Errorf("render input transaction %T has no atomic preparation protocol", transaction)
 	}
 	if preserveRefreshers {
-		if active != nil {
-			return nil, errors.New("incremental cache publication cannot preserve HTTP refreshers")
-		}
-		return httpTransaction.PrepareCommitPreservingRefreshers(ctx, observations)
+		return httpTransaction.PrepareCommitPreservingRefreshers(ctx, observations, active)
 	}
 	return httpTransaction.PrepareCommitWithObservationsAndActiveLeases(ctx, observations, active)
 }

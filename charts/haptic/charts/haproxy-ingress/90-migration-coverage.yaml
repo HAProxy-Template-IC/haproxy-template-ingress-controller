@@ -314,7 +314,7 @@ _migrationCoverage:
         doc: annotation-support
       haproxy-ingress.github.io/auth-headers-request:
         status: supported
-        note: Request header names forwarded to the auth service.
+        note: Request header names forwarded to the auth service; names containing `_` are rejected.
       haproxy-ingress.github.io/auth-headers-succeed:
         status: supported
         note: Auth-service response headers forwarded to the backend on success.

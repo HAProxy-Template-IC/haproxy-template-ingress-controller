@@ -48,7 +48,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.resource_id\) -m str default/cn-protected \} !\{ ssl_c_s_dn\(,0,rfc2253\) -m reg "CN=\(alice\|bob\)\\\\\.example\\\\\.com" \}'
+        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.resource_key\) -m str default/cn-protected \} !\{ ssl_c_s_dn\(,0,rfc2253\) -m reg "CN=\(alice\|bob\)\\\\\.example\\\\\.com" \}'
 
   test-nginx-ingress-auth-tls-match-cn-needs-secret:
     description: Like ingress-nginx, auth-tls-match-cn has no effect without auth-tls-secret.
@@ -276,7 +276,7 @@ validationTests:
     # Same as test-nginx-ingress-external-auth: needs the spoa-hub library
     # loaded for the auth-url.map definition.
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: "Ingress with auth-url annotation AND a host-less rule must render successfully now that auth-url.map is keyed by <ns>/<name> (resource identity) rather than by host+path. The host dimension is no longer part of the key, so the previous fail-loud behaviour for host-less rules is obsolete. The map row is emitted by ns/name and the routing chain populates txn.resource_id correctly for whatever request the host-less Ingress's catch-all matches."
+    description: "Ingress with auth-url annotation AND a host-less rule must render successfully now that auth-url.map is keyed by <ns>/<name> (resource identity) rather than by host+path. The host dimension is no longer part of the key, so the previous fail-loud behaviour for host-less rules is obsolete. The map row is emitted by ns/name and the routing chain populates txn.resource_key correctly for whatever request the host-less Ingress's catch-all matches."
     extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
@@ -313,7 +313,7 @@ validationTests:
   # from the qualifier value the routing chain has already produced). After
   # the fix:
   #   - auth-url.map row: "default/<name> <url>"
-  #   - consumer line:    "set-var(txn.auth_url) var(txn.resource_id),map(...)"
+  #   - consumer line:    "set-var(txn.auth_url) var(txn.resource_key),map(...)"
   #
   # All five tests below assert the post-fix shape, so they FAIL with the
   # current code (proving the bug) and PASS after the fix.
@@ -345,10 +345,10 @@ validationTests:
       - {type: not_contains, target: map:auth-url.map, pattern: '\.example\.com/'}
       - type: contains
         target: haproxy.cfg
-        pattern: 'set-var\(txn\.auth_url\) var\(txn\.resource_id\),map\('
+        pattern: 'set-var\(txn\.auth_key\) var\(txn\.resource_key\)(?s:.*?)set-var\(txn\.auth_url\) var\(txn\.auth_key\),map\('
   test-nginx-ingress-external-auth-resource-id-keying-prefix-subpath:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: "auth-url with Prefix path: a request to a SUBPATH of the ingress path must be authenticated. Today's bug: the map row is keyed \"host.example.com/api\" but the request lookup key is \"host.example.com/api/users\" — exact-match map() always misses on subpaths, so auth silently does not fire. After the fix the map is keyed \"<ns>/<name>\" and the consumer reads txn.resource_id, so any route owned by this ingress (regardless of subpath) triggers auth."
+    description: "auth-url with Prefix path: a request to a SUBPATH of the ingress path must be authenticated. Today's bug: the map row is keyed \"host.example.com/api\" but the request lookup key is \"host.example.com/api/users\" — exact-match map() always misses on subpaths, so auth silently does not fire. After the fix the map is keyed \"<ns>/<name>\" and the consumer reads txn.resource_key, so any route owned by this ingress (regardless of subpath) triggers auth."
     extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
@@ -372,10 +372,10 @@ validationTests:
       - {type: not_contains, target: map:auth-url.map, pattern: 'api\.example\.com/api'}
       - type: contains
         target: haproxy.cfg
-        pattern: 'set-var\(txn\.auth_url\) var\(txn\.resource_id\),map\('
+        pattern: 'set-var\(txn\.auth_key\) var\(txn\.resource_key\)(?s:.*?)set-var\(txn\.auth_url\) var\(txn\.auth_key\),map\('
   test-nginx-ingress-external-auth-resource-id-keying-regex-path:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
-    description: "auth-url on an Ingress using haproxy-ingress.github.io/path-type=regex. Routing works today via map_reg(); auth-url.map does not because its key is the literal regex string and its consumer is exact-match. Same red→green pattern: row keyed by <ns>/<name>, consumer reads resource_id."
+    description: "auth-url on an Ingress using haproxy-ingress.github.io/path-type=regex. Routing works today via map_reg(); auth-url.map does not because its key is the literal regex string and its consumer is exact-match. Same red→green pattern: row keyed by <ns>/<name>, consumer reads resource_key."
     extraContext: *extracontextSpoahubEnabled
     fixtures:
       ingresses:
@@ -404,7 +404,7 @@ validationTests:
       - {type: not_contains, target: map:auth-url.map, pattern: 'api/v\[0-9'}
       - type: contains
         target: haproxy.cfg
-        pattern: 'set-var\(txn\.auth_url\) var\(txn\.resource_id\),map\('
+        pattern: 'set-var\(txn\.auth_key\) var\(txn\.resource_key\)(?s:.*?)set-var\(txn\.auth_url\) var\(txn\.auth_key\),map\('
   test-nginx-ingress-external-auth-resource-id-keying-wildcard-regex:
     _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "Combination: wildcard host AND regex path (the case the user asked about). Today this is triple-broken — the row is keyed \".example.com/api/v[0-9]+/.*\", the consumer is exact-match, AND the haproxy-ingress regex-map renderer at haproxy-ingress.yaml:111 leaks the literal `*` into the regex pattern (it doesn't apply MapKeyForHost), making the path-regex.map invalid for HAProxy. The third bug is out of scope here, so we don't assert haproxy_valid; this test just demonstrates the auth-url keying mismatch."
@@ -603,7 +603,7 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: 'http-request del-header ssl-client-subject-dn\n'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'del-header ssl-client-[a-z-]+ if'}
       - {type: contains, target: "map:nginx-cert-header-routes.map", pattern: '(?m)^default/nx-passcert 1$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'set-header ssl-client-cert %\[ssl_c_der,base64\] if \{ var\(txn\.resource_id\),map\(\S*/nginx-cert-header-routes\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'set-header ssl-client-cert %\[ssl_c_der,base64\] if \{ var\(txn\.resource_key\),map\(\S*/nginx-cert-header-routes\.map\) -m found \}'}
 
   test-nginx-ingress-auth-secret-missing-fails-closed:
     description: >-
@@ -825,7 +825,7 @@ validationTests:
                       backend: {service: {name: echo, port: {number: 80}}}
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ni_ba\) var\(txn\.resource_id\),map\(\S*/nginx-ingress-basic-auth-routes.map\)'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ni_ba\) var\(txn\.resource_key\),map\(\S*/nginx-ingress-basic-auth-routes.map\)'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.ni_ba\) -m str missing \}'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.denied_by\) str\(basic_auth\) if \{ var\(txn\.ni_ba\) -m beg "ok ni_auth_default_shared-auth " \} !\{ http_auth\(ni_auth_default_shared-auth\) \}'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request auth realm "Zone A" if \{ var\(txn\.ni_ba\) -m str "ok ni_auth_default_shared-auth Zone A" \} !\{ http_auth\(ni_auth_default_shared-auth\) \}'}

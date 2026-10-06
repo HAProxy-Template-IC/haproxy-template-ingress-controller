@@ -183,10 +183,10 @@ templateSnippets:
       {%- var messagesAny = extraContext | dig("spoaHub", "haproxy", "messages") | fallback([]any{}) %}
       {%- var messages = toStringSlice(messagesAny) %}
       {%- if messages contains "check-ratelimit" %}
-      {# One packed map keyed by resource_id -> "limit period burst mode
+      {# One packed map keyed by resource_key -> "limit period burst mode
           keyspec". Routes without an annotation miss and skip all later
           rate-limit rules. #}
-      http-request set-var(txn.rl_identity) var(txn.resource_id)
+      http-request set-var(txn.rl_identity) var(txn.resource_key)
       http-request set-var(txn.rl_identity) var(txn.policy_id) if { var(txn.policy_id) -m found }
       http-request set-var(txn.rl_cfg) var(txn.rl_identity),map({{ pathResolver.GetPath("rate-limit.map", "map") }}) unless { var(txn.rl_cfg) -m found }
       http-request set-var(txn.rl_budget) var(txn.rl_identity) if { var(txn.rl_cfg) -m found }
@@ -238,7 +238,7 @@ templateSnippets:
   #     for Ingresses with `haproxy-ingress.github.io/waf`. Drives the
   #     deny-skip predicate below for shadow-mode rollouts.
   #
-  # Dispatch fires when either the app or enforcement map matches resource_id.
+  # Dispatch fires when either the app or enforcement map matches policy_id.
   # Resources without any matching annotation skip the SPOE roundtrip entirely
   # (matches haproxy-ingress.github.io upstream semantic). The
   # haproxy-ingress.github.io/waf-mode annotation only matters when a
@@ -251,7 +251,7 @@ templateSnippets:
   # single global WAF instance, evaluating against all traffic).
   # That's a privilege-escalation vector in multi-tenant clusters.
   # Now, modsec-snippets only fire on traffic owned by their carrying
-  # Ingress (resource_id keying). Operators who depended on the
+  # Ingress (resource_key keying). Operators who depended on the
   # rule-bleed behavior must move shared rules into chart-level
   # `spoaHub.plugins.coraza.directives` (the base ruleset, applied to
   # every per-Ingress app + the default WAF).
@@ -414,12 +414,17 @@ templateSnippets:
       {#- Emitted only while a route has an auth-url map entry; the first
           route reloads once, as does removing the last. #}
       {%- if strip(render_glob "map-auth-url-*") != "" %}
-      http-request set-var(txn.auth_url) var(txn.resource_id),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
-      http-request set-var(txn.auth_signin) var(txn.resource_id),map({{ pathResolver.GetPath("auth-signin.map", "map") }}) unless { var(txn.auth_signin) -m found }
-      http-request set-var(txn.auth_method) var(txn.resource_id),map({{ pathResolver.GetPath("auth-method.map", "map") }}) unless { var(txn.auth_method) -m found }
-      http-request set-var(txn.auth_forward_headers) var(txn.resource_id),map({{ pathResolver.GetPath("auth-forward-headers.map", "map") }}) unless { var(txn.auth_forward_headers) -m found }
-      http-request set-var(txn.auth_extract_headers) var(txn.resource_id),map({{ pathResolver.GetPath("auth-extract-headers.map", "map") }}) unless { var(txn.auth_extract_headers) -m found }
-      http-request send-spoe-group spoa-hub-check-auth check-auth-group if { var(txn.auth_url) -m found }
+      http-request set-var(txn.auth_key) var(txn.resource_key){{ "\n" }}
+      {#- frontend-spoe-auth-request-* may preset auth_* variables for its routes. #}
+      {{- render_glob "frontend-spoe-auth-request-*" }}{{ "\n" }}
+      http-request set-var(txn.auth_url) var(txn.auth_key),map({{ pathResolver.GetPath("auth-url.map", "map") }}) unless { var(txn.auth_url) -m found }
+      http-request set-var(txn.auth_signin) var(txn.auth_key),map({{ pathResolver.GetPath("auth-signin.map", "map") }}) unless { var(txn.auth_signin) -m found }
+      http-request set-var(txn.auth_method) var(txn.auth_key),map({{ pathResolver.GetPath("auth-method.map", "map") }}) unless { var(txn.auth_method) -m found }
+      http-request set-var(txn.auth_forward_headers) var(txn.auth_key),map({{ pathResolver.GetPath("auth-forward-headers.map", "map") }}) unless { var(txn.auth_forward_headers) -m found }
+      http-request set-var(txn.auth_extract_headers) var(txn.auth_key),map({{ pathResolver.GetPath("auth-extract-headers.map", "map") }}) unless { var(txn.auth_extract_headers) -m found }
+      {#- frontend-spoe-auth-verdict-* may revoke the verdict before it is read. #}
+      http-request send-spoe-group spoa-hub-check-auth check-auth-group if { var(txn.auth_url) -m found }{{ "\n" }}
+      {{- render_glob "frontend-spoe-auth-verdict-*" }}{{ "\n" }}
       {#- Pass-headers extension point: ingress libraries emit one
           `http-request set-header` per unique header in any
           ingress's auth-response-headers / auth-headers-succeed union.
@@ -473,11 +478,11 @@ templateSnippets:
       {%- if !regex_search(requestValidationWaitTimeout, "^[1-9][0-9]*(us|ms|s|m|h|d)?$") %}
         {%- fail("extraContext.apiGateway.requestSchemaValidation.requestBody.waitTimeout must be a positive HAProxy duration.") %}
       {%- end %}
-      {# Packed map keyed by resource_id →
+      {# Packed map keyed by resource_key →
           "schema_id max_body_bytes fail_open content_types". Validation only
           applies to body-carrying methods; routes without a schema map entry
           skip the lookup results and SPOE roundtrip. #}
-      http-request set-var(txn.req_schema_cfg) var(txn.resource_id),map({{ pathResolver.GetPath("request-schema.map", "map") }}) unless { var(txn.req_schema_cfg) -m found }
+      http-request set-var(txn.req_schema_cfg) var(txn.resource_key),map({{ pathResolver.GetPath("request-schema.map", "map") }}) unless { var(txn.req_schema_cfg) -m found }
       http-request set-var(txn.req_schema_id) var(txn.req_schema_cfg),field(1,' ') if { var(txn.req_schema_cfg) -m found }
       http-request set-var(txn.req_schema_max_body) var(txn.req_schema_cfg),field(2,' ') if { var(txn.req_schema_cfg) -m found }
       http-request set-var(txn.req_schema_fail_open) var(txn.req_schema_cfg),field(3,' ') if { var(txn.req_schema_cfg) -m found }

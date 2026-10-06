@@ -40,7 +40,8 @@ var errIncrementalCacheSuperseded = errors.New("incremental cache build was supe
 // a busy e2e job as zero completed builds and no render under 458ms.
 const maxColdCacheBuildWait = 300 * time.Millisecond
 
-// awaitColdCacheBuild waits for the cold graph the caller just handed off.
+// awaitColdCacheBuild waits for the cold graph the caller just handed off, at
+// most wait unless wait is zero.
 //
 // Callers must have released the build's publication first: the build blocks on
 // that, so waiting before it deadlocks.
@@ -48,11 +49,15 @@ func awaitColdCacheBuild(ctx context.Context, build *incrementalCacheBuild, wait
 	if build == nil || build.ready == nil {
 		return
 	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
+	var expired <-chan time.Time
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		expired = timer.C
+	}
 	select {
 	case <-build.ready.done:
-	case <-timer.C:
+	case <-expired:
 	case <-ctx.Done():
 	}
 }

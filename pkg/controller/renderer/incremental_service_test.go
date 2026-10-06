@@ -353,7 +353,9 @@ func TestRenderServiceRetiresIncrementalHTTPLeaseSet(t *testing.T) {
 	assert.ErrorContains(t, err, "incremental render cache was retired")
 }
 
-func TestRenderServiceResourceConflictDoesNotAcceptInitialHTTPCandidate(t *testing.T) {
+// A watched input moving after the render no longer refuses its new content:
+// acceptance is checked against the render's own snapshot (ADR-0030).
+func TestRenderServiceResourceChangeAfterTheRenderStillAcceptsInitialHTTPCandidate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("candidate"))
 	}))
@@ -403,10 +405,11 @@ func TestRenderServiceResourceConflictDoesNotAcceptInitialHTTPCandidate(t *testi
 		incrementalTestResource("default", "a", map[string]any{"value": "after"}),
 		[]string{"default", "a"},
 	))
-	require.Error(t, result.InputTransaction.Commit(t.Context()))
+	require.NoError(t, result.InputTransaction.Commit(t.Context()))
 	descriptor, err := purehttpstore.DescribeSource(purehttpstore.FetchOptions{Critical: true}, nil)
 	require.NoError(t, err)
-	assert.False(t, httpComponent.GetStore().AcceptedSnapshot(server.URL, descriptor).Found)
+	assert.True(t, httpComponent.GetStore().AcceptedSnapshot(server.URL, descriptor).Found)
+	require.NoError(t, service.RetireIncrementalCache())
 }
 
 func TestRenderServiceHTTPCommitFailureDoesNotPublishIncrementalState(t *testing.T) {

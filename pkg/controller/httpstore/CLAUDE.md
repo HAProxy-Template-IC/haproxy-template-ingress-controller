@@ -150,6 +150,13 @@ validationTest as it fails production.
 
 ### Source authority and overlays
 
+Accepting reconcile pipelines use `WithDeferredCandidates`: a discovering render
+aborts, releases the sole cold-render slot, and waits for HTTP outside the renderer.
+The next attempt adopts the exact staged source and candidate through
+`InputRetrySeed`; descriptor, publication, and lease fences remain required.
+Deployment renders withhold candidates instead, and admission keeps read-only
+fetches under its request deadline. See ADR-0030.
+
 `NewHTTPStoreWrapper` takes an explicit `SourceMode`. `SourceModeAuthoritative`
 is reserved for live reconciliation: it reconciles the shared declaration and
 returns matching accepted content or a render-local initial candidate. The
@@ -197,6 +204,8 @@ Published events (defined in `pkg/controller/events/`):
 | `HTTPResourceUpdatedEvent` | Same call as above — sibling event for observability | Lets `commentator` / metrics see that content changed without subscribing to validation events |
 | `HTTPResourceAcceptedEvent` | After a matching `ProposalValidationCompletedEvent` with `Valid == true` | Observability that pending → accepted promotion happened |
 | `ReconciliationTriggeredEvent("http_content_validated", true)` | After a successful promotion (in `handleValidationSuccess`) | Coalescible reconciliation request so HAProxy picks up the new content |
+| `HTTPContentAcceptanceRequestedEvent` | A deploying render (`WithCandidatesWithheld`) left out an unaccepted source | The leader's coordinator runs one acceptance attempt beside the reconcile loop (ADR-0030) |
+| `HTTPContentRevokedEvent` + `ReconciliationTriggeredEvent("http_content_revoked", true)` | `RevokeAcceptances` took back content after the render gate refused a render that read it | Warning Event, metric, and the render without the content |
 
 Subscribed events:
 

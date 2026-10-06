@@ -100,7 +100,7 @@ validationTests:
         pattern: 'http-request set-var\(txn\.cg_group\) var\(txn\.cg_secret\),concat\(\|,txn\.haptic_consumer\),map\([^)]*haptic-consumer-groups\.map\) if \{ var\(txn\.cg_state\) -m str ok \} \{ var\(txn\.haptic_consumer\) -m found \}'
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.cg_state\) -m str ok \} !\{ var\(txn\.resource_id\),concat\(\|,txn\.cg_group\),map\([^)]*haptic-consumer-group-allow\.map\) -m found \}'
+        pattern: 'http-request deny deny_status 403 if \{ var\(txn\.cg_state\) -m str ok \} !\{ var\(txn\.resource_key\),concat\(\|,txn\.cg_group\),map\([^)]*haptic-consumer-group-allow\.map\) -m found \}'
       - {type: contains, target: haproxy.cfg, pattern: '(?ms)^backend default_cg-ingress_svc_echo_80 from haptic-be-\w+$\n[ \t]+guid [^\n]+\n(?:[ \t]+#[^\n]*\n)*[ \t]+server '}
 
   test-haptic-consumer-groups-partial-fails:

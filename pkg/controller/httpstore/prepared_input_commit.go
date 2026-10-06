@@ -31,7 +31,7 @@ func (c *Component) PrepareObservationCommitWithActiveLeases(
 	active *purehttpstore.ActiveLeaseCommit,
 ) (*PreparedInputCommit, error) {
 	prepared, err := c.prepareStagedSourcesAndVerifyObservations(
-		ctx, nil, nil, nil, observations, active, true, nil, nil,
+		ctx, nil, nil, nil, observations, active, active == nil || !active.VerifyOnly, nil, nil,
 	)
 	if err != nil {
 		return nil, err

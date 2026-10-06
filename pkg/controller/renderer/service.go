@@ -58,6 +58,9 @@ type RenderInputTransaction interface {
 
 // RenderResult contains the output of a render operation.
 type RenderResult struct {
+	// HTTPObservations records fresh accepted reads independently of transaction wrappers.
+	HTTPObservations []purehttpstore.ObservationToken
+
 	// CycleSnapshot binds the output and every effect from this render.
 	CycleSnapshot *rendercycle.Snapshot
 
@@ -306,6 +309,7 @@ type RenderService struct {
 	pathResolver                *templating.PathResolver
 	logger                      *slog.Logger
 	admissionSlots              chan struct{}
+	coldRenders                 *coldRenderGate
 	incremental                 *incrementalRenderState
 	mainDocumentCache           *rendercontext.RenderDocumentCache
 	planTokenAuthority          *rendercontext.PlanTokenAuthority
@@ -400,6 +404,13 @@ type RenderServiceConfig struct {
 	// Coordinator overrides it with a leader-term snapshot for reconciliation.
 	CurrentAuxFilesProvider func() map[string]string
 
+	// ColdRendersRunToCompletion lets a reconcile render that starts without
+	// a committed graph run past the render timeout until its context ends,
+	// one at a time. Set it only when every reconcile caller's context ends on
+	// shutdown or leadership loss; a caller without one, such as the
+	// playground, relies on the timeout to stop a template that never returns.
+	ColdRendersRunToCompletion bool
+
 	// TypedResourceTypes carries the generated Go types produced
 	// by pkg/controller/typebootstrap at iteration start. The
 	// renderer emits one *[]*<generated-struct> top-level context
@@ -487,6 +498,10 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 	service.incremental = newIncrementalRenderState(cfg.Config, cfg.Engine)
 	if service.incremental != nil {
 		service.incremental.cacheBuildObserver = cfg.IncrementalCacheBuildObserver
+		if cfg.ColdRendersRunToCompletion {
+			service.coldRenders = newColdRenderGate(service.IncrementalGraphWarm)
+			service.incremental.coldCommitAwaitsGraph = true
+		}
 	}
 	if preparer, ok := cfg.Engine.(exactCycleReplayPreparer); ok {
 		program, prepareErr := preparer.PrepareExactCycleReplay(exactCycleRootEntryPoints(cfg.Config))
@@ -548,8 +563,32 @@ func (s *RenderService) incrementalCacheFigures(
 //   - Error if rendering fails
 func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvider, mode rendercontext.RenderMode, extraOpts ...rendercontext.Option) (*RenderResult, error) {
 	startTime := time.Now()
-	ctx, cancel := s.withRenderTimeout(ctx)
-	defer cancel()
+	cold, err := s.claimColdRender(ctx, mode)
+	if err != nil {
+		return nil, err
+	}
+	return cold.holdUntilSettled(s.render(ctx, provider, mode, startTime, cold.cold(), extraOpts...))
+}
+
+// render runs a cold reconcile render without the render timeout: its cost is
+// the whole resource set, so a deadline it exceeds once it exceeds on every
+// retry and the graph never commits (#285). Its context still ends with the
+// caller's leadership term or shutdown.
+func (s *RenderService) render(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	startTime time.Time,
+	cold bool,
+	extraOpts ...rendercontext.Option,
+) (*RenderResult, error) {
+	if cold {
+		defer s.warnWhenColdRenderOutlivesTimeout(startTime)()
+	} else {
+		var cancel context.CancelFunc
+		ctx, cancel = s.withRenderTimeout(ctx)
+		defer cancel()
+	}
 	if mode == rendercontext.RenderModeAdmission {
 		release, err := s.acquireAdmissionSlot(ctx)
 		if err != nil {
@@ -589,6 +628,21 @@ func (s *RenderService) Render(ctx context.Context, provider stores.StoreProvide
 		forceCold = true
 	}
 	return nil, errors.New("render attempt restart limit exceeded")
+}
+
+// warnWhenColdRenderOutlivesTimeout logs once a cold render passes the render
+// timeout, so a template that never returns stays visible; the returned func
+// stops the timer.
+func (s *RenderService) warnWhenColdRenderOutlivesTimeout(startTime time.Time) func() {
+	if s.renderTimeout <= 0 || s.logger == nil {
+		return func() {}
+	}
+	timer := time.AfterFunc(s.renderTimeout, func() {
+		s.logger.Warn("First full render is still running past the render timeout; "+
+			"admission and deployments wait for it. If it never finishes, raise the controller's memory and CPU limits",
+			"running", time.Since(startTime).Round(100*time.Millisecond), "render_timeout", s.renderTimeout)
+	})
+	return func() { timer.Stop() }
 }
 
 // admissionRenderSlots is how many admission renders may run at once on a
@@ -1042,6 +1096,9 @@ func (s *RenderService) renderDocuments(
 	)
 	if err != nil || restart {
 		return rendercontext.MainDocumentRender{}, nil, restart, err
+	}
+	if err := bctx.httpFetcher.RenderFailure(); err != nil {
+		return rendercontext.MainDocumentRender{}, nil, false, err
 	}
 	return mainRender, staticFiles, false, nil
 }
@@ -1533,6 +1590,7 @@ func (s *RenderService) finishRender(
 	}
 	cacheState, cacheBuildMs := s.incrementalCacheFigures(artifacts.inputTransaction)
 	return &RenderResult{
+		HTTPObservations:         observedHTTPInputs(bctx.inputTransaction),
 		CycleSnapshot:            cycleSnapshot,
 		OutputSnapshot:           outputSnapshot,
 		HAProxyConfig:            haproxyConfig,
@@ -1553,6 +1611,14 @@ func (s *RenderService) finishRender(
 		renderCachePublication:   cachePublication,
 		planIdentity:             planIdentity,
 	}, nil
+}
+
+func observedHTTPInputs(transaction RenderInputTransaction) []purehttpstore.ObservationToken {
+	reader, ok := transaction.(*httpstore.InputTransaction)
+	if !ok {
+		return nil
+	}
+	return reader.HTTPObservations()
 }
 
 // sealRenderCycle completes the output's checksum from the document hash
@@ -1789,6 +1855,7 @@ func (s *RenderService) startIncrementalRender(
 }
 
 type builtRenderingContext struct {
+	httpFetcher *httpstore.HTTPStoreWrapper
 	*rendercontext.BuildResult
 	inputTransaction RenderInputTransaction
 }
@@ -1865,12 +1932,13 @@ func (s *RenderService) buildRenderingContextFromAttemptInputs(
 	opts = append(opts, attemptInputs.options()...)
 
 	var inputTransaction RenderInputTransaction
+	var httpFetcher *httpstore.HTTPStoreWrapper
 	if s.httpStoreComponent != nil {
 		var httpOverlay stores.HTTPContentOverlay
 		if overlayProvider, ok := provider.(*stores.OverlayStoreProvider); ok {
 			httpOverlay = overlayProvider.GetHTTPOverlay()
 		}
-		httpFetcher := httpstore.NewHTTPStoreWrapperWithRetrySeed(
+		httpFetcher = httpstore.NewHTTPStoreWrapperWithRetrySeed(
 			ctx,
 			s.httpStoreComponent,
 			s.logger,
@@ -1889,6 +1957,7 @@ func (s *RenderService) buildRenderingContextFromAttemptInputs(
 	opts = append(opts, extraOpts...)
 
 	return &builtRenderingContext{
+		httpFetcher:      httpFetcher,
 		BuildResult:      rendercontext.NewBuilder(ctx, s.config, s.pathResolver, s.logger, opts...).Build(),
 		inputTransaction: inputTransaction,
 	}

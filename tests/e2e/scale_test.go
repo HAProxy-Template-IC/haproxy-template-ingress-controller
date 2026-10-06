@@ -98,12 +98,12 @@ const (
 //
 // Rationale for each default:
 //
-//   - Change p95 <= 15s: the repo-wide reaction doctrine. The ordinary e2e
-//     suite enforces 12s (controllerDeployedTimeout) at small scale; the
-//     scale tier grants +3s because a single change at 800 backends pays a
-//     full-size render + admission dry-run + a ~1 MiB CRD publish before the
-//     deploy. Anything beyond 15s means routine changes on a large cluster
-//     feel sluggish — exactly the regression this tier exists to catch.
+//   - Change p95 <= 3s: create until every HAProxy pod routes the new host.
+//     Measured at 0.23-0.28s p95 on a 16-thread desktop (#283), so 3s is
+//     ~10x headroom for slower CI runners.
+//   - HAProxyCfg publication p95 <= 15s: create until the HAProxyCfg spec
+//     carries the change and every pod's status reports it. Until #283 the
+//     change latency was read off this object under this same 15s budget.
 //   - Seed <= 600s: 820 resources, each admission-webhook-validated (a
 //     dry-run render each) and folded into batched reconciles. Measured well
 //     under half of this on CI-class hardware; 600s is ~2x headroom. Blowing
@@ -118,19 +118,30 @@ const (
 //     compressed if and only if the rendered config exceeds the configured
 //     compressionThreshold (chart/CRD default 1 MiB).
 const (
-	scaleBudgetChangeP95Env = "SCALE_BUDGET_CHANGE_P95_SECONDS"
-	scaleBudgetSeedEnv      = "SCALE_BUDGET_SEED_SECONDS"
-	scaleBudgetRSSEnv       = "SCALE_BUDGET_RSS_BYTES"
+	scaleBudgetChangeP95Env      = "SCALE_BUDGET_CHANGE_P95_SECONDS"
+	scaleBudgetPublicationP95Env = "SCALE_BUDGET_PUBLICATION_P95_SECONDS"
+	scaleBudgetSeedEnv           = "SCALE_BUDGET_SEED_SECONDS"
+	scaleBudgetRSSEnv            = "SCALE_BUDGET_RSS_BYTES"
 
-	scaleDefaultBudgetChangeP95Seconds = 15
-	scaleDefaultBudgetSeedSeconds      = 600
-	scaleDefaultBudgetRSSBytes         = int64(1) << 30 // 1 GiB
+	scaleDefaultBudgetChangeP95Seconds      = 3
+	scaleDefaultBudgetPublicationP95Seconds = 15
+	scaleDefaultBudgetSeedSeconds           = 600
+	scaleDefaultBudgetRSSBytes              = int64(1) << 30 // 1 GiB
 )
 
 // scaleMetricsFile is where the tier writes its flat-key metrics JSON,
 // relative to the repo root. The nightly-scale CI job uploads it as an
 // always-artifact and trend-compares it against the previous main run.
 const scaleMetricsFile = "scale-metrics.json"
+
+// scaleMetricsVersion is bumped whenever a metric keeps its key but changes
+// what it measures; scripts/scale-trend.py skips older baselines for it.
+// 2: change_convergence_seconds is create -> routed on every pod (#283).
+const scaleMetricsVersion = 2
+
+// scaleRoutePollInterval is the per-pod HTTP poll period while waiting for a
+// change to route, i.e. the change latency's resolution.
+const scaleRoutePollInterval = 20 * time.Millisecond
 
 // TestScale is the scale/performance validation tier: seed a 10k+ line
 // haproxy.cfg worth of routing resources, verify the system converges and
@@ -145,8 +156,9 @@ const scaleMetricsFile = "scale-metrics.json"
 //	(b) measure: seed→converged wall time; then wait for the rendered config
 //	    to go still, so latency is sampled from idle rather than from the
 //	    tail of the seed storm; single-change convergence latency at full
-//	    scale (create 1 Ingress, time create→deployed-marker and
-//	    create→routed, x20, median/p95 — THE key number); rendered config
+//	    scale (create 1 Ingress, time create→HTTP 200 from every HAProxy
+//	    pod — THE key number — and, separately, create→HAProxyCfg
+//	    publication, x20, median/p95); rendered config
 //	    line count, HAProxyCfg spec size, compression state; controller
 //	    container memory (kubelet stats summary via the apiserver node
 //	    proxy — headless, no metrics-server dependency); HAProxy reload
@@ -172,6 +184,7 @@ func TestScale(t *testing.T) {
 	gatewayCount := envInt(t, scaleGatewaysEnv, scaleDefaultGateways)
 	seedWorkers := envInt(t, scaleSeedWorkersEnv, scaleDefaultSeedWorkers)
 	budgetChangeP95 := time.Duration(envInt(t, scaleBudgetChangeP95Env, scaleDefaultBudgetChangeP95Seconds)) * time.Second
+	budgetPublicationP95 := time.Duration(envInt(t, scaleBudgetPublicationP95Env, scaleDefaultBudgetPublicationP95Seconds)) * time.Second
 	budgetSeed := time.Duration(envInt(t, scaleBudgetSeedEnv, scaleDefaultBudgetSeedSeconds)) * time.Second
 	budgetRSS := envInt64(t, scaleBudgetRSSEnv, scaleDefaultBudgetRSSBytes)
 	totalIngresses := namespaceCount * ingressPerNS
@@ -184,6 +197,7 @@ func TestScale(t *testing.T) {
 	// `when: always`, so even a failed run ships its partial numbers.
 	sink := newScaleMetricsSink()
 	sink.set("timestamp", time.Now().UTC().Format(time.RFC3339))
+	sink.set("scale_metrics_version", scaleMetricsVersion)
 	sink.set("haproxy_version", ChartHAProxyVersion)
 	sink.set("scale_namespaces", namespaceCount)
 	sink.set("scale_ingresses_per_ns", ingressPerNS)
@@ -191,6 +205,7 @@ func TestScale(t *testing.T) {
 	sink.set("scale_gateways", gatewayCount)
 	sink.set("budget_seed_seconds", budgetSeed.Seconds())
 	sink.set("budget_change_p95_seconds", budgetChangeP95.Seconds())
+	sink.set("budget_haproxycfg_publication_p95_seconds", budgetPublicationP95.Seconds())
 	sink.set("budget_rss_bytes", budgetRSS)
 	identity, err := expectedControllerIdentity()
 	if err != nil {
@@ -214,15 +229,16 @@ func TestScale(t *testing.T) {
 	})
 
 	scenario := &scaleScenario{
-		namespaceCount:  namespaceCount,
-		ingressPerNS:    ingressPerNS,
-		gatewayCount:    gatewayCount,
-		seedWorkers:     seedWorkers,
-		budgetChangeP95: budgetChangeP95,
-		budgetSeed:      budgetSeed,
-		budgetRSS:       budgetRSS,
-		totalIngresses:  totalIngresses,
-		sink:            sink,
+		namespaceCount:       namespaceCount,
+		ingressPerNS:         ingressPerNS,
+		gatewayCount:         gatewayCount,
+		seedWorkers:          seedWorkers,
+		budgetChangeP95:      budgetChangeP95,
+		budgetPublicationP95: budgetPublicationP95,
+		budgetSeed:           budgetSeed,
+		budgetRSS:            budgetRSS,
+		totalIngresses:       totalIngresses,
+		sink:                 sink,
 	}
 
 	feature := features.New(fmt.Sprintf("Scale tier: %d ns x %d Ingresses + %d Gateways, budget-asserted",
@@ -239,31 +255,32 @@ func TestScale(t *testing.T) {
 }
 
 type scaleScenario struct {
-	namespaceCount     int
-	ingressPerNS       int
-	gatewayCount       int
-	seedWorkers        int
-	budgetChangeP95    time.Duration
-	budgetSeed         time.Duration
-	budgetRSS          int64
-	totalIngresses     int
-	sink               *scaleMetricsSink
-	cs                 kubernetes.Interface
-	dyn                dynamic.Interface
-	hc                 hapticclient.Interface
-	ingressNamespaces  []string
-	gatewayNS          string
-	probeNS            string
-	haproxyReplicas    int
-	markers            []string
-	sampleIngressHosts []string
-	sampleGateways     []string
-	reloadsBefore      map[string]float64
-	cpuBefore          map[string]controllerCPUCounter
-	cpuWindowStart     time.Time
-	seedDuration       time.Duration
-	markerDurations    []time.Duration
-	routedDurations    []time.Duration
+	namespaceCount       int
+	ingressPerNS         int
+	gatewayCount         int
+	seedWorkers          int
+	budgetChangeP95      time.Duration
+	budgetPublicationP95 time.Duration
+	budgetSeed           time.Duration
+	budgetRSS            int64
+	totalIngresses       int
+	sink                 *scaleMetricsSink
+	cs                   kubernetes.Interface
+	dyn                  dynamic.Interface
+	hc                   hapticclient.Interface
+	ingressNamespaces    []string
+	gatewayNS            string
+	probeNS              string
+	haproxyReplicas      int
+	markers              []string
+	sampleIngressHosts   []string
+	sampleGateways       []string
+	reloadsBefore        map[string]float64
+	cpuBefore            map[string]controllerCPUCounter
+	cpuWindowStart       time.Time
+	seedDuration         time.Duration
+	publicationDurations []time.Duration
+	routedDurations      []time.Duration
 }
 
 // ingressBackendMarker is the chart-emitted backend-name prefix for an
@@ -1137,16 +1154,104 @@ func (s *scaleScenario) quiesce(ctx context.Context, t *testing.T, cfg *envconf.
 	return ctx
 }
 
+// forwardHAProxyPods opens one port-forward per ready HAProxy pod, so a change
+// is probed on every replica rather than on whichever one a Service picks.
+func (s *scaleScenario) forwardHAProxyPods(ctx context.Context, t *testing.T) map[string]*httpclient.Client {
+	t.Helper()
+	list, err := s.cs.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{LabelSelector: LabelSelectorHAProxy})
+	if err != nil {
+		t.Fatalf("list HAProxy pods: %v", err)
+	}
+	clients := map[string]*httpclient.Client{}
+	for i := range list.Items {
+		pod := &list.Items[i]
+		if pod.DeletionTimestamp != nil || !podReady(pod) {
+			continue
+		}
+		fwd := ForwardPod(t, pod.Name, 80)
+		clients[pod.Name] = httpclient.ForForwarded(t, fwd.HTTPPort, 0)
+	}
+	if len(clients) != s.haproxyReplicas {
+		t.Fatalf("forwarded %d ready HAProxy pods, want %d", len(clients), s.haproxyReplicas)
+	}
+	return clients
+}
+
+// waitRouted polls host through one pod's tunnel until the echo backend
+// answers. Each poll dials anew so it never rides a keep-alive connection
+// pinned to a HAProxy worker that predates the change.
+func waitRouted(ctx context.Context, client *httpclient.Client, host string) (time.Time, error) {
+	ticker := time.NewTicker(scaleRoutePollInterval)
+	defer ticker.Stop()
+	var last string
+	for {
+		resp, err := client.GET(host, "/").Do(ctx)
+		client.CloseIdleConnections()
+		switch {
+		case err == nil && resp.Status == 200 && resp.Echo != nil:
+			return time.Now(), nil
+		case err != nil:
+			last = err.Error()
+		default:
+			last = fmt.Sprintf("HTTP %d", resp.Status)
+		}
+		select {
+		case <-ctx.Done():
+			return time.Time{}, fmt.Errorf("%s not routed (last: %s): %w", host, last, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// waitChangeSample returns when the probe Ingress name last started routing
+// on any pod and when the HAProxyCfg showed it on every pod.
+func (s *scaleScenario) waitChangeSample(
+	ctx context.Context, pods map[string]*httpclient.Client, name, host string, timeout time.Duration,
+) (routedAt, publishedAt time.Time, err error) {
+	sampleCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	g, gctx := errgroup.WithContext(sampleCtx)
+	var routedMu sync.Mutex
+	for pod, client := range pods {
+		g.Go(func() error {
+			at, err := waitRouted(gctx, client, host)
+			if err != nil {
+				return fmt.Errorf("pod %s: %w", pod, err)
+			}
+			routedMu.Lock()
+			defer routedMu.Unlock()
+			if at.After(routedAt) {
+				routedAt = at
+			}
+			return nil
+		})
+	}
+	g.Go(func() error {
+		// Same poll shape as before #283, so the series continues.
+		waitCfg := testutil.WaitConfig{
+			InitialInterval: 100 * time.Millisecond,
+			MaxInterval:     500 * time.Millisecond,
+			Timeout:         timeout,
+			Multiplier:      1.3,
+		}
+		if err := waitForMarkersDeployed(gctx, s.hc, s.haproxyReplicas,
+			[]string{ingressBackendMarker(s.probeNS, name)}, waitCfg,
+			fmt.Sprintf("probe Ingress %s published in HAProxyCfg for all HAProxy pods", name)); err != nil {
+			return err
+		}
+		publishedAt = time.Now()
+		return nil
+	})
+	err = g.Wait()
+	return routedAt, publishedAt, err
+}
+
 func (s *scaleScenario) measureChanges(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 	t.Helper()
-	// Per-sample wait: fine-grained polling for timing resolution
-	// (<=500ms granularity vs a 15s budget), capped well past the
-	// budget so a slow sample is MEASURED and fails the budget assert
-	// with its real value instead of dying inside the wait.
-	perSampleTimeout := 2 * time.Minute
-	if 4*s.budgetChangeP95 > perSampleTimeout {
-		perSampleTimeout = 4 * s.budgetChangeP95
-	}
+	// Capped well past both budgets so a slow sample is MEASURED and fails
+	// the budget assert with its real value instead of dying in the wait.
+	perSampleTimeout := max(2*time.Minute, 4*s.budgetChangeP95, 4*s.budgetPublicationP95)
+	pods := s.forwardHAProxyPods(ctx, t)
 	for k := 1; k <= scaleChangeSamples; k++ {
 		name := fmt.Sprintf("probe-%d", k)
 		host := fmt.Sprintf("scale-probe-%d.localdev.me", k)
@@ -1162,35 +1267,27 @@ func (s *scaleScenario) measureChanges(ctx context.Context, t *testing.T, cfg *e
 		if createErr != nil {
 			t.Fatalf("latency sample %d: %v", k, createErr)
 		}
-		waitCfg := testutil.WaitConfig{
-			InitialInterval: 100 * time.Millisecond,
-			MaxInterval:     500 * time.Millisecond,
-			Timeout:         perSampleTimeout,
-			Multiplier:      1.3,
-		}
-		if err := waitForMarkersDeployed(ctx, s.hc, s.haproxyReplicas,
-			[]string{ingressBackendMarker(s.probeNS, name)}, waitCfg,
-			fmt.Sprintf("probe Ingress %s deployed to all HAProxy pods", name)); err != nil {
+
+		routedAt, publishedAt, err := s.waitChangeSample(ctx, pods, name, host, perSampleTimeout)
+		if err != nil {
 			t.Fatalf("latency sample %d: %v", k, err)
 		}
-		markerDur := time.Since(start)
-		// Marker-deployed already implies every pod reloaded the
-		// probe's backend; the HTTP poll closes the last gap to
-		// "actually routed" (NodePort round-robin across pods).
-		httpclient.New(t).GET(host, "/").ExpectOK(t)
-		routedDur := time.Since(start)
-		s.sink.set(fmt.Sprintf("change_post_admission_seconds_sample_%d", k), round2((routedDur - admissionDur).Seconds()))
-		s.markerDurations = append(s.markerDurations, markerDur)
+
+		routedDur := routedAt.Sub(start)
+		publicationDur := publishedAt.Sub(start)
 		s.routedDurations = append(s.routedDurations, routedDur)
+		s.publicationDurations = append(s.publicationDurations, publicationDur)
 		// Record the sample and the running aggregates immediately so
 		// an abort mid-loop still ships every measured sample.
+		s.sink.set(fmt.Sprintf("change_post_admission_seconds_sample_%d", k), round2((routedDur - admissionDur).Seconds()))
 		s.sink.set(fmt.Sprintf("change_convergence_seconds_sample_%d", k), round2(routedDur.Seconds()))
 		s.sink.set("change_convergence_seconds_median", round2(durationPercentile(s.routedDurations, 50).Seconds()))
 		s.sink.set("change_convergence_seconds_p95", round2(durationPercentile(s.routedDurations, 95).Seconds()))
-		s.sink.set("change_marker_seconds_median", round2(durationPercentile(s.markerDurations, 50).Seconds()))
-		s.sink.set("change_marker_seconds_p95", round2(durationPercentile(s.markerDurations, 95).Seconds()))
-		t.Logf("latency sample %d: admission %s, create->deployed %s, create->routed %s",
-			k, admissionDur.Round(time.Millisecond), markerDur.Round(time.Millisecond), routedDur.Round(time.Millisecond))
+		s.sink.set(fmt.Sprintf("haproxycfg_publication_seconds_sample_%d", k), round2(publicationDur.Seconds()))
+		s.sink.set("haproxycfg_publication_seconds_median", round2(durationPercentile(s.publicationDurations, 50).Seconds()))
+		s.sink.set("haproxycfg_publication_seconds_p95", round2(durationPercentile(s.publicationDurations, 95).Seconds()))
+		t.Logf("latency sample %d: admission %s, create->routed on all %d pods %s, create->HAProxyCfg published %s",
+			k, admissionDur.Round(time.Millisecond), len(pods), routedDur.Round(time.Millisecond), publicationDur.Round(time.Millisecond))
 	}
 	return ctx
 }
@@ -1199,6 +1296,7 @@ func (s *scaleScenario) collectMetrics(ctx context.Context, t *testing.T, cfg *e
 	t.Helper()
 	changeMedian := durationPercentile(s.routedDurations, 50)
 	changeP95 := durationPercentile(s.routedDurations, 95)
+	publicationP95 := durationPercentile(s.publicationDurations, 95)
 
 	// Final rendered-config shape, straight from the HAProxyCfg CR.
 	// Each measurement lands in the sink the moment it exists, so a
@@ -1249,10 +1347,10 @@ func (s *scaleScenario) collectMetrics(ctx context.Context, t *testing.T, cfg *e
 	}
 	t.Logf("scale metrics written to %s", path)
 	t.Logf("scale metrics: %d config lines, %d B uncompressed (compressed=%v, threshold=%d B), "+
-		"seed=%s, change median=%s p95=%s, controller workingSet=%d MiB, reloads=%.0f",
+		"seed=%s, change median=%s p95=%s, HAProxyCfg publication p95=%s, controller workingSet=%d MiB, reloads=%.0f",
 		configLines, len(content), obj.Spec.Compressed, threshold,
 		s.seedDuration.Round(time.Second), changeMedian.Round(time.Millisecond),
-		changeP95.Round(time.Millisecond), workingSet/(1<<20), reloadDelta)
+		changeP95.Round(time.Millisecond), publicationP95.Round(time.Millisecond), workingSet/(1<<20), reloadDelta)
 
 	// ── Budget assertions (metrics JSON is already on disk, so a
 	// failing budget still ships full artifacts). ──
@@ -1263,6 +1361,10 @@ func (s *scaleScenario) collectMetrics(ctx context.Context, t *testing.T, cfg *e
 	if changeP95 > s.budgetChangeP95 {
 		t.Errorf("BUDGET: single-change convergence p95 %s exceeds %s at full scale (%s to relax)",
 			changeP95.Round(time.Millisecond), s.budgetChangeP95, scaleBudgetChangeP95Env)
+	}
+	if publicationP95 > s.budgetPublicationP95 {
+		t.Errorf("BUDGET: HAProxyCfg publication p95 %s exceeds %s at full scale (%s to relax)",
+			publicationP95.Round(time.Millisecond), s.budgetPublicationP95, scaleBudgetPublicationP95Env)
 	}
 	if workingSet > uint64(s.budgetRSS) {
 		t.Errorf("BUDGET: controller workingSet %d bytes exceeds %d (%s to relax)",

@@ -71,9 +71,9 @@ templateSnippets:
       {%- for _, p := range sort_strings(pairs) %}
         {%- var parts = split(tostring(p), " ") %}
         {%- if parts[1] == "1" %}
-      http-request set-header {{ parts[0] }} %[unique-id] if { var(txn.resource_id),map({{ routes }}) -m str "{{ p }}" } !{ req.hdr({{ parts[0] }}) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
+      http-request set-header {{ parts[0] }} %[unique-id] if { var(txn.resource_key),map({{ routes }}) -m str "{{ p }}" } !{ req.hdr({{ parts[0] }}) -m reg ^[A-Za-z0-9._:-]{1,128}$ }
         {%- else %}
-      http-request set-header {{ parts[0] }} %[unique-id] if { var(txn.resource_id),map({{ routes }}) -m str "{{ p }}" }
+      http-request set-header {{ parts[0] }} %[unique-id] if { var(txn.resource_key),map({{ routes }}) -m str "{{ p }}" }
         {%- end %}
       {%- end %}
       {%- end %}

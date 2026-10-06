@@ -1390,7 +1390,7 @@ func (r *incrementalRenderSession) admitMembership(
 	activation := activationQueryKey(alias, namespace, name)
 	for index := range r.bindingPlan.bySource[alias] {
 		component := &r.bindingPlan.bySource[alias][index]
-		query := r.registerComponentQuery(component, alias, namespace, name)
+		query := r.membershipQueryKey(component, alias, namespace, name)
 		r.retired.Delete([]byte(query.Opaque()))
 		if len(component.activationPaths) > 0 {
 			r.retired.Delete([]byte(activation.Opaque()))
@@ -1414,7 +1414,7 @@ func (r *incrementalRenderSession) admitMembership(
 func (r *incrementalRenderSession) retireMembership(alias, namespace, name string) error {
 	for index := range r.bindingPlan.bySource[alias] {
 		component := &r.bindingPlan.bySource[alias][index]
-		query := r.registerComponentQuery(component, alias, namespace, name)
+		query := r.membershipQueryKey(component, alias, namespace, name)
 		r.retired.Insert([]byte(query.Opaque()), struct{}{})
 		if len(component.activationPaths) > 0 {
 			if err := r.setActivationInstanceActive(component, alias, namespace, name, false); err != nil {
@@ -2420,6 +2420,18 @@ func (r *incrementalRenderSession) executeComponent(
 	}
 	encoded, err := r.finishPreparedComponent(prepared, text)
 	return []byte(encoded), err
+}
+
+// membershipQueryKey leaves an activation-gated query unregistered until its
+// activation evaluates it: most members never activate (#284).
+func (r *incrementalRenderSession) membershipQueryKey(
+	component *incrementalComponent,
+	source, namespace, name string,
+) incremental.QueryKey {
+	if len(component.activationPaths) > 0 {
+		return componentQueryKey(component, source, namespace, name)
+	}
+	return r.registerComponentQuery(component, source, namespace, name)
 }
 
 func (r *incrementalRenderSession) registerComponentQuery(
@@ -4652,11 +4664,11 @@ func (r *incrementalRenderSession) verifyResources(
 }
 
 // commitOutlivesNextRender reports whether this commit must match the live
-// store: accepted fetched content and an admission verdict cannot be revised by
-// a later render, while a reconcile output is superseded by the reconcile the
-// moved input already queued.
+// store: an admission verdict cannot be revised by a later render. Accepted
+// content is checked against this render's own snapshot; the render gate
+// revokes it if a later render containing it fails (ADR-0030).
 func (r *incrementalRenderSession) commitOutlivesNextRender() bool {
-	return r.commitAcceptsCandidates || r.renderMode == rendercontext.RenderModeAdmission
+	return r.renderMode == rendercontext.RenderModeAdmission
 }
 
 // verifyCachePublicationResources verifies what the background cache builder

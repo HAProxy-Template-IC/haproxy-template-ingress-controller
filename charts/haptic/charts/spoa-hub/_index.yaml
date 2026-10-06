@@ -34,6 +34,8 @@
 #                                      plugin's response var).
 #   map-auth-url-*                   — per-ingress entries for auth-url.map
 #                                      (cycle 4 external-auth flow).
+#   frontend-spoe-auth-request-*     — preset auth_* variables before the map lookups.
+#   frontend-spoe-auth-verdict-*     — revoke txn.hub.external_auth.allowed before use.
 #
 # Usage:
 #   controller:
@@ -82,8 +84,8 @@ maps:
 
   auth-url.map:
     template: |
-      # External-auth per-ingress auth-url. Keyed by <ns>/<name> (resource id).
-      # Populated by ingress libraries' map-auth-url-* contributions.
+      # External-auth URL per txn.resource_key (<ns>/<name> for an Ingress,
+      # gateway/<rule id> for a Gateway rule). Populated by map-auth-url-*.
       {{ render_glob "map-auth-url-*" -}}
 
   auth-signin.map:

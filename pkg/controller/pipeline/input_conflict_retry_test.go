@@ -24,7 +24,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
@@ -184,64 +183,37 @@ func TestALostCommitRaceWithCandidatesFailsTheRender(t *testing.T) {
 
 	require.NotNil(t, pipelineErr, "a candidate render that lost the commit race was kept for deployment")
 	require.ErrorIs(t, pipelineErr.Cause, incremental.ErrRevisionConflict)
-	require.ErrorIs(t, pipelineErr.Cause, errCandidateAcceptanceLost)
 	assert.True(t, inputsMovedUnderTheRender(pipelineErr.Cause, rendercontext.RenderModeReconcile),
 		"the reconcile must re-render instead of giving up")
 }
 
-// A reconcile whose new content lost the race deploys a render without that
-// content right away. Failing the reconcile instead left the fleet without the
-// rollout's endpoint change for 1.8 s while a churning cluster kept beating
-// each acceptance attempt (#278).
-func TestALostCandidateRaceRendersAgainWithoutTheCandidates(t *testing.T) {
-	var withheld []bool
-	want := &PipelineResult{HAProxyConfig: "without the page"}
+// An acceptance attempt whose render HAProxy already refused stops before the
+// check and the commit: accepting that content again would only be revoked again.
+func TestAnAcceptanceIntoARefusedOutputStopsBeforeCommitting(t *testing.T) {
+	pipeline := &Pipeline{}
+	transaction := &countingInputTransaction{candidates: true}
+	ctx := WithRefusedOutputs(t.Context(), func(checksum string) bool { return checksum == "refused" })
 
-	result, _, err := renderWithholdingLostCandidates(t.Context(), rendercontext.RenderModeReconcile,
-		func(ctx context.Context) (*PipelineResult, *validation.ValidationResult, error) {
-			withheld = append(withheld, controllerhttpstore.CandidatesWithheld(ctx))
-			if len(withheld) == 1 {
-				return nil, nil, fmt.Errorf("%w: %w", errCandidateAcceptanceLost, incremental.ErrRevisionConflict)
-			}
-			return want, nil, nil
-		})
+	pipelineErr := pipeline.commitInputs(ctx, transaction, &PipelineResult{ContentChecksum: "refused"})
 
-	require.NoError(t, err)
-	assert.Same(t, want, result)
-	assert.Equal(t, []bool{false, true}, withheld)
+	require.NotNil(t, pipelineErr)
+	require.ErrorIs(t, pipelineErr.Cause, ErrOutputRefusedByGate)
+	assert.Zero(t, transaction.commits)
+
+	require.Nil(t, pipeline.commitInputs(ctx, transaction, &PipelineResult{ContentChecksum: "other"}))
+	assert.Equal(t, 1, transaction.commits)
 }
 
-// A critical source cannot render without its content, so the lost race goes
-// back to the settle loop, which retries the acceptance.
-func TestACriticalWithheldSourceKeepsSettlingTheRace(t *testing.T) {
-	lost := fmt.Errorf("%w: %w", errCandidateAcceptanceLost, incremental.ErrRevisionConflict)
-	calls := 0
-	_, _, err := renderWithholdingLostCandidates(t.Context(), rendercontext.RenderModeReconcile,
-		func(context.Context) (*PipelineResult, *validation.ValidationResult, error) {
-			calls++
-			if calls == 1 {
-				return nil, nil, lost
-			}
-			return nil, nil, fmt.Errorf("rendering: %w", controllerhttpstore.ErrCandidateWithheld)
-		})
-
-	require.ErrorIs(t, err, errCandidateAcceptanceLost)
-	assert.True(t, inputsMovedUnderTheRender(err, rendercontext.RenderModeReconcile))
-	assert.Equal(t, 2, calls)
+type countingInputTransaction struct {
+	candidates bool
+	commits    int
 }
 
-// Admission answers for the object under review and deploys nothing, so it
-// keeps settling the race instead of judging a render without the content.
-func TestAdmissionDoesNotWithholdLostCandidates(t *testing.T) {
-	calls := 0
-	_, _, err := renderWithholdingLostCandidates(t.Context(), rendercontext.RenderModeAdmission,
-		func(context.Context) (*PipelineResult, *validation.ValidationResult, error) {
-			calls++
-			return nil, nil, fmt.Errorf("%w: %w", errCandidateAcceptanceLost, incremental.ErrRevisionConflict)
-		})
-
-	require.ErrorIs(t, err, errCandidateAcceptanceLost)
-	assert.Equal(t, 1, calls)
+func (f *countingInputTransaction) HasCandidates() bool { return f.candidates }
+func (f *countingInputTransaction) Abort()              {}
+func (f *countingInputTransaction) Commit(context.Context) error {
+	f.commits++
+	return nil
 }
 
 // Without candidates the same lost race keeps the render.
@@ -283,9 +255,7 @@ func TestAnHTTPInputsMovedRaceWithCandidatesFails(t *testing.T) {
 	assert.False(t, commitConflictLeavesOutputUsable(err, true))
 }
 
-// A render accepting external content must still fail: the commit decides the
-// store's accepted version of something fetched over the network, and the
-// render gate cannot undo that acceptance afterwards.
+// HTTP version and publication conflicts still invalidate candidate acceptance.
 func TestAConflictWhileAcceptingExternalContentStillFails(t *testing.T) {
 	err := fmt.Errorf("committing validated render inputs: %w", incremental.ErrRevisionConflict)
 

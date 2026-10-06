@@ -14,31 +14,31 @@ func TestPreparedGraphCommitRejectsMutatedDraftRoots(t *testing.T) {
 		{
 			name: "input tree substitution",
 			mutate: func(f *preparedGraphDraftPoisonFixture) {
-				entry, _ := f.prepared.prepared.generation.inputs.Root().Get([]byte(f.inputKey.value))
-				inputs, _, _ := f.prepared.prepared.generation.inputs.Insert([]byte(f.inputKey.value), entry)
+				entry, _ := f.prepared.prepared.generation.inputs.Root().Get([]byte(f.inputKey.id.String()))
+				inputs, _, _ := f.prepared.prepared.generation.inputs.Insert([]byte(f.inputKey.id.String()), entry)
 				f.prepared.prepared.generation.inputs = inputs
 			},
 		},
 		{
 			name: "input value substitution",
 			mutate: func(f *preparedGraphDraftPoisonFixture) {
-				entry, _ := f.prepared.prepared.generation.inputs.Root().Get([]byte(f.inputKey.value))
+				entry, _ := f.prepared.prepared.generation.inputs.Root().Get([]byte(f.inputKey.id.String()))
 				entry.value = "forged"
-				inputs, _, _ := f.prepared.prepared.generation.inputs.Insert([]byte(f.inputKey.value), entry)
+				inputs, _, _ := f.prepared.prepared.generation.inputs.Insert([]byte(f.inputKey.id.String()), entry)
 				f.prepared.prepared.generation.inputs = inputs
 			},
 		},
 		{
 			name: "node tree mutation",
 			mutate: func(f *preparedGraphDraftPoisonFixture) {
-				nodes, _, _ := f.prepared.prepared.generation.nodes.Delete([]byte(f.queryKey.value))
+				nodes, _, _ := f.prepared.prepared.generation.nodes.Delete([]byte(f.queryKey.id.String()))
 				f.prepared.prepared.generation.nodes = nodes
 			},
 		},
 		{
 			name: "node dependency mutation",
 			mutate: func(f *preparedGraphDraftPoisonFixture) {
-				entry, _ := f.prepared.prepared.generation.nodes.Root().Get([]byte(f.queryKey.value))
+				entry, _ := f.prepared.prepared.generation.nodes.Root().Get([]byte(f.queryKey.id.String()))
 				deps, _ := entry.deps.Values(f.graph.dependencyAuthority)
 				deps[0].revision = NewRevision("forged-dependency")
 				entry.deps, _ = f.graph.dependencyAuthority.Own(deps)
@@ -48,7 +48,7 @@ func TestPreparedGraphCommitRejectsMutatedDraftRoots(t *testing.T) {
 		{
 			name: "node observation mutation",
 			mutate: func(f *preparedGraphDraftPoisonFixture) {
-				entry, _ := f.prepared.prepared.generation.nodes.Root().Get([]byte(f.queryKey.value))
+				entry, _ := f.prepared.prepared.generation.nodes.Root().Get([]byte(f.queryKey.id.String()))
 				inputs, _ := entry.inputs.Values(f.graph.observationAuthority)
 				inputs[0].Revision = NewRevision("forged-node-observation")
 				entry.inputs, _ = f.graph.observationAuthority.Own(inputs)
@@ -58,7 +58,7 @@ func TestPreparedGraphCommitRejectsMutatedDraftRoots(t *testing.T) {
 		{
 			name: "node value substitution",
 			mutate: func(f *preparedGraphDraftPoisonFixture) {
-				entry, _ := f.prepared.prepared.generation.nodes.Root().Get([]byte(f.queryKey.value))
+				entry, _ := f.prepared.prepared.generation.nodes.Root().Get([]byte(f.queryKey.id.String()))
 				entry.value = newExactValueRoot(f.graph.valueAuthority, f.queryKey, "forged")
 				f.replaceNode(entry)
 			},
@@ -76,16 +76,16 @@ func TestPreparedGraphCommitRejectsMutatedDraftRoots(t *testing.T) {
 		{
 			name: "dirty map mutation",
 			mutate: func(f *preparedGraphDraftPoisonFixture) {
-				dirty, _, _ := f.prepared.prepared.generation.dirty.Insert([]byte(f.queryKey.value), struct{}{})
+				dirty, _, _ := f.prepared.prepared.generation.dirty.Insert([]byte(f.queryKey.id.String()), struct{}{})
 				f.prepared.prepared.generation.dirty = dirty
 			},
 		},
 		{
 			name: "counter map mutation",
 			mutate: func(f *preparedGraphDraftPoisonFixture) {
-				counters, _ := f.prepared.prepared.generation.counters.Root().Get([]byte(f.queryKey.value))
+				counters, _ := f.prepared.prepared.generation.counters.Root().Get([]byte(f.queryKey.id.String()))
 				counters.Executions++
-				tree, _, _ := f.prepared.prepared.generation.counters.Insert([]byte(f.queryKey.value), counters)
+				tree, _, _ := f.prepared.prepared.generation.counters.Insert([]byte(f.queryKey.id.String()), counters)
 				f.prepared.prepared.generation.counters = tree
 			},
 		},
@@ -175,7 +175,7 @@ func TestPreparedGraphCommitReauthenticatesDraftAfterCallbacks(t *testing.T) {
 				publication := poisonDraftPublication(visible, aborted)
 				publication.Publish = func() {
 					*visible = true
-					nodes, _, _ := f.prepared.prepared.generation.nodes.Delete([]byte(f.queryKey.value))
+					nodes, _, _ := f.prepared.prepared.generation.nodes.Delete([]byte(f.queryKey.id.String()))
 					f.prepared.prepared.generation.nodes = nodes
 				}
 				return f.prepared.PublishWithPreparedPublisher(
@@ -196,7 +196,7 @@ func TestPreparedGraphCommitReauthenticatesDraftAfterCallbacks(t *testing.T) {
 				publication := poisonDraftPublication(visible, aborted)
 				publication.Complete = func() {
 					counters, _, _ := f.prepared.prepared.generation.counters.Insert(
-						[]byte(f.queryKey.value), NodeCounters{Executions: 99},
+						[]byte(f.queryKey.id.String()), NodeCounters{Executions: 99},
 					)
 					f.prepared.prepared.generation.counters = counters
 				}
@@ -283,7 +283,7 @@ type preparedGraphDraftPoisonFixture struct {
 }
 
 func (f *preparedGraphDraftPoisonFixture) replaceNode(entry committedNodeEntry) {
-	nodes, _, _ := f.prepared.prepared.generation.nodes.Insert([]byte(f.queryKey.value), entry)
+	nodes, _, _ := f.prepared.prepared.generation.nodes.Insert([]byte(f.queryKey.id.String()), entry)
 	f.prepared.prepared.generation.nodes = nodes
 }
 
@@ -332,7 +332,7 @@ func newPreparedGraphDraftPoisonFixture(t *testing.T) *preparedGraphDraftPoisonF
 	if err != nil || len(retiredInputs) != 1 || retiredInputs[0] != retiredKey {
 		t.Fatalf("prepared retired inputs = %#v, want %#v", retiredInputs, []InputKey{retiredKey})
 	}
-	entry, exists := prepared.prepared.generation.nodes.Root().Get([]byte(queryKey.value))
+	entry, exists := prepared.prepared.generation.nodes.Root().Get([]byte(queryKey.id.String()))
 	deps, depsErr := entry.deps.Len(graph.dependencyAuthority)
 	inputs, inputsErr := entry.inputs.Len(graph.observationAuthority)
 	if !exists || depsErr != nil || inputsErr != nil || deps == 0 || inputs == 0 {

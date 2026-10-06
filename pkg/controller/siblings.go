@@ -45,11 +45,11 @@ const (
 	controllerPodSelectorEnv = "CONTROLLER_POD_SELECTOR"
 )
 
-// siblingConvergence answers whether another controller replica runs a
-// converged iteration, from a result refreshed in the background so a probe
-// never waits on the API server or the network. A result that is missing,
-// failed or outdated reads as "a sibling may be converged".
-type siblingConvergence struct {
+// siblingProbe answers whether another Ready controller replica's health
+// endpoint matches a condition, from a result refreshed in the background so a
+// probe never waits on the API server or the network. A result that is
+// missing, failed or outdated reads as "a sibling may match".
+type siblingProbe struct {
 	ctx       context.Context
 	clientset kubernetes.Interface
 	namespace string
@@ -58,19 +58,32 @@ type siblingConvergence struct {
 	client    *http.Client
 	now       func() time.Time
 	logger    *slog.Logger
+	path      string
+	matches   siblingHealthMatcher
 
-	mu            sync.Mutex
-	refreshing    bool
-	checkedAt     time.Time
-	noneConverged bool
+	mu         sync.Mutex
+	refreshing bool
+	checkedAt  time.Time
+	noneMatch  bool
 }
 
-func newSiblingConvergence(
+// siblingHealthMatcher judges one sibling's response to the probe's path.
+type siblingHealthMatcher func(status int, components map[string]introspection.ComponentHealth) bool
+
+// siblingProbes are the questions the probes ask about the other replicas.
+type siblingProbes struct {
+	// converged: /healthz is 200 without a grace entry (ADR-0028).
+	converged *siblingProbe
+	// renderGraph: /readyz reports a published render graph.
+	renderGraph *siblingProbe
+}
+
+func newSiblingProbes(
 	ctx context.Context,
 	clientset kubernetes.Interface,
 	namespace, podName, selector string,
 	logger *slog.Logger,
-) (*siblingConvergence, error) {
+) (*siblingProbes, error) {
 	parsed, err := labels.Parse(selector)
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s %q: %w", controllerPodSelectorEnv, selector, err)
@@ -78,21 +91,51 @@ func newSiblingConvergence(
 	if parsed.Empty() {
 		return nil, fmt.Errorf("%s is empty and would match every pod in the namespace", controllerPodSelectorEnv)
 	}
-	return &siblingConvergence{
-		ctx:       ctx,
-		clientset: clientset,
-		namespace: namespace,
-		podName:   podName,
-		selector:  parsed,
-		client:    &http.Client{Timeout: siblingRequestTimeout},
-		now:       time.Now,
-		logger:    logger,
+	probe := func(path string, matches siblingHealthMatcher) *siblingProbe {
+		return &siblingProbe{
+			ctx:       ctx,
+			clientset: clientset,
+			namespace: namespace,
+			podName:   podName,
+			selector:  parsed,
+			client:    &http.Client{Timeout: siblingRequestTimeout},
+			now:       time.Now,
+			logger:    logger,
+			path:      path,
+			matches:   matches,
+		}
+	}
+	return &siblingProbes{
+		converged:   probe("/healthz", siblingConverged),
+		renderGraph: probe(ReadinessPath, siblingRenderGraphPublished),
 	}, nil
 }
 
-// NoneConverged reports whether the last check found no converged sibling,
-// and starts a new check when that result is due.
-func (s *siblingConvergence) NoneConverged() bool {
+func siblingConverged(status int, components map[string]introspection.ComponentHealth) bool {
+	if status != http.StatusOK {
+		return false
+	}
+	for _, component := range components {
+		if strings.HasPrefix(component.Error, reinitGracePrefix) {
+			return false
+		}
+	}
+	return true
+}
+
+// siblingRenderGraphPublished counts a Ready sibling without the entry, a
+// release that predates it, as able to validate.
+func siblingRenderGraphPublished(status int, components map[string]introspection.ComponentHealth) bool {
+	if status != http.StatusOK {
+		return false
+	}
+	entry, ok := components[healthKeyRenderGraph]
+	return !ok || (entry.Healthy && entry.Error == "")
+}
+
+// NoneMatch reports whether the last check found no matching sibling, and
+// starts a new check when that result is due.
+func (s *siblingProbe) NoneMatch() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	age := s.now().Sub(s.checkedAt)
@@ -100,22 +143,22 @@ func (s *siblingConvergence) NoneConverged() bool {
 		s.refreshing = true
 		go s.refresh()
 	}
-	return s.noneConverged && age < 2*siblingRefreshInterval
+	return s.noneMatch && age < 2*siblingRefreshInterval
 }
 
-func (s *siblingConvergence) refresh() {
+func (s *siblingProbe) refresh() {
 	none, err := s.check(s.ctx)
 	if err != nil {
-		s.logger.Debug("Could not rule out a converged controller replica", "error", err)
+		s.logger.Debug("Could not rule out a matching controller replica", "path", s.path, "error", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refreshing = false
 	s.checkedAt = s.now()
-	s.noneConverged = err == nil && none
+	s.noneMatch = err == nil && none
 }
 
-func (s *siblingConvergence) check(ctx context.Context) (bool, error) {
+func (s *siblingProbe) check(ctx context.Context) (bool, error) {
 	pods, err := s.clientset.CoreV1().Pods(s.namespace).List(ctx, metav1.ListOptions{LabelSelector: s.selector.String()})
 	if err != nil {
 		return false, fmt.Errorf("listing controller pods: %w", err)
@@ -125,24 +168,23 @@ func (s *siblingConvergence) check(ctx context.Context) (bool, error) {
 		if pod.Name == s.podName || pod.Status.PodIP == "" || !podReady(pod) {
 			continue
 		}
-		converged, err := s.converged(ctx, pod)
+		matched, err := s.matchesPod(ctx, pod)
 		if err != nil {
 			return false, fmt.Errorf("pod %s: %w", pod.Name, err)
 		}
-		if converged {
+		if matched {
 			return false, nil
 		}
 	}
 	return true, nil
 }
 
-// converged reports whether pod's /healthz is 200 without a grace entry.
-func (s *siblingConvergence) converged(ctx context.Context, pod *corev1.Pod) (bool, error) {
+func (s *siblingProbe) matchesPod(ctx context.Context, pod *corev1.Pod) (bool, error) {
 	port, ok := namedContainerPort(pod, siblingHealthPortName)
 	if !ok {
 		return false, fmt.Errorf("no %q container port", siblingHealthPortName)
 	}
-	url := "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(port))) + "/healthz"
+	url := "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(port))) + s.path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return false, err
@@ -153,20 +195,15 @@ func (s *siblingConvergence) converged(ctx context.Context, pod *corev1.Pod) (bo
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return false, nil
+		return s.matches(resp.StatusCode, nil), nil
 	}
 	var body struct {
 		Components map[string]introspection.ComponentHealth `json:"components"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSiblingHealthBody)).Decode(&body); err != nil {
-		return false, fmt.Errorf("decoding /healthz: %w", err)
+		return false, fmt.Errorf("decoding %s: %w", s.path, err)
 	}
-	for _, component := range body.Components {
-		if strings.HasPrefix(component.Error, reinitGracePrefix) {
-			return false, nil
-		}
-	}
-	return true, nil
+	return s.matches(resp.StatusCode, body.Components), nil
 }
 
 func podReady(pod *corev1.Pod) bool {

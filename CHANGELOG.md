@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `haptic_http_content_revoked_total` metric and `HTTPContentRevoked` Warning Event: `http.Fetch` content is taken back when HAProxy refuses a configuration containing it.
+
+### Changed
+
+- Controllers use less CPU to validate a configuration before loading it, reducing startup time.
+- The `HAProxyCfg` shows a configuration change in half the time at 800 Ingresses: stale auxiliary files are pruned without re-reading the whole rendered config per deletion, and auxiliary files and their pod status are written in parallel.
+- Deploying renders leave new `http.Fetch` content out until its background fetch and validation succeed; a `critical: true` source without accepted content fails the render.
+
+### Fixed
+
+- Preserve event correlation for updates triggered by external HTTP content.
+- Lower controller memory at large route counts: a controller restarting with 3,000 Ingresses completes within a 3 GiB limit instead of being `OOMKilled` on every attempt.
+- A restarted controller whose first full render takes longer than the render timeout now finishes it instead of retrying it forever, so it deploys and validates admission requests again.
+- A replica still running its first full render leaves the admission webhook Service while another replica can validate; alone, it denies requests with a message that says why.
+- External auth forwards request headers whose names contain a dash, such as `X-Api-Key` from `auth-headers-request` and the default `X-Forwarded-For`/`-Proto`/`-Host`/`-Uri`; only `Authorization` and `Cookie` reached the auth service before (external-auth plugin v0.6.0).
+- New `http.Fetch` content is accepted while other watched resources keep changing; before, a busy cluster could keep it pending indefinitely and slow every deploy.
+- HTTP refresh responses survive concurrent renders that read the same source; before, those renders could discard a valid response.
+- A failed `critical: true` `http.Fetch` fails the render as documented; before, `{{ http.Fetch(...) }}` rendered the source as empty.
+
 ### Helm chart
 
 #### Added
@@ -19,9 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gateway API: TLSRoute rules split connections across several `backendRefs` by `weight`; an invalid ref's share is rejected.
 - Gateway API: `sessionPersistence.cookie.lifetimeType: Permanent` sets the cookie's `Max-Age`.
 - Gateway API: `RetryBackoffUnsupported` Warning event on a route that sets `retry.backoff`, which HAProxy can't enforce.
+- Gateway API: HTTPRoute `ExternalAuth` filter (`protocol: HTTP`) through the SPOA hub external-auth plugin; a rule whose filter can't be enforced answers `500` and its route status reports why.
 
 #### Fixed
 
+- `extraContext.tls.ciphers`, `ciphersuites`, and `minVersion` install; a chart guard rejected the documented TLS policy keys.
+- A WAF policy catalog set only through `waf.policies.configMapRefs` fails the install when the SPOA hub or the `hapticAnnotations` library is disabled, instead of rendering without the WAF.
+- An HTTPRoute or GRPCRoute no longer inherits Ingress annotation features (external auth, access control, CORS, method and header requirements, request validation and others) from an Ingress with the same namespace and name.
 - Gateway API: `retry` and `sessionPersistence` apply to their own route rule; rules of one route sharing a Service no longer all take the first rule's policy. Such a rule's backend is named with a `_r<rule index>` suffix.
 - Gateway API: an HTTPRoute `retry.codes` entry HAProxy can't retry on, such as `507`, no longer breaks the configuration; HAPTIC drops it and records a `RetryCodeUnsupported` Warning event.
 - Gateway API: a session name with spaces or other characters HAProxy can't take is rejected instead of being written into the configuration.
@@ -30,11 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Changed
 
 - **BREAKING:** The chart ships a strict `values.schema.json`: Helm rejects unknown keys and wrongly typed values on install, upgrade, and template instead of ignoring them. [Check your values](./docs/site/docs/upgrade-notes.md#upgrading-to-04) before upgrading.
-
-#### Fixed
-
-- `extraContext.tls.ciphers`, `ciphersuites`, and `minVersion` install; a chart guard rejected the documented TLS policy keys.
-- A WAF policy catalog set only through `waf.policies.configMapRefs` fails the install when the SPOA hub or the `hapticAnnotations` library is disabled, instead of rendering without the WAF.
+- **BREAKING:** `haproxy-haptic.org/auth-headers-request` and `haproxy-ingress.github.io/auth-headers-request` no longer forward header names containing `_`: admission rejects them and an existing Ingress gets an `InvalidAuthHeader` Warning Event. [Rename them](./docs/site/docs/upgrade-notes.md#3-check-auth-headers-request-header-names) before upgrading.
 
 #### Security
 

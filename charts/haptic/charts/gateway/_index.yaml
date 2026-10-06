@@ -13,7 +13,8 @@
 #   - GRPCRoute matching: service/method (Exact/RegularExpression), headers
 #   - Filters: RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect,
 #     URLRewrite (ReplaceFullPath/ReplacePrefixMatch), RequestMirror (via the
-#     SPOA-hub mirror plugin), CORS (GEP-1767), ExtensionRef
+#     SPOA-hub mirror plugin), CORS (GEP-1767), ExternalAuth (HTTP, via the
+#     SPOA-hub external-auth plugin), ExtensionRef
 #   - Traffic splitting: weighted backends (HTTPRoute, GRPCRoute, TLSRoute, TCPRoute)
 #   - Timeouts (GEP-1742: request + backendRequest), retries (GEP-1731:
 #     attempts + retry-on codes; backoff isn't expressible in HAProxy),

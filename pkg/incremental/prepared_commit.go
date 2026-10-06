@@ -244,10 +244,10 @@ func authenticatePreparedGraphCommitPlan(
 		return err
 	}
 	for index, key := range plan.retiredInputs {
-		if !validInputKey(key) || (index > 0 && plan.retiredInputs[index-1].value >= key.value) {
+		if !validInputKey(key) || (index > 0 && plan.retiredInputs[index-1].id.String() >= key.id.String()) {
 			return errors.New("incremental prepared generation retired inputs are not canonical")
 		}
-		if _, exists := generation.inputs.Root().Get([]byte(key.value)); exists {
+		if _, exists := generation.inputs.Root().Get([]byte(key.id.String())); exists {
 			return errors.New("incremental prepared generation retained a retired input")
 		}
 	}
@@ -257,7 +257,7 @@ func authenticatePreparedGraphCommitPlan(
 func validatePreparedGraphObservations(observations []InputRevision) error {
 	for index, observation := range observations {
 		if !validInputKey(observation.Key) || !validRevision(observation.Revision) ||
-			(index > 0 && observations[index-1].Key.value >= observation.Key.value) {
+			(index > 0 && observations[index-1].Key.id.String() >= observation.Key.id.String()) {
 			return errors.New("incremental prepared generation observations are not canonical")
 		}
 	}

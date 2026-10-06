@@ -288,7 +288,7 @@ Basic auth, client-certificate verification, external/forward auth, OAuth2-proxy
 | Annotation | Behavior |
 |------------|----------|
 | `haproxy-haptic.org/auth-headers-fail` | Adds response headers on failed external authentication via `http-after-response set-header`. |
-| `haproxy-haptic.org/auth-headers-request` | Lists the request headers forwarded to the external authentication service. |
+| `haproxy-haptic.org/auth-headers-request` | Lists the request headers forwarded to the external authentication service. Names containing `_` aren't forwarded: admission rejects them, and an existing Ingress gets an `InvalidAuthHeader` Warning Event; if no other name is listed, the Ingress forwards the default headers. Use the dashed name. |
 | `haproxy-haptic.org/auth-headers-succeed` | Adds request headers to the upstream on successful external authentication. |
 | `haproxy-haptic.org/auth-method` | Overrides the HTTP method used for the external authentication subrequest. |
 | `haproxy-haptic.org/auth-realm` | Sets the basic-auth realm (default `Restricted`). |

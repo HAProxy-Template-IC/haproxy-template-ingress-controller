@@ -2,6 +2,7 @@ templateSnippets:
   util-gateway-policy-status:
     template: |-
       {%- import "util-gateway-policy-decision" for GatewayPolicyDecision -%}
+      {%- import "util-gateway-external-auth" for GatewayExternalAuth -%}
       {%- import "util-condition-transition-time" for RouteParentTransitionTime -%}
       {%- macro GatewayPolicyStatusSummary(route any, kind string, result map[string]any) -%}
         {%%
@@ -13,6 +14,10 @@ templateSnippets:
           for index, rule := range rules {
             var record = map[string]any{}
             GatewayPolicyDecision(route, kind, rule, index, record)
+            if record["attached"] != true || record["error"] == "" {
+              record = map[string]any{}
+              GatewayExternalAuth(route, kind, rule, dig(props, "externalAuth"), record)
+            }
             if record["attached"] != true || record["error"] == "" { continue }
             invalid++
             if result["error"] == "" {

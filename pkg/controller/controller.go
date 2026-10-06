@@ -245,7 +245,7 @@ type persistentInfra struct {
 	serving *servingIteration
 	// siblings is nil when this replica cannot look for others; probes then
 	// assume a converged sibling may exist.
-	siblings *siblingConvergence
+	siblings *siblingProbes
 }
 
 type persistentServerRun struct {
@@ -627,7 +627,7 @@ func Run(
 		infra.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), infra.IntrospectionRegistry)
 	}
 	if podName, selector := os.Getenv("POD_NAME"), os.Getenv(controllerPodSelectorEnv); podName != "" && selector != "" {
-		siblings, err := newSiblingConvergence(procCtx, k8sClient.Clientset(), k8sClient.Namespace(), podName, selector, logger)
+		siblings, err := newSiblingProbes(procCtx, k8sClient.Clientset(), k8sClient.Namespace(), podName, selector, logger)
 		if err != nil {
 			return err
 		}

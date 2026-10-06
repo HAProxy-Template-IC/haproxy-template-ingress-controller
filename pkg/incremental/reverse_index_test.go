@@ -323,7 +323,7 @@ func TestReplacementReverseViewInvalidatesAfterStageAndRemoval(t *testing.T) {
 	assertSessionInputDependents(t, session, rightInput, true)
 
 	values, err := retained.Values(graph.reverseAuthority, reverseScope(inputDep(leftInput)))
-	if err != nil || !slices.Equal(values, []string{leftQuery.value}) {
+	if err != nil || !slices.Equal(values, []string{leftQuery.id.String()}) {
 		t.Fatalf("retained replacement root values = %v, error %v", values, err)
 	}
 	mustCommit(t, session)
@@ -460,7 +460,7 @@ func assertSessionInputDependents(t *testing.T, session *Session, key InputKey, 
 	t.Helper()
 	got, err := session.HasInputDependents(key)
 	if err != nil || got != want {
-		t.Fatalf("HasInputDependents(%q) = %t, error %v, want %t", key.value, got, err, want)
+		t.Fatalf("HasInputDependents(%q) = %t, error %v, want %t", key.id.String(), got, err, want)
 	}
 }
 
@@ -498,7 +498,7 @@ func (s *reverseOracleSources) all() []Input {
 		inputs = append(inputs, input)
 	}
 	slices.SortFunc(inputs, func(left, right Input) int {
-		return strings.Compare(left.Key.value, right.Key.value)
+		return strings.Compare(left.Key.id.String(), right.Key.id.String())
 	})
 	return inputs
 }
@@ -507,7 +507,7 @@ func (s *reverseOracleSources) resolver() InputResolver {
 	return func(_ context.Context, key InputKey) (Input, error) {
 		input, exists := s.values[key]
 		if !exists {
-			return Input{}, fmt.Errorf("unknown source %q", key.value)
+			return Input{}, fmt.Errorf("unknown source %q", key.id.String())
 		}
 		input.Value = cloneBytes(input.Value)
 		return input, nil
@@ -594,25 +594,25 @@ func assertReverseIndexMatchesOracle(t *testing.T, graph *Graph, sources *revers
 	expected := map[dependencyKey][]string{}
 	graph.current.nodes.Root().Walk(func(rawKey string, _ committedNodeEntry) bool {
 		key := NewQueryKey(rawKey)
-		kind, raw, found := strings.Cut(key.value, "/")
+		kind, raw, found := strings.Cut(key.id.String(), "/")
 		if !found {
-			t.Fatalf("unexpected query key %q", key.value)
+			t.Fatalf("unexpected query key %q", key.id.String())
 		}
 		index, err := strconv.Atoi(raw)
 		if err != nil {
-			t.Fatalf("query key %q: %v", key.value, err)
+			t.Fatalf("query key %q: %v", key.id.String(), err)
 		}
 		switch kind {
 		case "leaf":
 			selector := NewInputKey("selector/" + strconv.Itoa(index))
-			expected[inputDep(selector)] = append(expected[inputDep(selector)], key.value)
+			expected[inputDep(selector)] = append(expected[inputDep(selector)], key.id.String())
 			value := NewInputKey("value/" + string(sources.values[selector].Value))
-			expected[inputDep(value)] = append(expected[inputDep(value)], key.value)
+			expected[inputDep(value)] = append(expected[inputDep(value)], key.id.String())
 		case "consumer":
 			link := NewInputKey("link/" + strconv.Itoa(index))
-			expected[inputDep(link)] = append(expected[inputDep(link)], key.value)
+			expected[inputDep(link)] = append(expected[inputDep(link)], key.id.String())
 			leaf := NewQueryKey("leaf/" + string(sources.values[link].Value))
-			expected[queryDep(leaf)] = append(expected[queryDep(leaf)], key.value)
+			expected[queryDep(leaf)] = append(expected[queryDep(leaf)], key.id.String())
 		default:
 			t.Fatalf("unexpected query kind %q", kind)
 		}

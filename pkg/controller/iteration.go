@@ -310,7 +310,7 @@ func startIteration(
 	// signal — see configState.SetInitialized's docstring and the
 	// "initialized" entry in the full health checker installed by
 	// setupInfrastructureServers.
-	if err := finishIterationStartup(setup, state, infra, reloadAuthority, health, logger); err != nil {
+	if err := finishIterationStartup(setup, state, infra, reloadAuthority, health, wiring.renderService.FirstGraphPublished, logger); err != nil {
 		return nil, err
 	}
 	return &liveIteration{setup: setup, authority: reloadAuthority, logger: logger}, nil
@@ -464,6 +464,7 @@ func finishIterationStartup(
 	infra *persistentInfra,
 	authority *iterationReloadAuthority,
 	health introspection.HealthCheckFunc,
+	graphPublished func() bool,
 	logger *slog.Logger,
 ) error {
 	if err := iterationContextError(setup.IterCtx); err != nil {
@@ -474,7 +475,9 @@ func finishIterationStartup(
 	authority.MarkServing()
 	markIterationInitialized(setup, state, infra, logger)
 	id := state.iterationID
-	infra.markServing(&servingIteration{id: id, health: health, leading: setup.LeaderState.isLeading})
+	infra.markServing(&servingIteration{
+		id: id, health: health, leading: setup.LeaderState.isLeading, graphPublished: graphPublished,
+	})
 	setup.AddCleanup(func() { infra.clearServing(id) })
 	return nil
 }

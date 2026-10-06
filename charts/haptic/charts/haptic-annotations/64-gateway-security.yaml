@@ -158,9 +158,9 @@ templateSnippets:
       {%- for _, p := range sort_strings(pairs) %}
         {%- var parts = strings_splitn(tostring(p), "|", 2) %}
         {%- if parts[1] != "" %}
-      http-request return status {{ parts[0] }} content-type "{{ EscapeDquoteValue(parts[1]) }}" lf-string %[var(txn.resource_id),map({{ maps["body"] }}),url_dec(1)] if { var(txn.resource_id),map({{ maps["routes"] }}) -m str "{{ EscapeDquoteValue(tostring(p)) }}" }
+      http-request return status {{ parts[0] }} content-type "{{ EscapeDquoteValue(parts[1]) }}" lf-string %[var(txn.resource_key),map({{ maps["body"] }}),url_dec(1)] if { var(txn.resource_key),map({{ maps["routes"] }}) -m str "{{ EscapeDquoteValue(tostring(p)) }}" }
         {%- else %}
-      http-request return status {{ parts[0] }} if { var(txn.resource_id),map({{ maps["routes"] }}) -m str "{{ tostring(p) }}" }
+      http-request return status {{ parts[0] }} if { var(txn.resource_key),map({{ maps["routes"] }}) -m str "{{ tostring(p) }}" }
         {%- end %}
       {%- end %}
       {%- end %}
@@ -226,9 +226,9 @@ templateSnippets:
         var maps = mapsVal.(map[string]any)
       %%}
       # haptic/allowed-methods
-      http-request set-var(txn.am_method) method if { var(txn.resource_id),map({{ maps["routes"] }}) -m found }
-      http-request set-var(txn.denied_by) str(method_not_allowed) if { var(txn.am_method) -m found } !{ var(txn.resource_id),concat(|,txn.am_method),map({{ maps["methods"] }}) -m found }
-      http-request deny deny_status 405 if { var(txn.am_method) -m found } !{ var(txn.resource_id),concat(|,txn.am_method),map({{ maps["methods"] }}) -m found }
+      http-request set-var(txn.am_method) method if { var(txn.resource_key),map({{ maps["routes"] }}) -m found }
+      http-request set-var(txn.denied_by) str(method_not_allowed) if { var(txn.am_method) -m found } !{ var(txn.resource_key),concat(|,txn.am_method),map({{ maps["methods"] }}) -m found }
+      http-request deny deny_status 405 if { var(txn.am_method) -m found } !{ var(txn.resource_key),concat(|,txn.am_method),map({{ maps["methods"] }}) -m found }
       {%- end %}
 
   # ==========================================================================
@@ -294,10 +294,10 @@ templateSnippets:
         var maps = mapsVal.(map[string]any)
       %%}
       # haptic/require-content-type
-      http-request set-var(txn.ct_route) var(txn.resource_id),map({{ maps["routes"] }}) if { method POST PUT PATCH }
+      http-request set-var(txn.ct_route) var(txn.resource_key),map({{ maps["routes"] }}) if { method POST PUT PATCH }
       http-request set-var(txn.ct_in) req.hdr(Content-Type) if { var(txn.ct_route) -m found }
-      http-request set-var(txn.denied_by) str(content_type) if { var(txn.ct_route) -m found } !{ var(txn.resource_id),concat(|,txn.ct_in),map_beg({{ maps["types"] }}) -m found }
-      http-request return status 415 if { var(txn.ct_route) -m found } !{ var(txn.resource_id),concat(|,txn.ct_in),map_beg({{ maps["types"] }}) -m found }
+      http-request set-var(txn.denied_by) str(content_type) if { var(txn.ct_route) -m found } !{ var(txn.resource_key),concat(|,txn.ct_in),map_beg({{ maps["types"] }}) -m found }
+      http-request return status 415 if { var(txn.ct_route) -m found } !{ var(txn.resource_key),concat(|,txn.ct_in),map_beg({{ maps["types"] }}) -m found }
       {%- end %}
 
   # ==========================================================================
@@ -361,8 +361,8 @@ templateSnippets:
       %%}
       # haptic/require-headers
       {%- for _, hn := range sort_strings(names) %}
-      http-request set-var(txn.denied_by) str(required_header) if { var(txn.resource_id),concat(|{{ hn }}),map({{ routes }}) -m found } !{ req.hdr({{ hn }}) -m found }
-      http-request deny deny_status 400 if { var(txn.resource_id),concat(|{{ hn }}),map({{ routes }}) -m found } !{ req.hdr({{ hn }}) -m found }
+      http-request set-var(txn.denied_by) str(required_header) if { var(txn.resource_key),concat(|{{ hn }}),map({{ routes }}) -m found } !{ req.hdr({{ hn }}) -m found }
+      http-request deny deny_status 400 if { var(txn.resource_key),concat(|{{ hn }}),map({{ routes }}) -m found } !{ req.hdr({{ hn }}) -m found }
       {%- end %}
       {%- end %}
 
@@ -516,7 +516,7 @@ templateSnippets:
       {%- var hdrs = []any{} -%}
       {%- for _, v := range incremental_values("haptic-hmac-routes", "hdr") -%}{%- hdrs = append(hdrs, tostring(v)) -%}{%- end -%}
       {{ "\n" }}# haptic/hmac
-      http-request set-var(txn.hm_cfg) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.hm_cfg) var(txn.resource_key),map({{ routes }})
       http-request set-var(txn.hm_alg) var(txn.hm_cfg),field(1,' ') if { var(txn.hm_cfg) -m found }
       http-request set-var(txn.hm_hdr) var(txn.hm_cfg),field(2,' ') if { var(txn.hm_cfg) -m found }
       http-request set-var(txn.hm_signed) var(txn.hm_cfg),field(3,' ') if { var(txn.hm_cfg) -m found }
@@ -708,12 +708,12 @@ templateSnippets:
       {%- var groups, e3 = pathResolver.GetPath("haptic-consumer-groups.map", "map") -%}
       {%- if e3 != nil -%}{{ fail(tostring(e3)) }}{%- end -%}
       {{ "\n" }}# haptic/consumer-groups
-      http-request set-var(txn.cg_cfg) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.cg_cfg) var(txn.resource_key),map({{ routes }})
       http-request set-var(txn.cg_secret) var(txn.cg_cfg),field(1,' ') if { var(txn.cg_cfg) -m found }
       http-request set-var(txn.cg_state) var(txn.cg_cfg),field(2,' ') if { var(txn.cg_cfg) -m found }
       http-request set-var(txn.denied_by) str(consumer_groups_unavailable) if { var(txn.cg_state) -m str missing invalid }
       http-request deny deny_status 503 if { var(txn.cg_state) -m str missing invalid }
       http-request set-var(txn.cg_group) var(txn.cg_secret),concat(|,txn.haptic_consumer),map({{ groups }}) if { var(txn.cg_state) -m str ok } { var(txn.haptic_consumer) -m found }
-      http-request set-var(txn.denied_by) str(consumer_groups) if { var(txn.cg_state) -m str ok } !{ var(txn.resource_id),concat(|,txn.cg_group),map({{ allow }}) -m found }
-      http-request deny deny_status 403 if { var(txn.cg_state) -m str ok } !{ var(txn.resource_id),concat(|,txn.cg_group),map({{ allow }}) -m found }
+      http-request set-var(txn.denied_by) str(consumer_groups) if { var(txn.cg_state) -m str ok } !{ var(txn.resource_key),concat(|,txn.cg_group),map({{ allow }}) -m found }
+      http-request deny deny_status 403 if { var(txn.cg_state) -m str ok } !{ var(txn.resource_key),concat(|,txn.cg_group),map({{ allow }}) -m found }
       {%- end %}

@@ -138,6 +138,9 @@ const (
 	EventTypeHTTPResourceUpdated  = "http.resource.updated"
 	EventTypeHTTPResourceAccepted = "http.resource.accepted"
 
+	EventTypeHTTPContentAcceptanceRequested = "http.content.acceptance.requested"
+	EventTypeHTTPContentRevoked             = "http.content.revoked"
+
 	// Proposal validation event types.
 	// Used for validating hypothetical configuration changes before committing them.
 	// See proposal.go for event definitions.

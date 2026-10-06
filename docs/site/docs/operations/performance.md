@@ -19,9 +19,11 @@ pods, and their default sidecars:
 | --- | ---: | ---: | ---: |
 | Small installation, up to roughly 100 routes | `100m` | `1Gi` (chart default) | 1.05 cores / 5.4 GiB |
 | Hundreds of routes, approaching 1,000 | `500m` | `2Gi` | 1.85 cores / 7.4 GiB |
-| Several thousand routes, around 5,000 | `1` | `4Gi` | 2.85 cores / 11.4 GiB |
+| Several thousand routes, around 3,000 | `1` | `4Gi` | 2.85 cores / 11.4 GiB |
 
-These are starting estimates, not capacity limits.
+These are starting estimates, not capacity limits. Beyond 3,000 routes, add
+roughly `1Gi` per controller for every further 1,000 routes, then confirm the
+limit with the restart check below.
 Many endpoints per Service, large certificates, custom templates, and frequent
 configuration changes can need more resources at the same route count. The
 totals exclude your applications, Kubernetes system components, and monitoring
@@ -48,6 +50,28 @@ configuration changes can use spare node CPU.
 Keep the default `1Gi` controller memory budget even for a small route set:
 startup also compiles templates and validates the configuration. Setting memory
 requests equal to limits reserves that memory when Kubernetes schedules the pod.
+
+### Size memory for a restart {#size-memory-for-a-restart}
+
+A controller needs the most memory while it starts, when it renders every route
+at once. Running controllers use far less, so a limit that looks generous during
+normal operation can still be too small for a restart. With 3,000 Ingresses, a
+restarting controller peaked at about 2.9 GiB, while running controllers used
+about 0.8 GiB of Go heap.
+
+If the limit is too small, a restarting controller is `OOMKilled` on every
+attempt and never renders the configuration. After you change controller
+resources or add many routes, restart the controllers one at a time and check
+that the rollout completes:
+
+```bash
+kubectl rollout restart deployment/haptic-controller -n haptic
+kubectl rollout status deployment/haptic-controller -n haptic --timeout=10m
+kubectl get pods -n haptic -l app.kubernetes.io/component=controller
+```
+
+The rollout must finish with no controller restarts. If a controller shows
+`OOMKilled` in `kubectl describe pod`, raise its memory request and limit.
 
 ## What the default installation reserves
 

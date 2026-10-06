@@ -153,22 +153,49 @@ func (p *Publisher) ensurePublicationCurrent(
 	ctx context.Context,
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
 	expectedReferences *haproxyv1alpha1.AuxiliaryFileReferences,
-) error {
+) (*haproxyv1alpha1.HAProxyCfg, error) {
 	current, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(runtimeConfig.Namespace).
 		Get(ctx, runtimeConfig.Name, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("checking publication authority: %w", err)
+		return nil, fmt.Errorf("checking publication authority: %w", err)
 	}
 	if err := validateRuntimePublication(runtimeConfig, current); err != nil {
-		return err
+		return nil, err
 	}
 	want := runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey]
 	if current.Annotations[AuxiliarySetIDAnnotationKey] != want {
-		return fmt.Errorf("publication %q was superseded; skip stale cleanup", want)
+		return nil, fmt.Errorf("publication %q was superseded; skip stale cleanup", want)
 	}
 	if !auxiliaryRefsEqual(current.Status.AuxiliaryFiles, expectedReferences) {
-		return fmt.Errorf("publication %q no longer owns the committed auxiliary references; skip stale cleanup", want)
+		return nil, fmt.Errorf("publication %q no longer owns the committed auxiliary references; skip stale cleanup", want)
 	}
+	return current, nil
+}
+
+// publicationFence runs ensurePublicationCurrent before every stale-child
+// deletion. A HAProxyCfg whose resourceVersion has not moved since it last
+// passed is the object that passed, so the re-check then reads only metadata
+// instead of the whole rendered config.
+type publicationFence struct {
+	publisher       *Publisher
+	runtimeConfig   *haproxyv1alpha1.HAProxyCfg
+	expected        *haproxyv1alpha1.AuxiliaryFileReferences
+	verifiedVersion string
+}
+
+func (f *publicationFence) check(ctx context.Context) error {
+	if f.verifiedVersion != "" && f.publisher.resourceVersionOf != nil {
+		version, err := f.publisher.resourceVersionOf(ctx, f.runtimeConfig.Namespace, f.runtimeConfig.Name)
+		if err == nil && version == f.verifiedVersion {
+			return nil
+		}
+	}
+	current, err := f.publisher.ensurePublicationCurrent(ctx, f.runtimeConfig, f.expected)
+	if err != nil {
+		f.verifiedVersion = ""
+		return err
+	}
+	f.verifiedVersion = current.ResourceVersion
 	return nil
 }
 
@@ -180,9 +207,8 @@ func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *hapr
 		result,
 		runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey],
 	)
-	publicationCurrent := func(ctx context.Context) error {
-		return p.ensurePublicationCurrent(ctx, runtimeConfig, expectedReferences)
-	}
+	fence := &publicationFence{publisher: p, runtimeConfig: runtimeConfig, expected: expectedReferences}
+	publicationCurrent := fence.check
 	if err := publicationCurrent(ctx); err != nil {
 		return cleanupError(runtimeConfig, runtimeConfigKind, ownerName, err)
 	}

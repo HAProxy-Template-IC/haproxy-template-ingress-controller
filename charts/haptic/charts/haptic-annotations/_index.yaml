@@ -60,7 +60,7 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.name"]
 # Per-route settings of the API-gateway features, read by one uniform rule
 # block per HTTP frontend (frontend-filters-858..899 in this library). Keyed by
-# <ns>/<name> (txn.resource_id) unless noted; a route is added, changed or
+# <ns>/<name> (txn.resource_key) unless noted; a route is added, changed or
 # removed with map operations only, so its backend stays dynamic.
 maps:
   haptic-basic-auth-routes.map:

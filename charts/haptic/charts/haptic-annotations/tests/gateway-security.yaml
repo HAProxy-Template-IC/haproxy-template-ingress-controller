@@ -60,19 +60,19 @@ validationTests:
       - {type: contains, target: "map:haptic-method-routes.map", pattern: '(?m)^default/gate 1$'}
       - {type: contains, target: "map:haptic-methods.map", pattern: '(?m)^default/gate\|GET 1$'}
       - {type: contains, target: "map:haptic-methods.map", pattern: '(?m)^default/gate\|POST 1$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 405 if \{ var\(txn\.am_method\) -m found \} !\{ var\(txn\.resource_id\),concat\(\|,txn\.am_method\),map\(\S*/haptic-methods\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 405 if \{ var\(txn\.am_method\) -m found \} !\{ var\(txn\.resource_key\),concat\(\|,txn\.am_method\),map\(\S*/haptic-methods\.map\) -m found \}'}
       - {type: contains, target: "map:haptic-content-types.map", pattern: '(?m)^default/gate\|application/json 1$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ct_route\) var\(txn\.resource_id\),map\(\S*/haptic-content-type-routes\.map\) if \{ method POST PUT PATCH \}'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 415 if \{ var\(txn\.ct_route\) -m found \} !\{ var\(txn\.resource_id\),concat\(\|,txn\.ct_in\),map_beg\(\S*/haptic-content-types\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-var\(txn\.ct_route\) var\(txn\.resource_key\),map\(\S*/haptic-content-type-routes\.map\) if \{ method POST PUT PATCH \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 415 if \{ var\(txn\.ct_route\) -m found \} !\{ var\(txn\.resource_key\),concat\(\|,txn\.ct_in\),map_beg\(\S*/haptic-content-types\.map\) -m found \}'}
       - {type: contains, target: "map:haptic-required-headers.map", pattern: '(?m)^default/gate\|X-Api-Key 1$'}
       - {type: contains, target: "map:haptic-required-headers.map", pattern: '(?m)^default/gate\|X-Tenant-Id 1$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 400 if \{ var\(txn\.resource_id\),concat\(\|X-Api-Key\),map\(\S*/haptic-required-headers\.map\) -m found \} !\{ req\.hdr\(X-Api-Key\) -m found \}'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 400 if \{ var\(txn\.resource_id\),concat\(\|X-Tenant-Id\),map\(\S*/haptic-required-headers\.map\) -m found \} !\{ req\.hdr\(X-Tenant-Id\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 400 if \{ var\(txn\.resource_key\),concat\(\|X-Api-Key\),map\(\S*/haptic-required-headers\.map\) -m found \} !\{ req\.hdr\(X-Api-Key\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 400 if \{ var\(txn\.resource_key\),concat\(\|X-Tenant-Id\),map\(\S*/haptic-required-headers\.map\) -m found \} !\{ req\.hdr\(X-Tenant-Id\) -m found \}'}
       - {type: contains, target: "map:haptic-return-routes.map", pattern: '(?m)^default/mock 200\|application/json$'}
       - {type: contains, target: "map:haptic-return-body.map", pattern: '(?m)^default/mock %7b%22stub%22%3atrue%7d$'}
       - {type: contains, target: "map:haptic-return-routes.map", pattern: '(?m)^default/term 503\|text/plain$'}
       - {type: contains, target: "map:haptic-return-body.map", pattern: '(?m)^default/term under%20maintenance$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 200 content-type "application/json" lf-string %\[var\(txn\.resource_id\),map\(\S*/haptic-return-body\.map\),url_dec\(1\)\] if \{ var\(txn\.resource_id\),map\(\S*/haptic-return-routes\.map\) -m str "200\|application/json" \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 200 content-type "application/json" lf-string %\[var\(txn\.resource_key\),map\(\S*/haptic-return-body\.map\),url_dec\(1\)\] if \{ var\(txn\.resource_key\),map\(\S*/haptic-return-routes\.map\) -m str "200\|application/json" \}'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request return status 503 content-type "text/plain" lf-string .* -m str "503\|text/plain" \}'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'string "under maintenance"'}
 

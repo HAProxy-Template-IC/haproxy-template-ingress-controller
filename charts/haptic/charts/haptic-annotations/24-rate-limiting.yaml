@@ -230,8 +230,8 @@ templateSnippets:
       {%- if e2 != nil -%}{{ fail(tostring(e2)) }}{%- end -%}
       {%- if incremental_value_count("haptic-rate-limit-routes", "allowlist") > 0 -%}
       {{ "\n" }}# haptic/rate-limit-allowlist
-      http-request set-var(txn.rl_allow_block) src,map_ip({{ partitions }}) if { var(txn.resource_id) -m found }
-      http-request set-var(txn.rl_allow) bool(true) if { var(txn.rl_allow_block) -m found } { var(txn.rl_allow_block),concat(|,txn.resource_id),map({{ members }}) -m found }
+      http-request set-var(txn.rl_allow_block) src,map_ip({{ partitions }}) if { var(txn.resource_key) -m found }
+      http-request set-var(txn.rl_allow) bool(true) if { var(txn.rl_allow_block) -m found } { var(txn.rl_allow_block),concat(|,txn.resource_key),map({{ members }}) -m found }
       {%- end %}
 
   # One table proxy per distinct (counter, window): a frontend holds at most one
@@ -285,12 +285,12 @@ templateSnippets:
       {%- var statuses = []any{} -%}
       {%- for _, v := range incremental_values("haptic-rate-limit-routes", "status") -%}{%- statuses = append(statuses, tostring(v)) -%}{%- end -%}
       {{ "\n" }}# haptic/rate-limiting
-      http-request set-var(txn.lrl_cfg) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.lrl_cfg) var(txn.resource_key),map({{ routes }})
       http-request set-var(txn.lrl_counter) var(txn.lrl_cfg),field(1,' ') if { var(txn.lrl_cfg) -m found }
       http-request set-var(txn.lrl_window) var(txn.lrl_cfg),field(2,' ') if { var(txn.lrl_cfg) -m found }
       http-request set-var(txn.lrl_threshold) var(txn.lrl_cfg),field(3,' ') if { var(txn.lrl_cfg) -m found }
       http-request set-var(txn.lrl_status) var(txn.lrl_cfg),field(4,' ') if { var(txn.lrl_cfg) -m found }
-      http-request set-var-fmt(txn.lrl_key) %[var(txn.resource_id)]|%[src] if { var(txn.lrl_cfg) -m found }
+      http-request set-var-fmt(txn.lrl_key) %[var(txn.resource_key)]|%[src] if { var(txn.lrl_cfg) -m found }
       {%- for _, t := range sort_strings(tables) %}
         {%- var parts = split(tostring(t), "|") %}
       http-request track-sc1 var(txn.lrl_key) table haptic_rl_tbl_{{ parts[0] }}_{{ parts[1] }} if { var(txn.lrl_counter) -m str {{ parts[0] }} } { var(txn.lrl_window) -m str {{ parts[1] }} }
@@ -433,12 +433,12 @@ templateSnippets:
         {%- var parts = split(tostring(f), "|") %}
       filter bwlim-{{ parts[0] }} haptic_bw_{{ parts[0] }}_{{ parts[1] }}_{{ parts[2] }} limit {{ parts[2] }} key var(txn.bw_key) table haptic_bw_tbl
       {%- end %}
-      http-request set-var(txn.bw_cfg) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.bw_cfg) var(txn.resource_key),map({{ routes }})
       http-request set-var(txn.bw_down) var(txn.bw_cfg),field(1,' ') if { var(txn.bw_cfg) -m found }
       http-request set-var(txn.bw_up) var(txn.bw_cfg),field(2,' ') if { var(txn.bw_cfg) -m found }
       http-request set-var(txn.bw_scope) var(txn.bw_cfg),field(3,' ') if { var(txn.bw_cfg) -m found }
-      http-request set-var-fmt(txn.bw_key) %[var(txn.resource_id)]|%[src] if { var(txn.bw_scope) -m str client }
-      http-request set-var(txn.bw_key) var(txn.resource_id) if { var(txn.bw_scope) -m str service }
+      http-request set-var-fmt(txn.bw_key) %[var(txn.resource_key)]|%[src] if { var(txn.bw_scope) -m str client }
+      http-request set-var(txn.bw_key) var(txn.resource_key) if { var(txn.bw_scope) -m str service }
       http-request set-bandwidth-limit haptic_bw_out limit var(txn.bw_down) if { var(txn.bw_scope) -m str stream } !{ var(txn.bw_down) -m str _ }
       http-request set-bandwidth-limit haptic_bw_in limit var(txn.bw_up) if { var(txn.bw_scope) -m str stream } !{ var(txn.bw_up) -m str _ }
       {%- for _, f := range sort_strings(shared) %}

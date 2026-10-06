@@ -140,7 +140,7 @@ validationTests:
     - type: haproxy_valid
     - type: contains
       target: haproxy.cfg
-      pattern: http-request deny deny_status 503 if \{ var\(txn.resource_id\) -m str default/trusted-ingress \}
+      pattern: http-request deny deny_status 503 if \{ var\(txn.resource_key\) -m str default/trusted-ingress \}
     - type: not_contains
       target: map:coraza-app.map
       pattern: default/trusted-ingress
@@ -278,7 +278,7 @@ validationTests:
     - type: haproxy_valid
     - type: contains
       target: haproxy.cfg
-      pattern: http-request deny deny_status 503 if \{ var\(txn.resource_id\) -m str default/default-policy \}
+      pattern: http-request deny deny_status 503 if \{ var\(txn.resource_key\) -m str default/default-policy \}
     - type: contains
       target: map:coraza-app.map
       pattern: (?m)^default/inline-policy policy:inline-safe$

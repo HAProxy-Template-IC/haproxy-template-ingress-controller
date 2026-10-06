@@ -285,6 +285,35 @@ on the node right after creation: `kindutil.BlackholeSyntheticBackends` in Go
 `scripts/lib/cluster.sh`. Pick synthetic
 addresses inside those ranges, and add any new creator to the list.
 
+### Measuring controller memory at scale
+
+`TestScale` is the instrument; the nightly tier enforces its RSS budget at 800
+Ingresses. To measure larger installs locally (#284), run it on an isolated
+cluster with the workload kept:
+
+```bash
+C=haptic-gwbench-<you>
+HAPTIC_E2E_CLUSTER_NAME=$C HAPTIC_E2E_KUBECONFIG_PATH=$PWD/$C.kubeconfig \
+HAPTIC_E2E_EXPOSE_HOST_PORTS=false KIND_EXPERIMENTAL_DOCKER_NETWORK=$C \
+HAPTIC_E2E_SCALE=1 TEST_RUN_PATTERN=TestScale SCALE_NAMESPACES=60 SCALE_INGRESSES_PER_NS=50 \
+SCALE_BUDGET_SEED_SECONDS=1500 KEEP_CLUSTER=true KEEP_NAMESPACE=true \
+HAPTIC_E2E_EXTRA_SET="controller.resources.limits.cpu=4" make test-e2e
+```
+
+Then, against the kept cluster:
+
+- **Steady state:** `kubectl port-forward` the controller's port 8080 and fetch
+  `/debug/pprof/heap?gc=1` (live heap) and `/debug/pprof/allocs` before and
+  after a churn that creates Ingresses with new names each round.
+- **Cold start:** delete one controller pod, and read the replacement's
+  `memory.peak` from its cgroup on the kind node (`crictl inspect` gives the
+  PID; `/proc/<pid>/cgroup` the path). A restart peaks far above steady state,
+  so check `haptic_reconciliation_total` exceeds `haptic_reconciliation_errors_total`
+  on port 9090: a cold render that times out under GC pressure never commits.
+- The scale tier pins `GOMEMLIMIT` to 90% of the RSS budget under a 2Gi limit;
+  remove it (`kubectl set env ... GOMEMLIMIT-`) to measure the automemlimit
+  default a real install gets.
+
 ### Architecture Validation
 
 Tests enforce clean architecture via `arch-go.yml`:

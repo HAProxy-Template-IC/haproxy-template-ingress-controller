@@ -165,6 +165,42 @@ func TestIncrementalBindingPlannerRejectsContextMutation(t *testing.T) {
 	assert.Equal(t, map[string]any{"enabled": true}, extraContext["nested"])
 }
 
+func TestIncrementalBindingSnapshotPlannersRejectInputMutation(t *testing.T) {
+	engine, err := New(map[string]string{
+		"nested":  `{% extraContext["nested"].(map[string]any)["value"] = "changed" %}{}`,
+		"files":   `{% currentFiles["state"] = "changed" %}{}`,
+		"element": `{% templateSnippets[0] = "changed" %}{}`,
+		"reader": `{{ toJSON(map[string]any{
+  "nested": extraContext["nested"], "file": currentFiles["state"], "snippet": templateSnippets[0],
+}) }}`,
+	}, &Options{
+		EntryPoints:                   []string{"nested", "files", "element", "reader"},
+		IncrementalBindingEntryPoints: []string{"nested", "files", "element", "reader"},
+		Declarations: map[string]any{
+			"currentFiles": (*map[string]string)(nil),
+		},
+	})
+	require.NoError(t, err)
+	files := map[string]string{"state": "original"}
+	snapshot, err := engine.SnapshotIncrementalBindingInputs(
+		[]string{"nested", "files", "element", "reader"},
+		map[string]any{
+			"extraContext":     map[string]any{"nested": map[string]any{"value": "original"}},
+			"currentFiles":     &files,
+			"templateSnippets": []string{"original"},
+		},
+	)
+	require.NoError(t, err)
+
+	for _, planner := range []string{"nested", "files", "element"} {
+		_, err := engine.RenderIncrementalBindingsSnapshot(t.Context(), planner, snapshot)
+		require.ErrorContains(t, err, "mutates an immutable input", planner)
+	}
+	result, err := engine.RenderIncrementalBindingsSnapshot(t.Context(), "reader", snapshot)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"nested":{"value":"original"},"file":"original","snippet":"original"}`, string(result))
+}
+
 func TestIncrementalBindingPlannerSelectsStableAmbientInputs(t *testing.T) {
 	engine, err := New(map[string]string{
 		"planner": `{{ toJSON(map[string]any{

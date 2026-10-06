@@ -64,6 +64,8 @@ func (s *HTTPStore) finalizePending(
 	}
 
 	if promote {
+		replaced := *entry
+		defer s.recordAcceptanceLocked(url, entry, &replaced)
 		s.logger.Debug("Promoting pending content to accepted",
 			"url", RedactURL(url),
 			"old_checksum", checksumPrefix(entry.AcceptedChecksum),
@@ -167,6 +169,7 @@ func (s *HTTPStore) EvictUnused() []string {
 				"last_access", entry.LastAccessTime,
 				"age", now.Sub(entry.LastAccessTime))
 			delete(s.cache, url)
+			delete(s.acceptances, url)
 			s.recordSemanticChangeLocked(url, entry.sourceDescriptor, SourceDescriptor{}, true)
 			evictedURLs = append(evictedURLs, url)
 		}

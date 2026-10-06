@@ -1,8 +1,10 @@
 templateSnippets:
   util-gateway-httproute-status-bindings:
     template: |-
+      {%- import "util-gateway-external-auth-settings" for GatewayExternalAuthSettings -%}
       {{- toJSON(map[string]any{"httproutes": map[string]any{
         "controllerName": extraContext | dig_string("", "controllerName"),
+        "externalAuth": GatewayExternalAuthSettings(),
       }}) -}}
 
   util-gateway-grpcroute-status-bindings:

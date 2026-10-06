@@ -238,10 +238,11 @@ func (c *PreparedInitialCandidateCommit) validateUnchangedSourcePlanLocked(
 	if plan.generation != plan.source.baseGeneration {
 		return errors.New("prepared HTTP source generation changed without a source transition")
 	}
+	current := c.store.cache[plan.source.url]
 	if plan.publishedEntry == nil || plan.source.baseEntry == nil ||
-		plan.publishedEntry == plan.source.baseEntry ||
-		c.store.cache[plan.source.url] != plan.source.baseEntry ||
-		!samePreparedCacheEntry(plan.publishedEntry, plan.source.baseEntry) {
+		plan.publishedEntry == plan.source.baseEntry || plan.publishedEntry == current ||
+		!sameCacheEntryVersion(current, plan.source.baseEntry) ||
+		!sameCacheEntry(plan.publishedEntry, current) {
 		return errors.New("prepared HTTP source entry changed before publication")
 	}
 	return nil
@@ -267,7 +268,7 @@ func (c *PreparedInitialCandidateCommit) validateCommitPlansLocked(
 					return errors.New("prepared HTTP publication entry does not match its source plan")
 				}
 			}
-		} else if candidate.entry == nil || !samePreparedCacheEntry(c.entries[index], candidate.entry) {
+		} else if candidate.entry == nil || !sameCacheEntry(c.entries[index], candidate.entry) {
 			return errors.New("prepared HTTP publication entry changed before publication")
 		}
 		expected := CandidateCommit{
@@ -286,53 +287,6 @@ func (c *PreparedInitialCandidateCommit) validateCommitPlansLocked(
 		}
 	}
 	return nil
-}
-
-func samePreparedCacheEntry(left, right *CacheEntry) bool {
-	if left == nil || right == nil {
-		return left == right
-	}
-	leftCopy := *left
-	rightCopy := *right
-	return samePreparedCacheEntrySource(&leftCopy, &rightCopy) &&
-		samePreparedCacheEntryContent(&leftCopy, &rightCopy)
-}
-
-func samePreparedCacheEntrySource(left, right *CacheEntry) bool {
-	return left.mutationRevision == right.mutationRevision &&
-		left.replayRevision == right.replayRevision &&
-		left.acceptedRevision == right.acceptedRevision &&
-		left.sourceIdentity == right.sourceIdentity &&
-		left.sourceDescriptor == right.sourceDescriptor &&
-		left.sourceGeneration == right.sourceGeneration && left.fixture == right.fixture &&
-		left.URL == right.URL && left.Options == right.Options &&
-		sameAuthConfig(left.Auth, right.Auth)
-}
-
-func samePreparedCacheEntryContent(left, right *CacheEntry) bool {
-	return left.AcceptedContent == right.AcceptedContent &&
-		left.AcceptedChecksum == right.AcceptedChecksum && left.AcceptedTime.Equal(right.AcceptedTime) &&
-		left.LastAccessTime.Equal(right.LastAccessTime) && left.PendingContent == right.PendingContent &&
-		left.PendingChecksum == right.PendingChecksum && left.PendingRevision == right.PendingRevision &&
-		left.HasPending == right.HasPending && left.ValidationState == right.ValidationState &&
-		left.ValidationStartedAt.Equal(right.ValidationStartedAt) && left.ETag == right.ETag &&
-		left.LastModified == right.LastModified
-}
-
-func sameAuthConfig(left, right *AuthConfig) bool {
-	if left == nil || right == nil {
-		return left == right
-	}
-	if left.Type != right.Type || left.Username != right.Username || left.Password != right.Password ||
-		left.Token != right.Token || len(left.Headers) != len(right.Headers) {
-		return false
-	}
-	for name, value := range left.Headers {
-		if right.Headers[name] != value {
-			return false
-		}
-	}
-	return true
 }
 
 func (c *PreparedInitialCandidateCommit) validatePreparedReplayStateLocked(
@@ -1180,6 +1134,9 @@ func (c *PreparedInitialCandidateCommit) ReleasePublication() error {
 
 func (c *PreparedInitialCandidateCommit) releaseCommittedLocked() {
 	c.state = preparedCommitReleased
+	if c.rollback != nil {
+		c.store.recordPublishedAcceptancesLocked(c.rollback.roots.cache, c.candidates)
+	}
 	authority := c.authority
 	c.store.mu.Unlock()
 	returnPreparedHTTPAuthority(authority)

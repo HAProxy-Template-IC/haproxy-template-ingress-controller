@@ -133,7 +133,7 @@ templateSnippets:
   # External-auth (auth-url) map contribution. The spoa-hub library
   # defines auth-url.map and the SPOE wiring; this snippet feeds the
   # map with one entry per Ingress that has the auth-url annotation
-  # set. The frontend looks up the URL by `txn.resource_id`
+  # set. The frontend looks up the URL by `txn.resource_key`
   # (= `<ns>/<name>`) and triggers the SPOE plugin.
   #
   # Documentation: https://haproxy-ingress.github.io/docs/configuration/keys/#auth-external
@@ -150,9 +150,9 @@ templateSnippets:
       effects: [recordEvent]
     template: |-
       {# Keyed by <ns>/<name> (resource identity). The frontend looks up
-          via var(txn.resource_id),map(...) — see spoa-hub.yaml's
+          via var(txn.resource_key),map(...) — see spoa-hub.yaml's
           frontend-spoe-filters-100-external-auth and base.yaml's
-          resource_id extraction at the end of frontend-routing-logic. #}
+          resource_key derivation at the end of frontend-routing-logic. #}
       {%- import "util-config-injection-kind" for ConfigInjectionKind -%}
       {%%
         var ingress = item
@@ -443,9 +443,8 @@ templateSnippets:
   # Annotation:
   #   haproxy-ingress.github.io/auth-headers-request: "X-Tenant-Id, X-Request-Id"
   #
-  # Header names are stored verbatim in the map; the plugin lower-cases
-  # them when matching against the incoming request headers, so casing
-  # in the annotation value does not matter. The companion snippet
+  # Header names are stored as listed, minus names containing `_`; the
+  # plugin compares them case-insensitively. The companion snippet
   # `spoe-message-check-auth-extra-args-500-haproxy-ingress` auto-extends
   # the SPOE check-auth message body so it captures every header listed
   # across the union of `auth-headers-request` annotations — operators
@@ -465,7 +464,15 @@ templateSnippets:
         {%- if authHeaders != "" -%}
           {%- var ns = ingress.Metadata.Namespace -%}
           {%- var name = ingress.Metadata.Name -%}
-      {{ "\n" }}{{ ns }}/{{ name }} {{ authHeaders }}
+          {%- var forwarded = []string{} -%}
+          {%- for _, h := range split(authHeaders, ",") -%}
+            {%- var hn = h | strip() -%}
+            {#- The plugin matches X_Api_Key to X-Api-Key; spoe-message-check-auth-extra-args-500 warns about it. -#}
+            {%- if hn != "" && !regex_search(hn, "_") -%}{%- forwarded = append(forwarded, hn) -%}{%- end -%}
+          {%- end -%}
+          {%- if len(forwarded) > 0 -%}
+      {{ "\n" }}{{ ns }}/{{ name }} {{ join(forwarded, ", ") }}
+          {%- end -%}
         {%- end -%}
       {%- end -%}
 
@@ -491,8 +498,9 @@ templateSnippets:
       source: ingresses
       whenAnyPathExists: ["metadata.annotations['haproxy-ingress.github.io/auth-headers-request']"]
       group: spoe-auth-extra-args-ingress
+      effects: [recordEvent]
     template: |-
-      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName -%}
+      {%- import "util-auth-validate-header-name" for ValidateAuthHeaderName, RejectUnderscoreAuthHeader -%}
       {#- Exclude the six args spoa-hub already emits; HAProxy 3.0 rejects duplicates. -#}
       {%- for _, ingress := range []*resources.ingresses.T{resources.ingresses.GetSingle(
         dig_string(item, "", "metadata", "namespace"), dig_string(item, "", "metadata", "name"))} -%}
@@ -504,14 +512,11 @@ templateSnippets:
             {%- var name = h | strip() -%}
             {%- if name != "" -%}
               {{- ValidateAuthHeaderName(name, "haproxy-ingress.github.io/auth-headers-request", ns, ingressName) -}}
-              {# Dedupe on the argName (after dash→underscore) — not
-                  the lowercased original — because that's what
-                  appears as the SPOE arg key. Two header spellings
-                  like `X-Foo-Bar` and `X_Foo_Bar` produce different
-                  lower-case names but the same argName, and emitting
-                  both would put two `hdr_x_foo_bar=...` tokens on
-                  the same args= line, which SPOE parses as malformed
-                  / undefined-order. #}
+              {%- if regex_search(name, "_") -%}
+                {{- RejectUnderscoreAuthHeader(ingress, name, "haproxy-ingress.github.io/auth-headers-request", ns, ingressName) -}}
+                {%- continue -%}
+              {%- end -%}
+              {# Dedupe on argName: `X-Foo` and `x-foo` share one SPOE arg, and a repeated arg name is malformed SPOE. #}
               {%- var argName = replace(toLower(name), "-", "_") -%}
               {%- if argName != "authorization" && argName != "cookie" &&
                 argName != "x_forwarded_for" && argName != "x_forwarded_proto" &&
@@ -899,7 +904,7 @@ templateSnippets:
         }
       %%}
       # haproxy-ingress/basic-auth
-      http-request set-var(txn.hi_ba) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.hi_ba) var(txn.resource_key),map({{ routes }})
       http-request set-var(txn.denied_by) str(basic_auth_unavailable) if { var(txn.hi_ba) -m str missing }
       http-request deny deny_status 503 if { var(txn.hi_ba) -m str missing }
       {%- for _, u := range sort_strings(userlists) %}

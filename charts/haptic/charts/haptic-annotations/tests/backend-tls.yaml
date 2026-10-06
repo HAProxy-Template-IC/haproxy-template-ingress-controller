@@ -221,8 +221,8 @@ validationTests:
       - {type: contains, target: "map:haptic-route-unavailable.map", pattern: '(?m)^default/btls-noca backend_tls_unavailable$'}
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request set-var\(txn\.denied_by\) str\(backend_tls_unavailable\) if \{ var\(txn\.resource_id\),map\([^)]*haptic-route-unavailable\.map\) -m str backend_tls_unavailable \}'
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.resource_id\),map\([^)]*haptic-route-unavailable\.map\) -m found \}'}
+        pattern: 'http-request set-var\(txn\.denied_by\) str\(backend_tls_unavailable\) if \{ var\(txn\.resource_key\),map\([^)]*haptic-route-unavailable\.map\) -m str backend_tls_unavailable \}'
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request deny deny_status 503 if \{ var\(txn\.resource_key\),map\([^)]*haptic-route-unavailable\.map\) -m found \}'}
       - {type: contains, target: events, pattern: "BackendCASecretMissing"}
 
   test-haptic-backend-ca-secret-present-still-verifies:

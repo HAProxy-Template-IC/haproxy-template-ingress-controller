@@ -286,13 +286,13 @@ func TestPinnedOrdinaryAndIncrementalReadsShareOneRoot(t *testing.T) {
 	require.NoError(t, err)
 
 	session := &incrementalRenderSession{
-		baseStores:              snapshots.baseStores,
-		baseSnapshots:           snapshots.base,
-		renderSnapshots:         snapshots.render,
-		membershipPins:          map[string]incrementalStoreCursor{},
-		cursors:                 map[string]incrementalStoreCursor{},
-		resourceProofs:          map[incremental.InputKey]incremental.Input{},
-		commitAcceptsCandidates: true,
+		baseStores:      snapshots.baseStores,
+		baseSnapshots:   snapshots.base,
+		renderSnapshots: snapshots.render,
+		membershipPins:  map[string]incrementalStoreCursor{},
+		cursors:         map[string]incrementalStoreCursor{},
+		resourceProofs:  map[incremental.InputKey]incremental.Input{},
+		renderMode:      rendercontext.RenderModeAdmission,
 	}
 	session.resetCatalog(nil)
 	view := &incrementalPinnedResourceView{session: session}
@@ -358,9 +358,9 @@ func TestCachePublicationSurvivesAnInputMovingAfterThePin(t *testing.T) {
 	_, err = view.Get("routes", store, "default", "route")
 	require.NoError(t, err)
 
-	strict, err := session.verifyResources(t.Context(), nil)
+	accepting, err := session.verifyResources(t.Context(), nil)
 	require.NoError(t, err)
-	require.False(t, strict, "a commit accepting fetched content must still refuse a moved input")
+	require.True(t, accepting, "fetched content is accepted against the render's own snapshot (ADR-0030)")
 
 	session.commitAcceptsCandidates = false
 	session.renderMode = rendercontext.RenderModeAdmission

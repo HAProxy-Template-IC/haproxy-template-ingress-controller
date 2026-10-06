@@ -36,6 +36,27 @@ type ColdIncrementalRenderConfig struct {
 	ResourceErrors     *rendercontext.ResourceErrorCollector
 	Logger             *slog.Logger
 	TypedResourceTypes map[string]reflect.Type
+	// Analysis, when set, must come from AnalyzeColdIncrementalRenders over
+	// this Config and Engine; nil analyzes them for this render alone.
+	Analysis *ColdIncrementalRenderAnalysis
+}
+
+// ColdIncrementalRenderAnalysis is the part of a cold render that depends on
+// the config and engine alone, shared by every cold render of the pair.
+type ColdIncrementalRenderAnalysis struct {
+	analysis *incrementalRenderAnalysis
+	config   *config.Config
+	engine   templating.Engine
+}
+
+// AnalyzeColdIncrementalRenders prepares what cold renders of cfg and engine
+// share. The result is read-only and safe for concurrent renders.
+func AnalyzeColdIncrementalRenders(cfg *config.Config, engine templating.Engine) *ColdIncrementalRenderAnalysis {
+	return &ColdIncrementalRenderAnalysis{
+		analysis: analyzeIncrementalRender(cfg, engine),
+		config:   cfg,
+		engine:   engine,
+	}
 }
 
 // ColdIncrementalRender runs components for offline tools without retaining a cache.
@@ -51,7 +72,14 @@ func NewColdIncrementalRender(
 	if cfg == nil || cfg.Config == nil {
 		return nil, errors.New("cold incremental render requires a config")
 	}
-	state := newIncrementalRenderState(cfg.Config, cfg.Engine)
+	analysis := cfg.Analysis
+	if analysis == nil {
+		analysis = AnalyzeColdIncrementalRenders(cfg.Config, cfg.Engine)
+	} else if analysis.config != cfg.Config ||
+		(cfg.Engine != nil && !reflect.ValueOf(cfg.Engine).Comparable()) || analysis.engine != cfg.Engine {
+		return nil, errors.New("cold incremental render analysis belongs to a different config or engine")
+	}
+	state := newIncrementalRenderStateFromAnalysis(analysis.analysis)
 	if state == nil {
 		return &ColdIncrementalRender{}, nil
 	}

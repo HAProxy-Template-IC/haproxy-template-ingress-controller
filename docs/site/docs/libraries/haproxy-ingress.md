@@ -687,7 +687,7 @@ spoe-message check-auth
     args ... forward_headers=var(txn.auth_forward_headers) ... hdr_authorization=req.hdr(Authorization) hdr_x_tenant_id=req.hdr(X-Tenant-Id) hdr_x_request_id=req.hdr(X-Request-Id)
 ```
 
-Header names are validated against the RFC 7230 token grammar; values containing whitespace, fetch syntax (`%[var(...)]`), or other non-tchar characters fail the Helm render.
+Header names are validated against the RFC 7230 token grammar; values containing whitespace, fetch syntax (`%[var(...)]`), or other non-tchar characters fail the Helm render. Names containing `_` aren't forwarded: SPOE argument names can't contain `-`, so `X_Api_Key` and `X-Api-Key` would share one capture. The admission webhook rejects them, and an Ingress that already has one gets an `InvalidAuthHeader` Warning Event; if no other name is listed, the Ingress forwards the default headers. Use the dashed name.
 
 ### `haproxy-ingress.github.io/auth-headers-succeed`
 

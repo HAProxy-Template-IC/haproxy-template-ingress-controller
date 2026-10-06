@@ -471,7 +471,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str default/invalid-policy \\}"
+        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str default/invalid-policy \\}"
       - type: contains
         target: events
         pattern: "Warning WafPolicyUnavailable networking.k8s.io/v1 Ingress default/invalid-policy:.*Unknown WAF policy 'typo-policy'"
@@ -528,7 +528,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str default/legacy-mode \\}"
+        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str default/legacy-mode \\}"
       - type: contains
         target: events
         pattern: "Warning WafPermissionDenied networking.k8s.io/v1 Ingress default/legacy-mode:.*allowEnforcementOverride=false"
@@ -583,7 +583,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str default/pre-existing-violator \\}"
+        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str default/pre-existing-violator \\}"
       - { type: not_contains, target: "map:coraza-app.map", pattern: "default/pre-existing-violator" }
 
   test-haptic-waf-policy-structured-crs-tuning:
@@ -1574,7 +1574,7 @@ validationTests:
       - type: haproxy_valid
       - { type: contains, target: events, pattern: "Warning WafPolicyCatalogInvalid v1 ConfigMap team-a/waf-policies:.*invalid YAML" }
       - { type: contains, target: events, pattern: "Warning WafPolicyUnavailable networking.k8s.io/v1 Ingress team-a/app:.*self-service catalog is broken" }
-      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/app \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str team-a/app \\}" }
       - { type: not_contains, target: "map:coraza-app.map", pattern: "team-a/app" }
       - { type: contains, target: "map:coraza-app.map", pattern: "default/trusted-user policy:approved-policy" }
 
@@ -1621,7 +1621,7 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-a/waf-policies:.*uses secLang, which is disabled for self-service catalogs" }
-      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/app \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str team-a/app \\}" }
       - { type: not_contains, target: "file:spoa-hub-config.toml", pattern: "SecRuleEngine Off" }
 
   test-haptic-waf-selfservice-seclang-allowed-when-opted-in:
@@ -1699,7 +1699,7 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-a/waf-policies:.*collides with the trusted-catalog policy" }
-      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/app \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str team-a/app \\}" }
       - { type: contains, target: "map:coraza-app.map", pattern: "default/other policy:shared-name" }
       - { type: not_contains, target: "map:coraza-app.map", pattern: "team-a/app" }
 
@@ -1754,7 +1754,7 @@ validationTests:
       - type: haproxy_valid
       - { type: contains, target: "map:coraza-app.map", pattern: "team-a/first policy:team-a/p-alpha" }
       - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-a/waf-policies:.*more than the per-namespace self-service limit 2.*'p-gamma'" }
-      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-a/over \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str team-a/over \\}" }
 
   test-haptic-waf-selfservice-cluster-budget:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'
@@ -1803,7 +1803,7 @@ validationTests:
       - type: haproxy_valid
       - { type: contains, target: "map:coraza-app.map", pattern: "team-a/admitted policy:team-a/alpha" }
       - { type: contains, target: events, pattern: "Warning WafPolicyInvalid v1 ConfigMap team-b/waf-policies:.*cluster-wide self-service WAF policy budget 1 is exhausted.*'beta'" }
-      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str team-b/over \\}" }
+      - { type: contains, target: haproxy.cfg, pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str team-b/over \\}" }
 
   test-haptic-waf-selfservice-default-on-weakening-rejected:
     _helm_skip_test: '{{ if or (include "haptic.spoaHub.disabled" .) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.coraza "root" . "name" "coraza"))) }}true{{ end }}'

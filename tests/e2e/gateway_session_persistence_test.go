@@ -37,7 +37,7 @@ import (
 // three-pod backend: the token the first response issues keeps every later
 // request on that response's pod, for the Cookie and the Header type. The
 // sessionPersistence field is experimental-channel only; the
-// nightly-gwapi-experimental job runs this test on that channel.
+// test-e2e-api-gateway job runs this test on that channel.
 func TestGatewaySessionPersistence(t *testing.T) {
 	t.Parallel()
 	const (

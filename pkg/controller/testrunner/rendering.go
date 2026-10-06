@@ -22,6 +22,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -139,6 +140,7 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 		ResourceErrors:     bctx.ResourceErrors,
 		Logger:             r.logger,
 		TypedResourceTypes: r.typedResourceTypes,
+		Analysis:           r.coldAnalysisFor(engine),
 	})
 	if err != nil {
 		return RenderOutput{}, fmt.Errorf("starting cold incremental render: %w", err)
@@ -212,6 +214,13 @@ func (r *Runner) renderWithStores(ctx context.Context, engine templating.Engine,
 		IncludeStats:   includeStats,
 		Plan:           plan,
 	}, nil
+}
+
+func (r *Runner) coldAnalysisFor(engine templating.Engine) *renderer.ColdIncrementalRenderAnalysis {
+	if r.coldAnalysis == nil || (engine != nil && !reflect.ValueOf(engine).Comparable()) || engine != r.engineTemplate {
+		return nil
+	}
+	return r.coldAnalysis()
 }
 
 // AssertionExtraContext is the extraContext a test's assertions render with:

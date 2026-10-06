@@ -26,7 +26,6 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
 	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 )
 
@@ -150,10 +149,10 @@ func TestInitialHTTPCandidateRendersThroughWarmGraph(t *testing.T) {
 	require.NoError(t, fixture.service.RetireIncrementalCache())
 }
 
-// The warm candidate render keeps the live-state check: an input it read that
-// changes before the commit refuses the acceptance, and the next render
-// accepts against the moved state.
-func TestInitialHTTPCandidateWarmRenderStillChecksLiveInputs(t *testing.T) {
+// The warm candidate render accepts against its own snapshot: an input it read
+// that changes before the commit does not refuse the acceptance, and the next
+// render reads the moved input with the accepted content (ADR-0030).
+func TestInitialHTTPCandidateWarmRenderAcceptsAgainstItsSnapshot(t *testing.T) {
 	fixture, routes := seedWarmCacheWithoutRouteB(t)
 
 	candidate, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
@@ -164,14 +163,13 @@ func TestInitialHTTPCandidateWarmRenderStillChecksLiveInputs(t *testing.T) {
 		incrementalTestResource("default", "b", map[string]any{"url": fixture.urlB, "noise": "moved"}),
 		[]string{"default", "b"},
 	))
-	require.ErrorIs(t, candidate.InputTransaction.Commit(t.Context()), incremental.ErrRevisionConflict)
-	require.False(t, fixture.acceptedB())
-
-	retried, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
-	require.NoError(t, err)
-	require.True(t, retried.InputTransaction.HasCandidates())
-	require.NoError(t, retried.InputTransaction.Commit(t.Context()))
+	require.NoError(t, candidate.InputTransaction.Commit(t.Context()))
 	require.True(t, fixture.acceptedB())
+
+	next, err := fixture.service.Render(t.Context(), fixture.provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.False(t, next.InputTransaction.HasCandidates())
+	require.NoError(t, next.InputTransaction.Commit(t.Context()))
 	require.NoError(t, fixture.service.RetireIncrementalCache())
 }
 

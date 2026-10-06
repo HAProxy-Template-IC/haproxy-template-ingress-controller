@@ -45,6 +45,9 @@ type IncrementalBindingInputSnapshot struct {
 	entryPoints []string
 	inputs      []string
 	context     map[string]any
+	// guard covers context, so each planner run attaches it instead of
+	// walking the same inputs again.
+	guard *IncrementalImmutableCertificate
 }
 
 // Equal reports exact planner-visible equality, including Go value types.
@@ -153,6 +156,7 @@ func (e *ScriggoEngine) SnapshotIncrementalBindingInputs(
 		entryPoints: entryPoints,
 		inputs:      inputs,
 		context:     detached,
+		guard:       CertifyIncrementalImmutableInputs(detached),
 	}, nil
 }
 
@@ -204,6 +208,7 @@ func (e *ScriggoEngine) RenderIncrementalBindingsSnapshot(
 			detached[name] = value
 		}
 	}
+	ctx = WithIncrementalImmutableCertificates(ctx, snapshot.guard)
 	return e.renderIncrementalBindingsDetached(ctx, templateName, detached)
 }
 

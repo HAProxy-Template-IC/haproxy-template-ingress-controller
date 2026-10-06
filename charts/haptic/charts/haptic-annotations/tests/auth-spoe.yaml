@@ -501,7 +501,7 @@ validationTests:
       - {type: contains, target: "map:ing-satisfy-routes.map", pattern: '(?m)^default/satisfy-any-ingress\|haptic\|haptic_auth_default_satisfy-auth\|Protected 1$'}
       - type: contains
         target: haproxy.cfg
-        pattern: 'http-request auth realm "Protected" if \{ var\(txn\.resource_id\),concat\(\|haptic\|haptic_auth_default_satisfy-auth\|Protected\),map\(\S*/ing-satisfy-routes\.map\) -m found \} !\{ var\(txn\.haptic_sat_allow\) -m bool \} !\{ http_auth\(haptic_auth_default_satisfy-auth\) \}'
+        pattern: 'http-request auth realm "Protected" if \{ var\(txn\.resource_key\),concat\(\|haptic\|haptic_auth_default_satisfy-auth\|Protected\),map\(\S*/ing-satisfy-routes\.map\) -m found \} !\{ var\(txn\.haptic_sat_allow\) -m bool \} !\{ http_auth\(haptic_auth_default_satisfy-auth\) \}'
       # The allow-list half is the access-control shape: the block of the
       # disjoint cover the client falls in, then whether this route exempts it.
       - {type: contains, target: "map:ing-satisfy-allow-partitions.map", pattern: '(?m)^10\.0\.0\.0/8 10\.0\.0\.0/8$'}
@@ -563,7 +563,7 @@ validationTests:
         target: map:mtls-error.map
         pattern: "api.example.com https%3a%2f%2flogin.example.com%2fcert-required"
       - {type: contains, target: "map:haptic-cert-header-routes.map", pattern: '(?m)^default/\S+ 1$'}
-      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-SSL-Client-Cert %\[ssl_c_der,base64\] if \{ ssl_fc_has_crt \} \{ var\(txn\.resource_id\),map\(\S*/haptic-cert-header-routes\.map\) -m found \}'}
+      - {type: contains, target: haproxy.cfg, pattern: 'http-request set-header X-SSL-Client-Cert %\[ssl_c_der,base64\] if \{ ssl_fc_has_crt \} \{ var\(txn\.resource_key\),map\(\S*/haptic-cert-header-routes\.map\) -m found \}'}
 
   # ============================================================================
   # External auth (SPOE) — requires spoa-hub loaded
@@ -615,6 +615,8 @@ validationTests:
       - type: contains
         target: haproxy.cfg
         pattern: "http-request send-spoe-group spoa-hub-check-auth check-auth-group"
+      - {type: contains, target: map:auth-forward-headers.map, pattern: "default/protected X-Tenant-Id"}
+      - {type: contains, target: file:spoe.conf, pattern: "hdr_x_tenant_id=req\\.hdr\\(X-Tenant-Id\\)"}
       # Security: a client-supplied copy of the pass-through header is stripped
       # before the auth value is set, so it can't survive when the auth reply
       # omits the header (identity/privilege-escalation guard).
@@ -625,6 +627,97 @@ validationTests:
         target: haproxy.cfg
         pattern: "http-request set-header X-Auth-User %\\[var\\(txn.hub.external_auth.x_auth_user\\)\\]"
       - {type: contains, target: haproxy.cfg, pattern: "http-after-response set-header WWW-Authenticate"}
+
+  test-haptic-external-auth-headers-request-underscore-not-captured:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: >-
+      X_Api_Key on one Ingress must not become the capture for X-Api-Key on another; SPOE
+      arg names can't tell them apart, so the underscore header is dropped with a Warning.
+    extraContext:
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: underscored
+            annotations:
+              haproxy-haptic.org/auth-url: "https://auth.example/check"
+              haproxy-haptic.org/auth-headers-request: "X_Api_Key, X-Tenant-Id"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: underscored.example.com
+                http: *httpRoot
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: dashed
+            annotations:
+              haproxy-haptic.org/auth-url: "https://auth.example/check"
+              haproxy-haptic.org/auth-headers-request: "X-Api-Key"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: dashed.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: file:spoe.conf, pattern: "hdr_x_api_key=req\\.hdr\\(X-Api-Key\\)"}
+      - {type: not_contains, target: file:spoe.conf, pattern: "X_Api_Key"}
+      - {type: contains, target: map:auth-forward-headers.map, pattern: "(?m)^default/underscored X-Tenant-Id$"}
+      - {type: contains, target: map:auth-forward-headers.map, pattern: "(?m)^default/dashed X-Api-Key$"}
+      - {type: contains, target: events, pattern: "Warning InvalidAuthHeader networking\\.k8s\\.io/v1 Ingress default/underscored: "}
+
+  test-haptic-external-auth-headers-request-underscore-rejected-at-admission:
+    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
+    description: The admission webhook rejects an underscore in auth-headers-request.
+    extraContext:
+      renderMode: admission
+      spoaHub:
+        enabled: true
+        haproxy:
+          socketPath: /run/spoa/hub.sock
+          modeSpop: true
+          messages:
+            - check-auth
+          timeoutHello: 2s
+          timeoutIdle: 5m
+          timeoutProcessing: 500ms
+          poolMaxConn: 100
+          poolPurgeDelay: 30s
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            namespace: default
+            name: underscored
+            annotations:
+              haproxy-haptic.org/auth-url: "https://auth.example/check"
+              haproxy-haptic.org/auth-headers-request: "X_Api_Key"
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: underscored.example.com
+                http: *httpRoot
+    assertions:
+      - type: contains
+        target: rendering_error
+        pattern: "Ingress default/underscored annotation 'haproxy-haptic\\.org/auth-headers-request' lists header 'X_Api_Key', which contains '_'"
 
   # ============================================================================
   # OAuth2-proxy — desugars onto external-auth

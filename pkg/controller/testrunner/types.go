@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"time"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
@@ -57,6 +58,9 @@ type Runner struct {
 	// checkWithoutBinary replaces `haproxy -c` where there is neither a
 	// filesystem nor the binary. See Options.CheckWithoutBinary.
 	checkWithoutBinary func(haproxyConfig string) error
+
+	// coldAnalysis is built once and shared by every render of engineTemplate.
+	coldAnalysis func() *renderer.ColdIncrementalRenderAnalysis
 }
 
 // testEntry is a tuple of test name and test definition for worker processing.

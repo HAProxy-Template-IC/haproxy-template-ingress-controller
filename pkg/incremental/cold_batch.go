@@ -476,7 +476,7 @@ func newColdExactBatchState(
 
 func (s *coldExactBatchState) index(key QueryKey) (int, bool) {
 	return slices.BinarySearchFunc(s.keys, key, func(left, right QueryKey) int {
-		return cmp.Compare(left.value, right.value)
+		return cmp.Compare(left.id.String(), right.id.String())
 	})
 }
 
@@ -717,7 +717,7 @@ func (f *coldDependencyFrame) sortedDependencies() []dependency {
 func (f *coldDependencyFrame) sortedInputs() []InputRevision {
 	inputs := f.inputValues()
 	slices.SortFunc(inputs, func(left, right InputRevision) int {
-		return cmp.Compare(left.Key.value, right.Key.value)
+		return cmp.Compare(left.Key.id.String(), right.Key.id.String())
 	})
 	return inputs
 }
@@ -1061,7 +1061,7 @@ func (s *coldExactBatchState) loadResolvedInput(ctx context.Context, key InputKe
 }
 
 func coldExactBatchInputShardIndex(key InputKey) uint8 {
-	value := key.value
+	value := key.id.String()
 	if value == "" {
 		return 0
 	}
@@ -1208,10 +1208,10 @@ func (s *Session) validateFreshColdBatch(keys []QueryKey) error {
 			return fmt.Errorf("incremental query has no implementation")
 		}
 		if s.wasQueried(key) {
-			return fmt.Errorf("incremental cold batch query %q was already evaluated", key.value)
+			return fmt.Errorf("incremental cold batch query %q was already evaluated", key.id.String())
 		}
 		if _, exists := s.nodeChanges[key]; exists {
-			return fmt.Errorf("incremental cold batch query %q already has staged state", key.value)
+			return fmt.Errorf("incremental cold batch query %q already has staged state", key.id.String())
 		}
 	}
 	return nil
@@ -1226,7 +1226,7 @@ func (s *Session) publishColdExactBatchInputs(state *coldExactBatchState) error 
 			if err == nil {
 				err = s.validateColdExactBatchInput(key, resolution.entry)
 			}
-			if err != nil && (firstErr == nil || key.value < firstKey.value) {
+			if err != nil && (firstErr == nil || key.id.String() < firstKey.id.String()) {
 				firstKey = key
 				firstErr = err
 			}

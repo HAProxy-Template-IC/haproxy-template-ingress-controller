@@ -89,6 +89,20 @@ func ForwardGateway(ctx context.Context, t *testing.T, gatewayNamespace, gateway
 // ForwardService tunnels to a Service in the controller namespace.
 func ForwardService(t *testing.T, svc string, servicePorts ...int) ServiceForward {
 	t.Helper()
+	return forwardTarget(t, "service/"+svc, servicePorts...)
+}
+
+// ForwardPod tunnels to one pod in the controller namespace, bypassing the
+// Service's load balancing.
+func ForwardPod(t *testing.T, pod string, podPorts ...int) ServiceForward {
+	t.Helper()
+	return forwardTarget(t, "pod/"+pod, podPorts...)
+}
+
+// forwardTarget tunnels to a kubectl port-forward target ("service/<name>" or
+// "pod/<name>") in the controller namespace.
+func forwardTarget(t *testing.T, svc string, servicePorts ...int) ServiceForward {
+	t.Helper()
 	if len(servicePorts) == 0 {
 		servicePorts = []int{80}
 	}
@@ -208,7 +222,7 @@ func newServiceForward(servicePorts, locals []int) ServiceForward {
 	return fwd
 }
 
-// startForwardTunnel starts one `kubectl port-forward service/<svc>` process
+// startForwardTunnel starts one `kubectl port-forward <target>` process
 // and parses the local ports from its "Forwarding from 127.0.0.1:<local> ->
 // <target>" lines. kubectl reports the resolved TARGET port (the pod's
 // per-Gateway bind port, chart-allocated), not the Service port asked for —
@@ -216,9 +230,9 @@ func newServiceForward(servicePorts, locals []int) ServiceForward {
 // order kubectl emits them. The IPv6 twin lines ("[::1]:...") repeat the
 // same local port and are deduplicated. On error the started process is
 // killed; on success the caller owns reaping it via Wait.
-func startForwardTunnel(ctx context.Context, svc string, portArgs []string, wantPorts int) (*exec.Cmd, []int, error) {
+func startForwardTunnel(ctx context.Context, target string, portArgs []string, wantPorts int) (*exec.Cmd, []int, error) {
 	args := make([]string, 0, 6+len(portArgs))
-	args = append(args, kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace, "port-forward", "service/"+svc)
+	args = append(args, kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace, "port-forward", target)
 	args = append(args, portArgs...)
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	cmd.Stderr = os.Stderr

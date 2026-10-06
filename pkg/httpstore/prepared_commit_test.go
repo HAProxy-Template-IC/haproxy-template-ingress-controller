@@ -817,6 +817,45 @@ func TestPreparedInitialCandidateCommitAuthenticatesPostSealActiveEntries(t *tes
 	}
 }
 
+func TestPreparedPublicationRejectsEmptyHeaderNameSubstitution(t *testing.T) {
+	store := New(slog.Default(), 0)
+	source, err := store.StageSource("https://source.example.test/input", FetchOptions{}, &AuthConfig{
+		Type: AuthTypeHeader, Headers: map[string]string{"X-Original": ""},
+	})
+	require.NoError(t, err)
+	prepared, err := store.PrepareStagedSourcesAndVerifyObservations(t.Context(), []*StagedSource{source}, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(prepared.Abort)
+	require.NoError(t, prepared.SealPublication())
+	entry := prepared.publication.cache.entries[source.URL()]
+	headers := entry.Auth.Headers
+	delete(headers, "X-Original")
+	headers["X-Substituted"] = ""
+	assert.Panics(t, prepared.PublishSealed)
+	assert.Equal(t, preparedCommitSealed, prepared.state)
+	delete(headers, "X-Substituted")
+	headers["X-Original"] = ""
+	require.NotPanics(t, prepared.PublishSealed)
+	prepared.Release()
+}
+
+func TestPreparedPublicationRejectsAliasingCurrentEntryAfterAccessCopy(t *testing.T) {
+	store := New(slog.Default(), 0)
+	const url = "https://source.example.test/input"
+	publishUnchangedSource(t, store, url, FetchOptions{})
+	source, err := store.StageSource(url, FetchOptions{}, nil)
+	require.NoError(t, err)
+	publishUnchangedSource(t, store, url, FetchOptions{})
+	before := store.GetEntry(url)
+	prepared, err := store.PrepareStagedSourcesAndVerifyObservations(t.Context(), []*StagedSource{source}, nil, nil)
+	require.NoError(t, err)
+	t.Cleanup(prepared.Abort)
+	prepared.sources[0].publishedEntry = store.cache[url]
+	require.Error(t, prepared.SealPublication())
+	prepared.Abort()
+	assert.Equal(t, before, store.GetEntry(url), "a rejected plan must not mutate the rollback base")
+}
+
 func TestPreparedInitialCandidateCommitBlocksSemanticMutation(t *testing.T) {
 	store := New(slog.Default(), 0)
 	store.LoadFixture("https://example.test/input", "old")

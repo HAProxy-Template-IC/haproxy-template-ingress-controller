@@ -756,7 +756,7 @@ validationTests:
       - type: haproxy_valid
       - type: contains
         target: haproxy.cfg
-        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_id\\) -m str default/legacy-snippet \\}"
+        pattern: "http-request deny deny_status 503 if \\{ var\\(txn.resource_key\\) -m str default/legacy-snippet \\}"
       - type: contains
         target: events
         pattern: "Warning WafPermissionDenied networking.k8s.io/v1 Ingress default/legacy-snippet:.*allowCustomRules=false"

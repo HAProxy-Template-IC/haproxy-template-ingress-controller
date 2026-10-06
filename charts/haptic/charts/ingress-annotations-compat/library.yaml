@@ -26,10 +26,15 @@ templateSnippets:
 
   util-auth-validate-header-name:
     template: |-
+      {%- import "util-webhook-reject-or-warn" for WebhookRejectOrWarn -%}
       {%- macro ValidateAuthHeaderName(name string, annotation string, ns string, ingressName string) %}
         {%- if !regex_search(name, "^[A-Za-z0-9!#$&'*+.^_`|~-]+$") -%}
           {{- fail("Invalid HTTP header name '" + name + "' in annotation '" + annotation + "' on Ingress " + ns + "/" + ingressName + ". Header names must be RFC 7230 tokens (1*tchar): no whitespace, no special characters, no fetch syntax.") -}}
         {%- end -%}
+      {%- end %}
+      {#- SPOE argument names can't carry '-': a capture of X_Api_Key would stand in for X-Api-Key on every Ingress forwarding it. Callers skip the header after this. -#}
+      {%- macro RejectUnderscoreAuthHeader(ingress any, name string, annotation string, ns string, ingressName string) %}
+        {{- WebhookRejectOrWarn(ingress, "InvalidAuthHeader", "Ingress " + ns + "/" + ingressName + " annotation '" + annotation + "' lists header '" + name + "', which contains '_', so it isn't forwarded to the auth service. Use '" + replace(name, "_", "-") + "'.") -}}
       {%- end %}
 
   util-annotation-ssl-passthrough-component:
@@ -234,8 +239,8 @@ templateSnippets:
   util-path-rewrite-lane:
     template: |-
       {%- macro PathRewriteLane(routes string, prefixes string, v string) -%}
-      http-request set-var(txn.{{ v }}_in) path if { var(txn.resource_id),map({{ routes }}) -m found }
-      http-request set-var(txn.{{ v }}_v) var(txn.resource_id),concat(|,txn.{{ v }}_in),map_beg({{ prefixes }}) if { var(txn.{{ v }}_in) -m found }
+      http-request set-var(txn.{{ v }}_in) path if { var(txn.resource_key),map({{ routes }}) -m found }
+      http-request set-var(txn.{{ v }}_v) var(txn.resource_key),concat(|,txn.{{ v }}_in),map_beg({{ prefixes }}) if { var(txn.{{ v }}_in) -m found }
       http-request set-var(txn.{{ v }}_off) var(txn.{{ v }}_v),field(1,' '),add(0) if { var(txn.{{ v }}_v) -m found }
       http-request set-var(txn.{{ v }}_rest) var(txn.{{ v }}_in),bytes(txn.{{ v }}_off) if { var(txn.{{ v }}_v) -m found }
       http-request set-path %[var(txn.{{ v }}_v),field(2,' ',0)]%[var(txn.{{ v }}_rest)] if { var(txn.{{ v }}_v) -m found }
@@ -371,20 +376,20 @@ templateSnippets:
             var v = "txn." + family + "_cors"
           %%}
       # {{ family }}/cors
-      http-request set-var({{ v }}) var(txn.resource_id),map({{ maps["routes"] }})
+      http-request set-var({{ v }}) var(txn.resource_key),map({{ maps["routes"] }})
       http-request set-var({{ v }}_origin) req.hdr(Origin) if { var({{ v }}) -m beg "{{ family }}:" }
       http-request set-var({{ v }}_ok) str(1) if { var({{ v }}) -m beg "{{ family }}:any" } { var({{ v }}_origin) -m found }
-      http-request set-var({{ v }}_ok) str(1) if { var({{ v }}) -m beg "{{ family }}:list" } { var(txn.resource_id),concat(|,{{ v }}_origin),map({{ maps["origins"] }}) -m found }
-      http-request set-var({{ v }}_ok) str(1) if { var({{ v }}),field(4,' ') -m str 1 } !{ var({{ v }}_ok) -m found } { var(txn.resource_id),concat(|,{{ v }}_origin),map_reg({{ maps["regex"] }}) -m found }
+      http-request set-var({{ v }}_ok) str(1) if { var({{ v }}) -m beg "{{ family }}:list" } { var(txn.resource_key),concat(|,{{ v }}_origin),map({{ maps["origins"] }}) -m found }
+      http-request set-var({{ v }}_ok) str(1) if { var({{ v }}),field(4,' ') -m str 1 } !{ var({{ v }}_ok) -m found } { var(txn.resource_key),concat(|,{{ v }}_origin),map_reg({{ maps["regex"] }}) -m found }
       http-request return status 204 if { var({{ v }}),field(5,' ') -m str 1 } { var({{ v }}_ok) -m found } METH_OPTIONS { req.hdr(Access-Control-Request-Method) -m found }
       http-request return status 204 if { var({{ v }}),field(5,' ') -m str 2 } METH_OPTIONS
       http-after-response set-header Access-Control-Allow-Origin '*' if { var({{ v }}_ok) -m found } { var({{ v }}) -m beg "{{ family }}:any" }
       http-after-response set-header Access-Control-Allow-Origin '%[var({{ v }}_origin)]' if { var({{ v }}_ok) -m found } { var({{ v }}) -m beg "{{ family }}:list" }
-      http-after-response set-header Access-Control-Allow-Methods %[var(txn.resource_id),map({{ maps["methods"] }}),url_dec(1)] if { var({{ v }}_ok) -m found }
-      http-after-response set-header Access-Control-Allow-Headers %[var(txn.resource_id),map({{ maps["headers"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_id),map({{ maps["headers"] }}) -m found }
-      http-after-response set-header Access-Control-Max-Age %[var(txn.resource_id),map({{ maps["maxage"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_id),map({{ maps["maxage"] }}) -m found }
+      http-after-response set-header Access-Control-Allow-Methods %[var(txn.resource_key),map({{ maps["methods"] }}),url_dec(1)] if { var({{ v }}_ok) -m found }
+      http-after-response set-header Access-Control-Allow-Headers %[var(txn.resource_key),map({{ maps["headers"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_key),map({{ maps["headers"] }}) -m found }
+      http-after-response set-header Access-Control-Max-Age %[var(txn.resource_key),map({{ maps["maxage"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_key),map({{ maps["maxage"] }}) -m found }
       http-after-response set-header Access-Control-Allow-Credentials 'true' if { var({{ v }}_ok) -m found } { var({{ v }}),field(2,' ') -m str 1 }
-      http-after-response set-header Access-Control-Expose-Headers %[var(txn.resource_id),map({{ maps["expose"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_id),map({{ maps["expose"] }}) -m found }
+      http-after-response set-header Access-Control-Expose-Headers %[var(txn.resource_key),map({{ maps["expose"] }}),url_dec(1)] if { var({{ v }}_ok) -m found } { var(txn.resource_key),map({{ maps["expose"] }}) -m found }
       http-after-response add-header Vary Origin if { var({{ v }}_ok) -m found } { var({{ v }}),field(3,' ') -m str 1 }
         {%- end -%}
       {%- end macro -%}
@@ -445,7 +450,7 @@ templateSnippets:
             var routes = tostring(routesVal)
           %%}
       # {{ family }}/forwardfor
-      http-request set-var(txn.{{ family }}_xff) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.{{ family }}_xff) var(txn.resource_key),map({{ routes }})
       http-request add-header X-Forwarded-For %[src] if { var(txn.{{ family }}_xff) -m str "{{ family }}:add" }
       http-request set-header X-Forwarded-For %[src] if { var(txn.{{ family }}_xff) -m str "{{ family }}:update" }
       http-request set-header X-Forwarded-For %[src] if { var(txn.{{ family }}_xff) -m str "{{ family }}:ifmissing" } !{ req.hdr(X-Forwarded-For) -m found }
@@ -505,7 +510,7 @@ templateSnippets:
           %%}
       # {{ family }}/src-ip-header
           {%- for _, n := range sort_strings(names) %}
-      http-request set-src hdr({{ tostring(n)[len(family)+1:] }}) if { var(txn.resource_id),map({{ routes }}) -m str "{{ n }}" }
+      http-request set-src hdr({{ tostring(n)[len(family)+1:] }}) if { var(txn.resource_key),map({{ routes }}) -m str "{{ n }}" }
           {%- end %}
         {%- end -%}
       {%- end macro -%}
@@ -584,7 +589,7 @@ templateSnippets:
       {{ "\n" }}# {{ family }}/cookie-rewrite
           {%- for _, p := range sort_strings(pairs) %}
             {%- var f = split(tostring(p), "|") %}
-      http-response replace-header Set-Cookie (.*){{ f[1] }}={{ f[2] }}(.*) \1{{ f[1] }}={{ f[3] }}\2 if { var(txn.resource_id),concat(|{{ p }}),map({{ routes }}) -m found }
+      http-response replace-header Set-Cookie (.*){{ f[1] }}={{ f[2] }}(.*) \1{{ f[1] }}={{ f[3] }}\2 if { var(txn.resource_key),concat(|{{ p }}),map({{ routes }}) -m found }
           {%- end %}
         {%- end -%}
       {%- end macro -%}
@@ -663,8 +668,8 @@ templateSnippets:
       {{ "\n" }}# {{ family }}/location-rewrite
           {%- for _, p := range sort_strings(pairs) %}
             {%- var f = split(tostring(p), "|") %}
-      http-response replace-header Location {{ sanitize_regex(f[1]) }} {{ f[2] }} if { var(txn.resource_id),concat(|{{ p }}),map({{ routes }}) -m found }
-      http-response replace-header Refresh {{ sanitize_regex(f[1]) }} {{ f[2] }} if { var(txn.resource_id),concat(|{{ p }}),map({{ routes }}) -m found }
+      http-response replace-header Location {{ sanitize_regex(f[1]) }} {{ f[2] }} if { var(txn.resource_key),concat(|{{ p }}),map({{ routes }}) -m found }
+      http-response replace-header Refresh {{ sanitize_regex(f[1]) }} {{ f[2] }} if { var(txn.resource_key),concat(|{{ p }}),map({{ routes }}) -m found }
           {%- end %}
         {%- end -%}
       {%- end macro -%}
@@ -785,8 +790,8 @@ templateSnippets:
       {%- var maps = map[string]any{} -%}
       {{- RateLimitMaps(maps) -}}
       {{ "\n" }}# ingress/rate-limit-allowlist
-      http-request set-var(txn.vrl_allow_block) src,map_ip({{ maps["partitions"] }}) if { var(txn.resource_id) -m found }
-      http-request set-var(txn.vrl_allow) bool(true) if { var(txn.vrl_allow_block) -m found } { var(txn.vrl_allow_block),concat(|,txn.resource_id),map({{ maps["members"] }}) -m found }
+      http-request set-var(txn.vrl_allow_block) src,map_ip({{ maps["partitions"] }}) if { var(txn.resource_key) -m found }
+      http-request set-var(txn.vrl_allow) bool(true) if { var(txn.vrl_allow_block) -m found } { var(txn.vrl_allow_block),concat(|,txn.resource_key),map({{ maps["members"] }}) -m found }
       {%- end %}
 
   # One table proxy per distinct (counter, window), sized by the largest request:
@@ -839,12 +844,12 @@ templateSnippets:
       {%- var statuses = []any{} -%}
       {%- for _, v := range incremental_values("ingress-rate-limit", "status") -%}{%- statuses = append(statuses, tostring(v)) -%}{%- end -%}
       {{ "\n" }}# ingress/rate-limiting
-      http-request set-var(txn.vrl_cfg) var(txn.resource_id),map({{ maps["routes"] }})
+      http-request set-var(txn.vrl_cfg) var(txn.resource_key),map({{ maps["routes"] }})
       http-request set-var(txn.vrl_counter) var(txn.vrl_cfg),field(1,' ') if { var(txn.vrl_cfg) -m found }
       http-request set-var(txn.vrl_window) var(txn.vrl_cfg),field(2,' ') if { var(txn.vrl_cfg) -m found }
       http-request set-var(txn.vrl_threshold) var(txn.vrl_cfg),field(3,' ') if { var(txn.vrl_cfg) -m found }
       http-request set-var(txn.vrl_status) var(txn.vrl_cfg),field(4,' ') if { var(txn.vrl_cfg) -m found }
-      http-request set-var-fmt(txn.vrl_key) %[var(txn.resource_id)]|%[src] if { var(txn.vrl_cfg) -m found }
+      http-request set-var-fmt(txn.vrl_key) %[var(txn.resource_key)]|%[src] if { var(txn.vrl_cfg) -m found }
       {%- for _, t := range sort_strings(windows) %}
         {%- var parts = split(tostring(t), "|") %}
       http-request track-sc0 var(txn.vrl_key) table ing_rl_tbl_{{ parts[0] }}_{{ parts[1] }} if { var(txn.vrl_counter) -m str {{ parts[0] }} } { var(txn.vrl_window) -m str {{ parts[1] }} }
@@ -984,11 +989,11 @@ templateSnippets:
           {%- end -%}
           {%- var v = "txn." + family + "_sat_allow" -%}
       {{ "\n" }}# {{ family }}/satisfy-any
-      http-request set-var({{ v }}_block) src,map_ip({{ maps["partitions"] }}) if { var(txn.resource_id) -m found }
-      http-request set-var({{ v }}) bool(true) if { var({{ v }}_block) -m found } { var({{ v }}_block),concat(|,txn.resource_id),map({{ maps["members"] }}) -m found }
+      http-request set-var({{ v }}_block) src,map_ip({{ maps["partitions"] }}) if { var(txn.resource_key) -m found }
+      http-request set-var({{ v }}) bool(true) if { var({{ v }}_block) -m found } { var({{ v }}_block),concat(|,txn.resource_key),map({{ maps["members"] }}) -m found }
           {%- for _, p := range sort_strings(pairs) %}
             {%- var parts = split(tostring(p), "|") %}
-            {%- var cond = "{ var(txn.resource_id),concat(|" + tostring(p) + "),map(" + tostring(maps["routes"]) + ") -m found } !{ var(" + v + ") -m bool } !{ http_auth(" + parts[1] + ") }" %}
+            {%- var cond = "{ var(txn.resource_key),concat(|" + tostring(p) + "),map(" + tostring(maps["routes"]) + ") -m found } !{ var(" + v + ") -m bool } !{ http_auth(" + parts[1] + ") }" %}
             {%- if deniedBy != "" %}
       http-request set-var(txn.denied_by) str({{ deniedBy }}) if {{ cond }}
             {%- end %}
@@ -1110,7 +1115,7 @@ templateSnippets:
       {%- for _, s := range sizes %}
       filter bwlim-out ing_bw_out_{{ s }} default-limit 1m default-period 1s min-size {{ s }}
       {%- end %}
-      http-request set-var(txn.ibw_cfg) var(txn.resource_id),map({{ routes }})
+      http-request set-var(txn.ibw_cfg) var(txn.resource_key),map({{ routes }})
       http-request set-var(txn.ibw_rate) var(txn.ibw_cfg),field(1,' ') if { var(txn.ibw_cfg) -m found }
       http-request set-var(txn.ibw_min) var(txn.ibw_cfg),field(2,' ') if { var(txn.ibw_cfg) -m found }
       http-request set-bandwidth-limit ing_bw_out limit var(txn.ibw_rate) if { var(txn.ibw_min) -m str _ }
@@ -1438,10 +1443,10 @@ templateSnippets:
             var maps = mapsVal.(map[string]any)
           %%}
       # {{ family }}/access-control
-      http-request set-var(txn.ac) var(txn.resource_id),map({{ maps["routes"] }})
+      http-request set-var(txn.ac) var(txn.resource_key),map({{ maps["routes"] }})
       http-request set-var(txn.ac_block) src,map_ip({{ maps["partitions"] }}) if { var(txn.ac) -m beg "{{ family }}:" }
-      http-request deny if { var(txn.ac) -m str "{{ family }}:allow" "{{ family }}:both" } !{ var(txn.ac_block),concat(|,txn.resource_id),map({{ maps["allow"] }}) -m found }
-      http-request deny if { var(txn.ac) -m str "{{ family }}:deny" "{{ family }}:both" } { var(txn.ac_block),concat(|,txn.resource_id),map({{ maps["deny"] }}) -m found }
+      http-request deny if { var(txn.ac) -m str "{{ family }}:allow" "{{ family }}:both" } !{ var(txn.ac_block),concat(|,txn.resource_key),map({{ maps["allow"] }}) -m found }
+      http-request deny if { var(txn.ac) -m str "{{ family }}:deny" "{{ family }}:both" } { var(txn.ac_block),concat(|,txn.resource_key),map({{ maps["deny"] }}) -m found }
         {%- end -%}
         {%- for _, f := range incremental_values("ingress-access-control", "fragments:" + family) -%}{{- tostring(f) -}}{%- end -%}
       {%- end macro -%}
@@ -1457,7 +1462,7 @@ templateSnippets:
         {%- var ns = ingress.Metadata.Namespace %}
         {%- var name = ingress.Metadata.Name %}
         {%- var key = ns + "/" + name %}
-        {%- var cond = "{ var(txn.resource_id) -m str " + key + " }" %}
+        {%- var cond = "{ var(txn.resource_key) -m str " + key + " }" %}
         {%- var allowlist = ingress.Metadata.Annotations[allowAnnotation] %}
         {%- var denylist = ingress.Metadata.Annotations[denyAnnotation] %}
         {%- if allowlist != "" %}

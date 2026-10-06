@@ -271,7 +271,7 @@ templateSnippets:
           {{- fail("Invalid value for annotation 'nginx.ingress.kubernetes.io/auth-tls-match-cn' on Ingress '" + key + "': contains " + injection + ", which would break the client-certificate check. Remove it from the pattern.") -}}
         {%- end -%}
         {%- if pattern != "" -%}
-          {{- shared.Publish("rule", key, "# nginx-ingress/auth-tls-match-cn (" + key + ")\nhttp-request deny deny_status 403 if { var(txn.resource_id) -m str " + key + " } !{ ssl_c_s_dn(,0,rfc2253) -m reg \"" + EscapeDquoteValue(pattern) + "\" }") -}}
+          {{- shared.Publish("rule", key, "# nginx-ingress/auth-tls-match-cn (" + key + ")\nhttp-request deny deny_status 403 if { var(txn.resource_key) -m str " + key + " } !{ ssl_c_s_dn(,0,rfc2253) -m reg \"" + EscapeDquoteValue(pattern) + "\" }") -}}
         {%- end -%}
       {%- end -%}
 
@@ -312,8 +312,8 @@ templateSnippets:
         var routes = tostring(routesVal)
       %%}
       {{ "\n" }}# ni/auth-tls-pass-certificate-to-upstream
-      http-request set-header ssl-client-cert %[ssl_c_der,base64] if { var(txn.resource_id),map({{ routes }}) -m found }
-      http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { var(txn.resource_id),map({{ routes }}) -m found }
+      http-request set-header ssl-client-cert %[ssl_c_der,base64] if { var(txn.resource_key),map({{ routes }}) -m found }
+      http-request set-header ssl-client-subject-dn %[ssl_c_s_dn] if { var(txn.resource_key),map({{ routes }}) -m found }
       {%- end %}
 
   nginx-ingress-cert-header-publications:

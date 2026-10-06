@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -97,6 +98,9 @@ func New(
 		haproxyVersion:     options.HAProxyVersion,
 		typedResourceTypes: options.TypedResourceTypes,
 		checkWithoutBinary: options.CheckWithoutBinary,
+		coldAnalysis: sync.OnceValue(func() *renderer.ColdIncrementalRenderAnalysis {
+			return renderer.AnalyzeColdIncrementalRenders(cfg, engine)
+		}),
 	}
 }
 

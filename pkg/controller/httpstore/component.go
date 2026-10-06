@@ -225,7 +225,7 @@ func (c *Component) handleProposalValidationCompleted(event *events.ProposalVali
 	c.mu.Unlock()
 
 	if accepted {
-		c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_validated", true))
+		c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_validated", true, events.WithNewCorrelation()))
 	}
 	c.publishValidationRequest(nextRequest)
 }
@@ -506,13 +506,40 @@ func (c *Component) CommitInitialCandidatesAndVerifyObservations(
 // RequestRenderForAcceptedContent triggers a reconcile for content a render
 // accepted without publishing its cache.
 func (c *Component) RequestRenderForAcceptedContent() {
-	c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_accepted", true))
+	c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_accepted", true, events.WithNewCorrelation()))
 }
 
-// RequestRenderForWithheldContent triggers the reconcile that fetches and
-// accepts content a render left out.
+// RequestRenderForWithheldContent asks for the acceptance attempt for content
+// a deploying render left out.
 func (c *Component) RequestRenderForWithheldContent() {
-	c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_withheld", true))
+	c.eventBus.Publish(events.NewHTTPContentAcceptanceRequestedEvent())
+}
+
+// AcceptanceSequence counts the content acceptances on this replica so far.
+func (c *Component) AcceptanceSequence() uint64 {
+	return c.store.AcceptanceSequence()
+}
+
+// ConfirmAcceptances settles exact source versions read by a passing render.
+func (c *Component) ConfirmAcceptances(observations []httpstore.ObservationToken) {
+	c.store.ConfirmAcceptances(observations)
+}
+
+// RevokeAcceptances takes back the unconfirmed acceptances up to sequence,
+// because HAProxy refused a render that may have read them, and asks for the
+// render without them. It returns how many it revoked.
+func (c *Component) RevokeAcceptances(sequence uint64) int {
+	revoked := c.store.RevokeAcceptances(sequence)
+	for _, content := range revoked {
+		c.ReconcileURL(content.URL)
+		c.eventBus.Publish(events.NewHTTPContentRevokedEvent(
+			httpstore.RedactURL(content.URL), content.Checksum, content.Restored, content.Critical,
+		))
+	}
+	if len(revoked) > 0 {
+		c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_revoked", true, events.WithNewCorrelation()))
+	}
+	return len(revoked)
 }
 
 // RegisterURL reconciles a URL's timer with its current source policy.

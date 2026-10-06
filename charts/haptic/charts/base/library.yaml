@@ -291,14 +291,14 @@ templateSnippets:
           the first place. Both cases leave the enforcement absent while the
           route keeps serving.
 
-          Takes `<namespace>/<name>` ids. txn.resource_id is set by the routing
+          Takes txn.resource_key ids (`<namespace>/<name>` for an Ingress), set by the routing
           logic, which runs before frontend-filters-*, and is unset when nothing
           matched — so a request that reached no route matches no rule, which is
           what you want. -#}
       {% macro ResourceMatchCondition(resourceIds []string) string %}
         {%%
           if len(resourceIds) <= 30 {
-            show "{ var(txn.resource_id) -m str " + join(resourceIds, " ") + " }"
+            show "{ var(txn.resource_key) -m str " + join(resourceIds, " ") + " }"
           } else {
             var content = join(resourceIds, "\n") + "\n"
             var filename = "resource-match-" + md5(content) + ".lst"
@@ -306,7 +306,7 @@ templateSnippets:
             if err != nil {
               fail("Failed to register resource match file '" + filename + "': " + err.Error())
             }
-            show "{ var(txn.resource_id) -m str -f " + path + " }"
+            show "{ var(txn.resource_key) -m str -f " + path + " }"
           }
         %%}
       {% end %}
@@ -1107,13 +1107,15 @@ templateSnippets:
       http-request set-var(txn.backend_name) var(txn.lookup_key),map({{ mapPath("weighted-multi-backend.map") }}) if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       # BACKEND: direct routing
       http-request set-var(txn.backend_name) var(txn.path_match),field(2,:) if { var(txn.path_match_qualifier) -m str BACKEND }
-      # owner resource id <ns>/<name>, keying per-resource feature maps (auth, coraza, …). See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
+      # owner resource id <ns>/<name> for logs; txn.resource_key below keys per-route feature maps. See https://haproxy-haptic.org/docs/latest/libraries/base/#frontend-routing-logic
       http-request set-var(txn.resource_namespace) var(txn.backend_name),field(1,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_name)      var(txn.backend_name),field(2,_) if { var(txn.path_match_qualifier) -m str BACKEND }
       http-request set-var(txn.resource_namespace) var(txn.route_key),field(1,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       http-request set-var(txn.resource_name)      var(txn.route_key),field(2,_)    if { var(txn.path_match_qualifier) -m str MULTIBACKEND }
       {{ render_glob "frontend-routing-owner-*" }}
       http-request set-var(txn.resource_id) var(txn.resource_namespace),concat(/,txn.resource_name,) if { var(txn.resource_namespace) -m found }
+      {#- txn.resource_key keys per-route feature maps; an owner snippet sets it when <ns>/<name> is not unique across route kinds. #}
+      http-request set-var(txn.resource_key) var(txn.resource_id) if { var(txn.resource_id) -m found } !{ var(txn.resource_key) -m found }
 
   frontend-routing-logic:
     template: |-

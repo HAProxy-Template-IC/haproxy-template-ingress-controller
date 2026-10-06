@@ -323,6 +323,18 @@ func TestComponent_HAProxyPodRejected(t *testing.T) {
 		"reason labels must stay independent — different reason → separate counter")
 }
 
+// A revoked HTTP content acceptance is counted once per revoked URL.
+func TestComponent_HTTPContentRevoked(t *testing.T) {
+	metrics, eventBus := startTestComponent(t)
+
+	eventBus.Publish(events.NewHTTPContentRevokedEvent("https://pages/a", "c1", false, false))
+	eventBus.Publish(events.NewHTTPContentRevokedEvent("https://pages/b", "c2", true, true))
+
+	assert.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.HTTPContentRevokedTotal) == 2
+	}, time.Second, 5*time.Millisecond)
+}
+
 func TestComponent_AllEventTypes(t *testing.T) {
 	metrics, eventBus := startTestComponent(t)
 

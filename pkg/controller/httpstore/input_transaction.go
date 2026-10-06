@@ -52,6 +52,7 @@ type InputTransaction struct {
 	cacheable          bool
 	prepared           *PreparedInputCommit
 	retrySeed          *InputRetrySeed
+	deferredCandidates *DeferredCandidates
 	replayEpoch        *purehttpstore.ReplayEpoch
 	replayState        *purehttpstore.AcceptedReplayState
 	// withholdCandidates renders unaccepted sources as unavailable instead of
@@ -126,6 +127,19 @@ func (t *InputTransaction) fetchStaged(
 	if t.withholdCandidates {
 		if result, withheld, err := t.withholdUnaccepted(source); withheld || err != nil {
 			return result, err
+		}
+	}
+	if t.deferredCandidates != nil {
+		accepted, _, err := t.component.store.AcceptedStagedSnapshot(source)
+		if err != nil {
+			return nil, err
+		}
+		if !accepted.Found {
+			t.deferredCandidates.schedule(t.component, source)
+			t.mu.Lock()
+			t.withheld[source.URL()] = true
+			t.mu.Unlock()
+			return nil, ErrCandidatePending
 		}
 	}
 	value, err, _ := t.fetchGroup.Do(source.URL(), func() (any, error) {
@@ -382,6 +396,26 @@ func (t *InputTransaction) Snapshots() []purehttpstore.ContentSnapshot {
 	return t.snapshotsLocked()
 }
 
+// HTTPObservations identifies accepted versions this execution actually read.
+func (t *InputTransaction) HTTPObservations() []purehttpstore.ObservationToken {
+	snapshots := t.Snapshots()
+	t.mu.Lock()
+	replay := t.replayState
+	t.mu.Unlock()
+	if replay != nil && replay.ValidateAuthentication() == nil {
+		snapshots = append(snapshots, replay.Snapshots()...)
+	}
+	var observations []purehttpstore.ObservationToken
+	for index := range snapshots {
+		snapshot := &snapshots[index]
+		observation := snapshot.ObservationToken()
+		if observation.Valid() && snapshot.Found {
+			observations = append(observations, observation)
+		}
+	}
+	return observations
+}
+
 func (t *InputTransaction) committedAcceptedReplayState() (*purehttpstore.AcceptedReplayState, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -432,8 +466,12 @@ func (t *InputTransaction) PrepareCommitWithObservationsAndActiveLeases(
 func (t *InputTransaction) PrepareCommitPreservingRefreshers(
 	ctx context.Context,
 	additional []purehttpstore.ObservationToken,
+	active *purehttpstore.ActiveLeaseCommit,
 ) (*PreparedInputCommit, error) {
-	return t.prepareCommitWithObservationsAndActiveLeases(ctx, additional, nil, false)
+	if active != nil && !active.VerifyOnly {
+		return nil, errors.New("HTTP lease publication cannot preserve refreshers")
+	}
+	return t.prepareCommitWithObservationsAndActiveLeases(ctx, additional, active, false)
 }
 
 func (t *InputTransaction) prepareCommitWithObservationsAndActiveLeases(
@@ -532,6 +570,9 @@ func splitPublishedReplayCommit(active *purehttpstore.ActiveLeaseCommit) (
 	publishedReplay []purehttpstore.ContentSnapshot,
 	err error,
 ) {
+	if err := active.ValidateMode(); err != nil {
+		return nil, nil, nil, err
+	}
 	if active == nil || len(active.PublishedReplay) == 0 {
 		return active, nil, nil, nil
 	}

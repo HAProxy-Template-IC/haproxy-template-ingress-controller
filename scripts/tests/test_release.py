@@ -104,7 +104,7 @@ class ReleaseTests(unittest.TestCase):
         config = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text().replace("!reference", ""))
         maint_rule = "$CI_COMMIT_BRANCH =~ /^maint\\//"
         self.assertIn({"if": maint_rule}, config["workflow"]["rules"])
-        tag_rules = [rule.get("if", "") for rule in config["create-release-tag"]["rules"]]
+        tag_rules = [rule.get("if", "") for rule in config["create-release-tag"]["rules"] if isinstance(rule, dict)]
         self.assertTrue(any(maint_rule in rule for rule in tag_rules), tag_rules)
         self.assertNotIn("needs", config["create-release-tag"])
         for job in ("trigger-pages", ".rules-main-snapshot-publish", "build-playground-wasm"):
@@ -143,7 +143,14 @@ class ReleaseTests(unittest.TestCase):
         release = {key.value: value for key, value in jobs["build-spoa-image-release"].value}
         self.assertEqual(release["script"].value[0].value, "bash scripts/spoa-release-image.sh verify")
 
-    def test_release_commits_every_rewritten_chart_file(self):
+    def test_release_commits_updated_pins_and_preserves_historical_upgrades(self):
+        upgrade_notes = (ROOT / "docs/site/docs/upgrade-notes.md").read_text()
+        upgrade_04, historical = upgrade_notes.split("## Upgrading to 0.3\n", 1)
+        historical = (
+            "## Upgrading to 0.3\n\n"
+            "~~~markdown\n## Current installation\nhelm upgrade haptic --version 0.3.0\n~~~\n"
+            + historical
+        )
         with tempfile.TemporaryDirectory(prefix="haptic-release-test-") as temp:
             repo = Path(temp)
             files = {
@@ -166,6 +173,11 @@ class ReleaseTests(unittest.TestCase):
                     "helm pull chart --version 0.1.0\n"
                     "haptic preflight --chart chart --expect-chart-version 0.1.0\n"
                     "Upgrade from 0.1.0.\n"
+                    + upgrade_04 + historical +
+                    "\n## Current installation\n"
+                    "````markdown\n```\n## Upgrading to 9.9\n```\n````\n"
+                    "helm install haptic --version 0.1.0\n"
+                    "docker run registry.test/haptic:0.1.0-haproxy3.0\n"
                 ),
                 "docs/landing/overrides/home.html": '<span id="helm-version" class="t-num">0.1.0</span>\n',
             }
@@ -175,6 +187,7 @@ class ReleaseTests(unittest.TestCase):
                 target.write_text(content)
             (repo / "scripts").mkdir()
             shutil.copyfile(ROOT / "scripts/release.sh", repo / "scripts/release.sh")
+            shutil.copyfile(ROOT / "scripts/update-release-docs.py", repo / "scripts/update-release-docs.py")
             env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
             env.update({
                 "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
@@ -197,7 +210,7 @@ class ReleaseTests(unittest.TestCase):
                     self.assertIn("0.2.0-alpha.2", committed)
                     self.assertNotIn("/docs/dev/", committed)
                     self.assertNotIn("/blob/main/", committed)
-            for version in ("0.2.0-alpha.2", "0.2.0"):
+            for version in ("0.2.0-alpha.2", "0.2.0", "0.3.0", "0.4.0", "0.4.1", "0.5.0"):
                 with self.subTest(version=version):
                     run("bash", "scripts/release.sh", version)
                     self.assertEqual(run("git", "status", "--porcelain"), "")
@@ -206,6 +219,13 @@ class ReleaseTests(unittest.TestCase):
                     self.assertIn(f"--version {version}\n", committed)
                     self.assertIn(f"--expect-chart-version {version}\n", committed)
                     self.assertIn("Upgrade from 0.1.0.\n", committed)
+                    self.assertIn(historical, committed)
+                    expected_04 = upgrade_04
+                    if version in ("0.4.1", "0.5.0"):
+                        expected_04 = expected_04.replace("--version 0.4.0", "--version 0.4.1")
+                    self.assertIn(expected_04, committed)
+                    self.assertIn(f"helm install haptic --version {version}\n", committed)
+                    self.assertIn(f"registry.test/haptic:{version}-haproxy3.4\n", committed)
 
 
 if __name__ == "__main__":

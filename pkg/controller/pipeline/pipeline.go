@@ -78,6 +78,9 @@ func (e *PipelineError) Unwrap() error {
 
 // PipelineResult contains the output of a render-validate pipeline execution.
 type PipelineResult struct {
+	// HTTPObservations can confirm only the accepted versions read by this execution.
+	HTTPObservations []httpstore.ObservationToken
+
 	// CycleSnapshot binds the output and every effect from this render.
 	CycleSnapshot *rendercycle.Snapshot
 
@@ -495,6 +498,7 @@ func (p *Pipeline) execute(ctx context.Context, provider stores.StoreProvider, m
 		return nil, nil, err
 	}
 	if validationResult.Valid && renderResult.InputTransaction != nil {
+		result.HTTPObservations = renderResult.HTTPObservations
 		if err := p.commitInputs(ctx, renderResult.InputTransaction, result); err != nil {
 			return nil, nil, err
 		}
@@ -607,6 +611,11 @@ func inputsMovedUnderTheRender(err error, mode rendercontext.RenderMode) bool {
 	return mode == rendercontext.RenderModeAdmission && errors.Is(err, stores.ErrSnapshotChanged)
 }
 
+// InputsMoved reports a render that lost the commit race to another commit.
+func InputsMoved(err error) bool {
+	return lostTheCommitRace(err)
+}
+
 // lostTheCommitRace reports whether a render's commit failed only because
 // another session committed first: the inputs' revision moved, the HTTP store
 // accepted content the render had read, or the graph took a cold cache from
@@ -652,39 +661,71 @@ func (p *Pipeline) executeSettlingInputConflicts(
 	mode rendercontext.RenderMode,
 	extraOpts ...rendercontext.Option,
 ) (*PipelineResult, *validation.ValidationResult, error) {
+	if mode != rendercontext.RenderModeReconcile || controllerhttpstore.CandidatesWithheld(ctx) {
+		return settleInputConflicts(ctx, p.logger, mode, func() (*PipelineResult, *validation.ValidationResult, error) {
+			return p.execute(ctx, provider, mode, extraOpts...)
+		})
+	}
+	ctx, candidates := controllerhttpstore.WithDeferredCandidates(ctx)
+	defer candidates.Close()
 	return settleInputConflicts(ctx, p.logger, mode, func() (*PipelineResult, *validation.ValidationResult, error) {
-		return renderWithholdingLostCandidates(ctx, mode,
-			func(renderCtx context.Context) (*PipelineResult, *validation.ValidationResult, error) {
-				return p.execute(renderCtx, provider, mode, extraOpts...)
-			})
+		for {
+			result, validationResult, err := p.execute(ctx, provider, mode, extraOpts...)
+			retry, fetchErr := candidates.Await(ctx)
+			if fetchErr != nil {
+				return nil, nil, &PipelineError{Phase: PhaseRender, Cause: fetchErr}
+			}
+			if !retry {
+				if lostTheCommitRace(err) {
+					candidates.Discard()
+				}
+				return result, validationResult, err
+			}
+		}
 	})
 }
 
-// renderWithholdingLostCandidates re-renders a reconcile whose new HTTP content
-// lost the commit race without that content. Accepting it needs every input
-// the render read to hold still through the render and its check, which churn
-// can deny for seconds; deploying must not wait for that. The withheld render
-// asks for the reconcile that tries the acceptance again.
-func renderWithholdingLostCandidates(
-	ctx context.Context,
-	mode rendercontext.RenderMode,
-	render func(context.Context) (*PipelineResult, *validation.ValidationResult, error),
-) (*PipelineResult, *validation.ValidationResult, error) {
-	result, validationResult, err := render(ctx)
-	if mode != rendercontext.RenderModeReconcile || !errors.Is(err, errCandidateAcceptanceLost) {
-		return result, validationResult, err
-	}
-	withheldResult, withheldValidation, withheldErr := render(controllerhttpstore.WithCandidatesWithheld(ctx))
-	if errors.Is(withheldErr, controllerhttpstore.ErrCandidateWithheld) {
-		// A critical source cannot render without its content: keep settling the race.
-		return result, validationResult, err
-	}
-	return withheldResult, withheldValidation, withheldErr
+// WithPendingContentWithheld leaves new HTTP content to an independent acceptance attempt.
+func WithPendingContentWithheld(ctx context.Context) context.Context {
+	return controllerhttpstore.WithCandidatesWithheld(ctx)
 }
 
-// errCandidateAcceptanceLost marks a render that fetched new HTTP content and
-// lost the commit race, so neither the content nor the render may be used.
-var errCandidateAcceptanceLost = errors.New("new HTTP content was not accepted because a render input moved")
+// WaitsForCriticalContent reports a deploying render that stopped because a
+// critical source has no accepted content yet; the acceptance attempt it
+// requested is what lets the next render deploy.
+func WaitsForCriticalContent(err error) bool {
+	return errors.Is(err, controllerhttpstore.ErrCandidateWithheld)
+}
+
+type refusedOutputsKey struct{}
+
+// WithRefusedOutputs gives an acceptance attempt the outputs the render gate
+// refused: accepting content into one of them again would only be revoked again.
+func WithRefusedOutputs(ctx context.Context, refused func(contentChecksum string) bool) context.Context {
+	return context.WithValue(ctx, refusedOutputsKey{}, refused)
+}
+
+// resultChecksum is the checksum the render gate's verdicts carry.
+func resultChecksum(result *PipelineResult) string {
+	if result == nil {
+		return ""
+	}
+	if result.CycleSnapshot != nil {
+		if checksum, err := result.CycleSnapshot.ContentChecksum(); err == nil {
+			return checksum
+		}
+	}
+	return result.ContentChecksum
+}
+
+func outputRefused(ctx context.Context, contentChecksum string) bool {
+	refused, ok := ctx.Value(refusedOutputsKey{}).(func(string) bool)
+	return ok && refused(contentChecksum)
+}
+
+// ErrOutputRefusedByGate stops an acceptance whose render HAProxy already refused.
+var ErrOutputRefusedByGate = errors.New("HAProxy refused this exact render before; " +
+	"its new HTTP content stays pending until the content or the cluster changes")
 
 // settleInputConflicts holds the retry policy on its own so it can be exercised
 // without a cluster racing the render.
@@ -770,6 +811,9 @@ func pauseBeforeInputConflictRetry(ctx context.Context, backoff time.Duration) b
 func (p *Pipeline) commitInputs(
 	ctx context.Context, transaction renderer.RenderInputTransaction, result *PipelineResult,
 ) *PipelineError {
+	if transaction.HasCandidates() && outputRefused(ctx, resultChecksum(result)) {
+		return &PipelineError{Phase: PhaseValidation, ValidationPhase: "render-gate", Cause: ErrOutputRefusedByGate}
+	}
 	if err := p.checkBeforeCommit(ctx, transaction, result); err != nil {
 		return err
 	}
@@ -782,9 +826,6 @@ func (p *Pipeline) commitInputs(
 					"keeping this render and leaving the cache where it was")
 			}
 			return nil
-		}
-		if acceptsContent && lostTheCommitRace(err) {
-			err = fmt.Errorf("%w: %w", errCandidateAcceptanceLost, err)
 		}
 		return &PipelineError{
 			Phase: PhaseRender,
@@ -811,22 +852,12 @@ func (p *Pipeline) commitInputs(
 // single successful render, while the cluster waited for routes that had been
 // created minutes earlier.
 //
-// A render that IS accepting external content keeps failing. There the commit
-// is not bookkeeping: it decides the store's accepted version of something
-// fetched over the network, the render gate cannot undo that acceptance later,
-// and a conflict means the check that authorised it was against inputs that
-// have since moved.
+// Candidate commits still require the exact HTTP versions and publication lease.
 func commitConflictLeavesOutputUsable(err error, acceptsContent bool) bool {
 	return lostTheCommitRace(err) && !acceptsContent
 }
 
-// checkBeforeCommit runs the full synchronous check on a render that is about
-// to make external content the store's accepted version.
-//
-// Accepting content is not undoable by the render gate: its later verdict
-// reverts the fleet's files, not the store's idea of what a URL returned. So
-// the acceptance takes HAProxy's verdict up front — on the rare render that
-// fetches something new, never on the steady-state ones.
+// Reversible acceptance still requires a synchronous check before any candidate is published.
 func (p *Pipeline) checkBeforeCommit(
 	ctx context.Context, transaction renderer.RenderInputTransaction, result *PipelineResult,
 ) *PipelineError {

@@ -40,7 +40,7 @@ templateSnippets:
   # ==========================================================================
   # Frontend routing: excluded paths go straight to the app; everything else on
   # a cache-enabled route goes to varnish_cache. Runs in every client frontend
-  # after txn.resource_id is set, before the default use_backend, so these take
+  # after txn.resource_key is set, before the default use_backend, so these take
   # precedence (first-match wins). The cache-miss loopback never reaches these
   # frontends — Varnish fetches the dedicated backend-fetch port instead.
   # ==========================================================================
