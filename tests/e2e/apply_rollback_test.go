@@ -38,22 +38,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
-// TestApplyRollbackOnCorruptCertificate is the fleet-wide-rejection drill.
-//
-// A TLS Secret is not admission-validated — no webhook sees it — so unusable
-// certificate bytes reach the render, and the first thing that judges them is
-// HAProxy itself. Every layer that is supposed to contain that is asserted
-// here, on the only evidence an operator has:
-//
-//   - the old certificate is still served (the rollback restored the file set
-//     HAProxy had loaded, so the fleet never served the corrupt one),
-//   - no request 5xxs and no HAProxy pod leaves Ready during the rejection
-//     (agent readiness never reflects apply outcomes — a fleet-correlated
-//     rejection must not drain the Service nor fence off the repair),
-//   - the rejection is visible: the HAProxyCfg carries `ConfigValidated=False`
-//     with HAProxy's own message (and `haptic_apply_rejected_total` moves when
-//     the render reached the pods before the gate judged it),
-//   - fixing the Secret clears both with no operator action.
+// The input gate rejects corrupt certificates before agents receive them.
 func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 	const (
 		host       = "apply-rollback.localdev.me"
@@ -111,23 +96,11 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 			probe := startAvailabilityProbe(t, host, clientset)
 			corruptTLSSecret(ctx, t, client, namespace, secretName)
 
-			// The render gate's verdict is the synchronisation point, because
-			// it is the one thing that always happens. Whether the render
-			// reached the pods first is a race the gate is allowed to win:
-			// dispatched-then-refused costs a NACK and a rollback, refused
-			// before dispatch costs nothing at all. Both keep the fleet on the
-			// certificate HAProxy accepted, which is what is asserted below.
-			condition := waitForConfigValidatedCondition(ctx, t, client, metav1.ConditionFalse)
+			waitForRejectedInputs(ctx, t, clientset, true)
 			observed := probe.stop()
 			if observed.observationErr != nil {
 				t.Fatalf("availability observation failed: %v", observed.observationErr)
 			}
-
-			if condition.Message == "" {
-				t.Fatal("ConfigValidated=False carries no message: HAProxy's own words are the " +
-					"operator's only pointer at what to fix")
-			}
-			t.Logf("ConfigValidated=False reason=%s message=%s", condition.Reason, condition.Message)
 
 			if got := servedCertificate(ctx, t, host); !bytes.Equal(got, goodCertDER) {
 				t.Fatal("the fleet is serving a different certificate: it either loaded the corrupt " +
@@ -158,28 +131,22 @@ func TestApplyRollbackOnCorruptCertificate(t *testing.T) {
 					"and fences off the repair", readyBefore, observed.minReadyPods)
 			}
 
-			// Which side of the race ran is evidence, not a verdict — but a
-			// dispatched render MUST have been NACKed, never quietly accepted.
-			if nacks := applyRejectedTotal(ctx, t, clientset) - rejected; nacks > 0 {
-				t.Logf("the render reached the pods first: %v applies refused and rolled back", nacks)
-			} else {
-				t.Log("the render gate refused the render before it was dispatched; the pods never saw it")
+			if nacks := applyRejectedTotal(ctx, t, clientset) - rejected; nacks != 0 {
+				t.Fatalf("invalid certificate reached the fleet: %v rejected applies", nacks)
 			}
+
 			t.Logf("rejection window: %d requests, 0 failures, ready pods never below %d",
 				observed.attempts, observed.minReadyPods)
 			return ctx
 		}).
-		Assess("fixing the Secret clears the condition with no operator action", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+		Assess("fixing the Secret clears the rejection with no operator action", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			t.Helper()
 			repairTLSSecret(ctx, t, client, namespace, secretName, host)
 
+			waitForRejectedInputs(ctx, t, clientset, false)
 			waitForConfigValidatedCondition(ctx, t, client, metav1.ConditionTrue)
 			httpclient.New(t).HTTPS(host, "/").ExpectOK(t)
 
-			// Yield a settled, gate-open fleet. This drill deliberately drove the
-			// render gate PESSIMISTIC; a reload-free sibling that measures next on
-			// the shared fleet must not inherit a gate still holding or a reload
-			// still in flight (issue #170).
 			waitFleetQuiescent(ctx, t, client, clientset)
 			return ctx
 		}).

@@ -15,6 +15,10 @@ the same check runs asynchronously in `rendergate`. The webhook and the
 config-load gate keep step 3, and step 4 (the pluggable output validators) is
 unchanged everywhere.
 
+[ADR-0032](0032-watched-input-isolation.md) restores synchronous complete output
+validation before watched input revisions are accepted. The asynchronous render
+gate remains as an additional check.
+
 ## Context
 
 Validation depended on the trigger path. Watched-resource admission and HTTP

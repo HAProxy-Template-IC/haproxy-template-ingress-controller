@@ -118,7 +118,16 @@ default.
 These settings limit inactivity. HAPTIC doesn't enforce an overall request
 deadline across retries; see [Timeout limits](libraries/gateway.md#timeout-limits).
 
-### 5. Upgrade the release
+### 5. Monitor rejected resource changes
+
+Alert when `haptic_rejected_watched_inputs` is greater than zero. HAPTIC now keeps
+an invalid resource change out of otherwise valid updates, so healthy traffic
+doesn't prove every intended change took effect. A rejected credential rotation
+or policy update retains the previous validated behavior. See
+[Rejected resource changes](operations/input-isolation.md) for diagnosis and
+restart behavior.
+
+### 6. Upgrade the release
 
 Pass the checked values file. `--reset-values` starts from the new chart's
 defaults, so the release doesn't carry rejected keys forward:

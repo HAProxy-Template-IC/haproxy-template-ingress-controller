@@ -34,6 +34,7 @@ configuration and Secret contents. Health probes remain reachable by Kubernetes.
 | `/debug/vars/credentials` | Metadata only (`version`, `has_dataplane_creds`) — **never** the passwords |
 | `/debug/vars/rendered` | Last rendered `haproxy.cfg`, its size, and timestamp |
 | `/debug/vars/auxfiles` | Last rendered SSL certs, map files, general files + a summary count |
+| `/debug/vars/inputRejections` | Whether a validated input view is ready, plus rejected resource changes and their errors; see [rejected resource changes](../operations/input-isolation.md) |
 | `/debug/vars/resources` | Per-type counts for every `watchedResources` entry |
 | `/debug/vars/effectiveConfigResolution` | How each `apiVersions` candidate list resolved against what the cluster actually serves, and which optional entries were dropped — the first thing to check when a `resources.<name>` lookup is unexpectedly empty |
 | `/debug/vars/pipeline` | Per-phase status keyed `last_trigger`, `rendering`, `validation`, `deployment` (each carries its own status / timestamp / duration / error) — useful for "is reconciliation stuck?" checks. Config-parse failures don't show up here or on `/debug/vars/errors` — check the controller logs and `kubectl get htplcfg … -o yaml` status. |

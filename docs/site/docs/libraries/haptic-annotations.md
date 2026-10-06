@@ -8,6 +8,8 @@ For annotations from another controller, use its [compatibility library](../anno
 
 Put annotations under `metadata.annotations` and quote their values as strings.
 For a complete manifest and apply steps, see [using annotations](../annotations.md).
+An annotation that fails rendering causes its resource change to be rejected;
+[independent valid updates continue](../operations/input-isolation.md).
 
 <a id="overview"></a>
 
@@ -439,7 +441,7 @@ invalid value already exists in the cluster, handling depends on the feature:
 |---------|-------------------------|
 | Redirect, CORS, or other values reported with `InvalidAnnotationValue` or `InvalidAnnotation` | Skip the invalid feature on that Ingress; the Event names the setting and effect. |
 | A WAF policy that can't be resolved or compiled | Return `503` on selecting routes and emit a policy Warning Event; see [WAF troubleshooting](../operations/waf-policies.md#diagnose-a-rejected-policy). |
-| Values that prevent valid configuration, such as an unsupported compression algorithm | Reject the render and retain the previous configuration. Fix the named annotation to restore updates. |
+| Values that prevent valid configuration, such as an unsupported compression algorithm | Hold that resource at its last validated revision while independent updates continue. See [rejected resource changes](../operations/input-isolation.md). |
 
 Inspect Events to find the affected resource and setting:
 

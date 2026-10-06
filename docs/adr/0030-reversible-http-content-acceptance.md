@@ -4,6 +4,10 @@
 
 Accepted 2026-10-06 (issue #289). Reverses the rejection of option 2 in #276.
 
+[ADR-0032](0032-watched-input-isolation.md) adds synchronous validation before
+watched inputs advance and isolates rejected revisions. HTTP proposals use that
+accepted input view; the content revocation rules below remain in force.
+
 ## Context
 
 `http.Fetch` content becomes the store's *accepted* version only after a render

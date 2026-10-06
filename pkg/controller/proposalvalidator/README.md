@@ -6,8 +6,15 @@ Validates hypothetical configuration changes by rendering live stores with tempo
 
 | Caller | Entry point | Failure policy |
 |--------|-------------|----------------|
-| Admission webhook | `Service.ValidateSyncWithAdmissionSubject` | May admit unchanged invalid output after an exact comparison with the live baseline |
+| Admission webhook | `Service.ValidateSyncWithAdmissionSubject` | Checks observed inputs, then retries with only exact rejected revisions withheld |
 | Background HTTP refresh | `Component` handling `ProposalValidationRequestedEvent` | Rejects invalid proposed output, including output identical to an invalid baseline |
+
+The observed-input path retains its exact unchanged-output comparison. The
+isolated-input fallback must produce valid output; it never uses that exception.
+`ObservedStoreProvider` keeps admission snapshots in the reconciliation revision
+family. `AdmissionStoreProvider` preserves all observed changes except exact
+rejected revisions; `AcceptedStoreProvider` supplies validated inputs for HTTP
+content proposals.
 
 Cancellation and unavailable published files reject admission. Neither can use the unchanged-invalid exception. `CurrentFilesProvider` supplies one snapshot per decision, shared by the proposed and baseline renders.
 

@@ -31,15 +31,19 @@ import (
 )
 
 const renderPhase = "render"
+const setupPhase = "setup"
 
 // Service validates proposed changes against the current stores.
 type Service struct {
-	pipeline             *pipeline.Pipeline
-	baseStore            stores.StoreProvider
-	freshStoreProvider   func(context.Context) (stores.StoreProvider, error)
-	refreshSlot          chan struct{}
-	currentFilesProvider func() (map[string]string, error)
-	logger               *slog.Logger
+	pipeline               *pipeline.Pipeline
+	baseStore              stores.StoreProvider
+	freshStoreProvider     func(context.Context) (stores.StoreProvider, error)
+	acceptedStoreProvider  func() (stores.StoreProvider, bool)
+	admissionStoreProvider func(context.Context, stores.StoreProvider) (stores.StoreProvider, bool, error)
+	observedStoreProvider  func(context.Context, stores.StoreProvider) (stores.StoreProvider, error)
+	refreshSlot            chan struct{}
+	currentFilesProvider   func() (map[string]string, error)
+	logger                 *slog.Logger
 }
 
 // ServiceConfig supplies the validation pipeline and its inputs.
@@ -48,6 +52,12 @@ type ServiceConfig struct {
 	BaseStoreProvider stores.StoreProvider
 	// FreshStoreProvider supplies API-backed inputs when a cached render rejects admission.
 	FreshStoreProvider func(context.Context) (stores.StoreProvider, error)
+	// AcceptedStoreProvider supplies inputs that passed complete output validation.
+	AcceptedStoreProvider func() (stores.StoreProvider, bool)
+	// AdmissionStoreProvider excludes only rejected revisions from observed inputs.
+	AdmissionStoreProvider func(context.Context, stores.StoreProvider) (stores.StoreProvider, bool, error)
+	// ObservedStoreProvider preserves the reconciliation input revision family.
+	ObservedStoreProvider func(context.Context, stores.StoreProvider) (stores.StoreProvider, error)
 	// CurrentFilesProvider pins one published baseline across both renders.
 	CurrentFilesProvider func() (map[string]string, error)
 	Logger               *slog.Logger
@@ -60,12 +70,15 @@ func NewService(cfg *ServiceConfig) *Service {
 		logger = slog.Default()
 	}
 	return &Service{
-		pipeline:             cfg.Pipeline,
-		baseStore:            cfg.BaseStoreProvider,
-		freshStoreProvider:   cfg.FreshStoreProvider,
-		refreshSlot:          make(chan struct{}, 1),
-		currentFilesProvider: cfg.CurrentFilesProvider,
-		logger:               logger.With("component", ComponentName),
+		pipeline:               cfg.Pipeline,
+		baseStore:              cfg.BaseStoreProvider,
+		freshStoreProvider:     cfg.FreshStoreProvider,
+		acceptedStoreProvider:  cfg.AcceptedStoreProvider,
+		admissionStoreProvider: cfg.AdmissionStoreProvider,
+		observedStoreProvider:  cfg.ObservedStoreProvider,
+		refreshSlot:            make(chan struct{}, 1),
+		currentFilesProvider:   cfg.CurrentFilesProvider,
+		logger:                 logger.With("component", ComponentName),
 	}
 }
 
@@ -75,9 +88,15 @@ func (c *Service) validateProposal(ctx context.Context, overlays map[string]*sto
 	if httpOverlay != nil {
 		validationCtx = validationCtx.WithHTTPOverlay(httpOverlay)
 	}
-	overlayProvider := stores.NewOverlayStoreProvider(c.baseStore, validationCtx)
+	base := c.baseStore
+	if c.acceptedStoreProvider != nil {
+		if accepted, ready := c.acceptedStoreProvider(); ready {
+			base = accepted
+		}
+	}
+	overlayProvider := stores.NewOverlayStoreProvider(base, validationCtx)
 	if err := overlayProvider.Validate(); err != nil {
-		return proposalFailure("setup", err), err
+		return proposalFailure(setupPhase, err), err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, validation.DefaultValidationTimeout)
@@ -149,13 +168,21 @@ func (c *Service) validateSync(ctx context.Context, overlays map[string]*stores.
 	validationCtx := stores.NewValidationContext(overlays)
 
 	// Create OverlayStoreProvider that applies K8s overlays
-	overlayProvider := stores.NewOverlayStoreProvider(c.baseStore, validationCtx)
+	base := c.baseStore
+	if c.observedStoreProvider != nil {
+		projected, err := c.observedStoreProvider(ctx, base)
+		if err != nil {
+			return nil, proposalFailure(renderPhase, err)
+		}
+		base = projected
+	}
+	overlayProvider := stores.NewOverlayStoreProvider(base, validationCtx)
 
 	// Validate overlays reference valid stores
 	if err := overlayProvider.Validate(); err != nil {
 		return nil, &validation.ValidationResult{
 			Valid:      false,
-			Phase:      "setup",
+			Phase:      setupPhase,
 			Error:      err,
 			DurationMs: time.Since(startTime).Milliseconds(),
 		}

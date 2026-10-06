@@ -5,6 +5,10 @@ Enable only the compatibility libraries you need and check each library's limits
 before moving traffic. The [migration guide](migrating.md) covers the cutover;
 for new configuration, use [native annotations](libraries/haptic-annotations.md).
 
+An annotation that fails rendering causes its resource change to be rejected.
+Independent valid updates can continue; see
+[Rejected resource changes](operations/input-isolation.md).
+
 ## Supported features
 
 Compare the vendor libraries below. For native annotations and additional
