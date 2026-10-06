@@ -402,14 +402,14 @@ templateSnippets:
                 " hdr_" + replace(header, "-", "_") + "=req.hdr(" + header + ")")
             }
           }
-          var timeout = dig_string(rule, "", "timeouts", "request")
-          if timeout == "" || timeout == "0s" {
-            timeout = dig_string(rule, "", "timeouts", "backendRequest")
-          }
-          if timeout != "" && timeout != "0s" {
+          var timeout = dig_string(rule, "", "timeouts", "backendRequest")
+          if timeout != "" {
             var duration, durationErr = parseDuration(timeout)
             if durationErr != nil {
               _ = WebhookRejectOrWarn(route, "InvalidTimeout", "Gateway route " + namespace + "/" + name + " sets timeout '" + timeout + "', which is not a duration; the timeout is not applied. Use a value like 30s or 1m30s.")
+            } else if duration == 0 {
+              // set-timeout server 0 inherits the default; see docs/site/docs/libraries/gateway.md#timeout-limits.
+              publishLine("timeout", routeID + " 2147483647")
             } else if toint(duration.Milliseconds()) <= 0 {
               _ = WebhookRejectOrWarn(route, "InvalidTimeout", "Gateway route " + namespace + "/" + name + " sets timeout '" + timeout + "', which is under a millisecond; the timeout is not applied.")
             } else {
@@ -540,7 +540,7 @@ templateSnippets:
             "resPath": RegisterGatewayRouteMap("gw-reshdr.map", "# <rule_id>[|<backend>]|set|add|del|<header> -> URL-encoded value", "res"),
             "redirectPath": RegisterGatewayRouteMap("gw-redirect.map", "# <rule_id>[|<backend>] -> code|scheme|host|port|pathmode|pfxlen|path", "redirect"),
             "urlrewritePath": RegisterGatewayRouteMap("gw-urlrewrite.map", "# <rule_id>[|<backend>] -> host|pathmode|pfxlen|path", "urlrewrite"),
-            "timeoutPath": RegisterGatewayRouteMap("gw-timeout.map", "# <rule_id> -> backend request timeout in ms", "timeout"),
+            "timeoutPath": RegisterGatewayRouteMap("gw-timeout.map", "# <rule_id> -> server inactivity timeout in ms", "timeout"),
             "mirrorPath": RegisterGatewayRouteMap("gw-mirror.map", "# <rule_id> -> scheme|host:port|timeout_ms|retries;... (URL-encoded)", "mirror"),
             "mirrorPctPath": RegisterGatewayRouteMap("gw-mirror-pct.map", "# <rule_id> -> mirror sampling percentage", "mirror-pct"),
             "extauthErrorPath": RegisterGatewayRouteMap("gw-extauth-errors.map", "# <rule_id> -> 1 when its ExternalAuth filter cannot be enforced", "extauth-error"),

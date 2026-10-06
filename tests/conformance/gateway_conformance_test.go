@@ -166,14 +166,10 @@ func TestGatewayAPIConformance(t *testing.T) {
 	require.NoError(t, gatewayv1.Install(c.Scheme()))
 	require.NoError(t, apiextensionsv1.AddToScheme(c.Scheme()))
 
-	// Declare every standard-channel conformance feature except those that
-	// the chart fundamentally cannot implement without becoming a different
-	// product. The directive (no undeclared features) forbids strategic
-	// under-declaration, but a Gateway-only ingress controller cannot
-	// satisfy mesh, UDP, or request-mirror tests without architectural
-	// changes that don't fit haptic's scope. Each exclusion has a concrete
-	// upstream-capability reason.
+	// Exclude only documented dataplane or architecture gaps from standard features.
 	excluded := sets.New[features.FeatureName](
+		// HAProxy lacks an overall request deadline; see docs/site/docs/libraries/gateway.md#timeout-limits.
+		features.SupportHTTPRouteRequestTimeout,
 		// Mesh / GAMMA features are permanently out of scope for haptic.
 		// The conformance tests exercise pod-to-pod east-west traffic
 		// (`echo.ConnectToApp` / `ConnectToAppInNamespace`) that never
