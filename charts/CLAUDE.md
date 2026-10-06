@@ -2,6 +2,9 @@
 
 Development context for working with the HAProxy Template Ingress Controller Helm chart.
 
+**No Lua-based features or workarounds, including optional or per-thread scripts.**
+Use native HAProxy capabilities; see [the project-wide rule](../CLAUDE.md#no-lua-features-rule-4).
+
 ## Upgrades: no can-kicking (RULE)
 
 **A fix for an upgrade path must be exercised by a test that keeps running after

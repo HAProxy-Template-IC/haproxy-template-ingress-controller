@@ -142,6 +142,25 @@ Kernighan & Pike *The Practice of Programming* ch.1,
 [Linux kernel ch.8](https://www.kernel.org/doc/html/latest/process/coding-style.html),
 [go.dev/doc/comment](https://go.dev/doc/comment).
 
+## No Lua features (RULE #4)
+
+**Never implement or propose Lua-based HAPTIC features or workarounds.** Lua's
+high-load performance costs are incompatible with this project's architecture.
+This rule applies to all agents and subagents, including prototypes, optional
+features, per-thread scripts, generated or embedded Lua, runtime actions, services,
+fetches, converters, and HAProxy patches intended to enable a Lua workaround.
+
+Use native HAProxy capabilities. If they cannot satisfy a requirement, report the
+capability gap and investigate a native solution. Passing tests or benchmarks,
+release pressure, and upstream limitations do not authorize an exception. Carry
+this constraint into delegated tasks; never weaken validation to hide the gap.
+
+`make lint` checks for Lua scripts and runtime hooks. Its three existing upstream
+mailers fixtures are pinned by content hash solely to preserve compatibility
+coverage; they are not permission to build a feature on Lua. Generic upstream
+schemas and operator-file transport remain generic. Do not expand exemptions or
+disable the check to introduce Lua.
+
 ## Coding Standards
 
 ### Naming

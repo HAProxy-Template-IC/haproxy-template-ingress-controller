@@ -7,6 +7,9 @@ makes from it, the agent that executes it, and the `haproxy -c` runner.
 **The contract, end to end**: `docs/site/docs/development/agent.md`
 **Why**: `docs/adr/0022-haptic-agent.md`
 
+**No Lua-based features or workarounds, including HAProxy patches to enable them.**
+Use native HAProxy capabilities; see [the project-wide rule](../../CLAUDE.md#no-lua-features-rule-4).
+
 ## When to Work Here
 
 Modify this package when:

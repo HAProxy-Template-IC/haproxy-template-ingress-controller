@@ -65,6 +65,8 @@ lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	@$(GO) mod tidy -diff || { echo "go.mod/go.sum are not tidy, so the next snapshot or release publish fails its source-hash check. Run 'go mod tidy' and commit the result."; exit 1; }
 	@echo "Checking test inventory (every test must run somewhere)..."
 	./scripts/check-test-inventory.sh
+	@echo "Checking the no-Lua feature policy..."
+	$(MAKE) check-no-lua
 	@echo "Checking template libraries parse as YAML..."
 	./scripts/check-library-yaml.sh
 	@echo "Checking no comment fuses the lines around it..."
@@ -317,6 +319,11 @@ test-ci-rules: ## Check that CI selects chart inputs and excludes chart prose
 	python3 -m unittest scripts/tests/test_ci_chart_rules.py
 
 .PHONY: test-admission-readiness
+.PHONY: check-no-lua
+check-no-lua: ## Reject Lua scripts and runtime hooks in HAPTIC
+	python3 -m unittest scripts/tests/test_check_no_lua.py
+	python3 scripts/check-no-lua.py
+
 test-admission-readiness: ## Verify admission readiness polling fails closed
 	python3 -m unittest scripts/tests/test_admission_readiness.py
 
@@ -327,6 +334,7 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	bash scripts/tests/test_check_test_inventory.sh
 	bash scripts/tests/test_cluster_node_image.sh
 	python3 -m unittest \
+		scripts/tests/test_check_no_lua.py \
 		scripts/tests/test_gitops_lifecycle.py \
 		scripts/tests/test_upgrade_traffic.py \
 		scripts/tests/test_chart_upgrade_baselines.py \
