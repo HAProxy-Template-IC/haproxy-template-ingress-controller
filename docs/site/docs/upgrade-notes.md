@@ -96,7 +96,29 @@ headers to it with `-` in their names.
 gets an `InvalidAuthHeader` Warning Event, and the admission webhook denies new
 or changed Ingresses that list one.
 
-### 4. Upgrade the release
+### 4. Review Gateway route timeouts
+
+HAPTIC now ignores `rules[].timeouts.request` and uses only `backendRequest` for
+HAProxy's server inactivity timeout, matching HAProxy Unified Gateway's field
+mapping. Previously, `request` took precedence over `backendRequest`.
+
+If you used `request: 30s` to set the server timeout, move that value to
+`backendRequest` in the route rule:
+
+```yaml
+timeouts:
+  backendRequest: 30s
+```
+
+If both fields are set, the existing `backendRequest` value now applies. If
+`backendRequest` is absent, the backend default applies. A zero `backendRequest`
+now uses HAProxy's maximum timeout (about 24.9 days) instead of the backend
+default.
+
+These settings limit inactivity. HAPTIC doesn't enforce an overall request
+deadline across retries; see [Timeout limits](libraries/gateway.md#timeout-limits).
+
+### 5. Upgrade the release
 
 Pass the checked values file. `--reset-values` starts from the new chart's
 defaults, so the release doesn't carry rejected keys forward:

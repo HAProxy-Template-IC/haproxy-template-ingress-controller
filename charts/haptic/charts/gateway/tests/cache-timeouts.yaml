@@ -26,8 +26,8 @@ validationTests:
                 type: PathPrefix
                 value: /
             timeouts:
-              request: 2h
-              backendRequest: 5s
+              request: 3h
+              backendRequest: 2h
             backendRefs:
             - name: echo
               port: 80

@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Changed
 
+- **BREAKING:** Gateway route timeouts follow HAProxy Unified Gateway: `request` is ignored and only `backendRequest` sets server inactivity; zero uses HAProxy's maximum timeout. Overall request deadlines remain unsupported.
 - **BREAKING:** The chart ships a strict `values.schema.json`: Helm rejects unknown keys and wrongly typed values on install, upgrade, and template instead of ignoring them. [Check your values](./docs/site/docs/upgrade-notes.md#upgrading-to-04) before upgrading.
 - **BREAKING:** `haproxy-haptic.org/auth-headers-request` and `haproxy-ingress.github.io/auth-headers-request` no longer forward header names containing `_`: admission rejects them and an existing Ingress gets an `InvalidAuthHeader` Warning Event. [Rename them](./docs/site/docs/upgrade-notes.md#3-check-auth-headers-request-header-names) before upgrading.
 

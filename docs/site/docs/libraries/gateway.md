@@ -789,11 +789,29 @@ also enables their experimental-channel validation fixtures.
 
 | Field | Behavior |
 | --- | --- |
-| HTTPRoute/GRPCRoute `rules[].timeouts.request` | Sets HAProxy's server timeout for the selected rule; falls back to `backendRequest` when absent or `0s`. This is one server timeout, not two independent deadlines. |
+| HTTPRoute/GRPCRoute `rules[].timeouts.request` | Ignored. HAProxy has no native overall request deadline. See [Timeout limits](#timeout-limits). |
+| HTTPRoute/GRPCRoute `rules[].timeouts.backendRequest` | Sets HAProxy's server inactivity timeout for the selected rule. An absent value keeps the backend default; zero uses the maximum timeout. See [Timeout limits](#timeout-limits). |
 | HTTPRoute `rules[].retry.attempts` | Sets the retry count for the rule's backends, including h2c backends; `0` disables retries. The default is `3`. |
 | HTTPRoute `rules[].retry.codes` | Retries on the listed statuses as well as on connection failures, empty responses, and response timeouts. Without `codes`, the statuses are 500, 502, 503, and 504. |
 | HTTPRoute `rules[].retry.backoff` | Not applied: HAProxy retries without waiting. See [Retry limits](#retry-limits). |
 | HTTPRoute/GRPCRoute `rules[].sessionPersistence` | `type: Cookie` keeps a client on one pod through a cookie, `type: Header` through a response header the client sends back. `absoluteTimeout`, and `idleTimeout` on schemas that serve it, end the session. |
+
+#### Timeout limits
+
+HAPTIC follows [HAProxy Unified Gateway's timeout mapping](https://github.com/haproxytech/haproxy-unified-gateway/blob/a115676aa573761ced20b688cb5caef585d83b91/k8s/gate/haproxy/backends.go#L656-L665):
+only `backendRequest` configures HAProxy's server timeout. Setting `request`
+alone leaves the backend default unchanged; setting both fields applies only
+`backendRequest`.
+
+This is an inactivity timeout: traffic restarts the timer, and retries can make
+the total request take longer. HAPTIC doesn't enforce the Gateway API's overall
+request deadline or an absolute deadline for each backend attempt. Applications
+that need a total deadline must enforce it themselves.
+
+A zero `backendRequest` value uses HAProxy's maximum timeout of 2,147,483,647 ms
+(about 24.9 days). HAProxy's per-request `set-timeout server 0` restores the backend
+default instead of disabling the timer. Other connection and client timeouts
+still apply.
 
 #### Retry limits
 
@@ -806,7 +824,7 @@ also enables their experimental-channel validation fixtures.
   to the same server after a failed connection, and retries everything else
   immediately. A route that sets a nonzero `backoff` gets a
   `RetryBackoffUnsupported` Warning event.
-- `timeouts.request` bounds each attempt, not all attempts together.
+- Retries have no overall deadline; `timeouts.backendRequest` limits server inactivity.
 - HAProxy retries a request on a status code, an empty response, or a response
   timeout only when the request fits in one buffer (`tune.bufsize`) and its
   method is idempotent. Set

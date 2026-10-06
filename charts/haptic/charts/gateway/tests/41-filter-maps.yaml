@@ -85,7 +85,7 @@ validationTests:
   test-gateway-timeout-map:
     requires: [httproutes]
     requiresFields: [httproutes.spec.rules.timeouts]
-    description: A rule timeout becomes milliseconds in gw-timeout.map, read by one set-timeout line per backend. `request` wins over `backendRequest` — HAProxy has one server timeout and the wider bound is the one the client sees.
+    description: Only backendRequest sets the server inactivity timeout; zero uses HAProxy's maximum.
     fixtures:
       httproutes:
         - apiVersion: gateway.networking.k8s.io/v1
@@ -97,9 +97,31 @@ validationTests:
               - matches: [{path: {type: PathPrefix, value: /slow}}]
                 timeouts: {request: 1m30s, backendRequest: 5s}
                 backendRefs: [{name: echo, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /backend-only}}]
+                timeouts: {backendRequest: 1m30s}
+                backendRefs: [{name: echo, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /request-only}}]
+                timeouts: {request: 10s}
+                backendRefs: [{name: echo, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /default}}]
+                backendRefs: [{name: echo, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /zero}}]
+                timeouts: {request: 10s, backendRequest: 0s}
+                backendRefs: [{name: echo, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /zero-ms}}]
+                timeouts: {backendRequest: 0ms}
+                backendRefs: [{name: echo, port: 80}]
+              - matches: [{path: {type: PathPrefix, value: /request-zero}}]
+                timeouts: {request: 0s, backendRequest: 750ms}
+                backendRefs: [{name: echo, port: 80}]
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:gw-timeout.map, pattern: 'h_default_to-route_0 90000'}
+      - {type: contains, target: map:gw-timeout.map, pattern: '(?m)^h_default_to-route_0 5000$'}
+      - {type: contains, target: map:gw-timeout.map, pattern: '(?m)^h_default_to-route_1 90000$'}
+      - {type: not_contains, target: map:gw-timeout.map, pattern: 'h_default_to-route_[23] '}
+      - {type: contains, target: map:gw-timeout.map, pattern: '(?m)^h_default_to-route_4 2147483647$'}
+      - {type: contains, target: map:gw-timeout.map, pattern: '(?m)^h_default_to-route_5 2147483647$'}
+      - {type: contains, target: map:gw-timeout.map, pattern: '(?m)^h_default_to-route_6 750$'}
       - {type: contains, target: haproxy.cfg, pattern: 'http-request set-timeout server var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-timeout\.map\) if \{ var\(txn\.gw_rule_id\),map_str_int\([^)]*gw-timeout\.map\) -m found \}'}
       # One line per backend, and its value never appears in the config.
       - {type: not_contains, target: haproxy.cfg, pattern: 'set-timeout server 1m30s'}
@@ -267,7 +289,7 @@ validationTests:
   test-gateway-timeout-rejected:
     requires: [httproutes]
     requiresFields: [httproutes.spec.rules.timeouts]
-    description: A rule timeout that is not a duration is rejected at render time; the map value feeds set-timeout, which cannot report a parse error of its own.
+    description: An invalid backendRequest duration is rejected before it reaches the timeout map.
     extraContext: {renderMode: admission}
     fixtures:
       httproutes:
@@ -278,7 +300,7 @@ validationTests:
             hostnames: [bt.example.com]
             rules:
               - matches: [{path: {type: PathPrefix, value: /}}]
-                timeouts: {request: "soon"}
+                timeouts: {backendRequest: "soon"}
                 backendRefs: [{name: echo, port: 80}]
     assertions:
       - {type: contains, target: rendering_error, pattern: "which is not a duration"}
