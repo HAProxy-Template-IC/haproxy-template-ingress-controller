@@ -455,13 +455,7 @@ func TestIngressAnnotations(t *testing.T) {
 				"haproxy-ingress.github.io/auth-headers-succeed": "X-Auth-User",
 				"haproxy-ingress.github.io/auth-signin":          "https://login.example.com/oauth/start",
 			},
-			// auth-headers-request lists headers (X-Forwarded-Method etc)
-			// that aren't in the chart's hardcoded SPOE message-body
-			// capture set, so the per-route forward_headers narrowing in
-			// the plugin can't actually receive them. The full plumbing
-			// is exercised by TestIngressBackendMTLSHaproxyIngress and
-			// the auth-headers-fail test; here we only assert the chart
-			// renders the annotation set without rejecting at admission.
+			// TestIngressAuthHeadersRequest covers forwarding.
 			extraAssert: assertWebhookAdmittedOnly,
 		},
 		{

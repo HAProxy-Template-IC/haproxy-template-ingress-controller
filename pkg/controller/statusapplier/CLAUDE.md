@@ -141,6 +141,14 @@ still matches, applies once more at the current version.
 The cache is cleared on `BecameLeaderEvent`; a failed exact-lineage apply never
 advances its entry, so the same source revision retries instead of skipping.
 
+The cache also retains 16 superseded write identities per resource. An incoming
+patch that echoes both the revision and payload of a superseded write is skipped
+only within the latest write's phase and outside the latest/base revisions.
+Otherwise overlapping renders can replay alternating transition timestamps and
+keep the API busy writing unchanged conditions. Phase recovery and changes from
+the current base still apply, as do changed payloads and unknown revisions.
+Resource versions stay opaque.
+
 ## Tests
 
 Patterns:

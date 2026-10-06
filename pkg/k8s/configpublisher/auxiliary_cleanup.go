@@ -114,7 +114,8 @@ func deleteOwnedResource(
 		}
 		refresh = true
 		// Status writes can race cleanup; a retry must not adopt a replacement or a new owner.
-		if current.GetUID() != listed.GetUID() || !ownedByRuntimeConfig(current, runtimeConfig) {
+		if current.GetUID() != listed.GetUID() || !ownedByRuntimeConfig(current, runtimeConfig) ||
+			current.GetAnnotations()[auxiliaryClaimAnnotationKey] != listed.GetAnnotations()[auxiliaryClaimAnnotationKey] {
 			return nil
 		}
 		if err := publicationCurrent(ctx); err != nil {

@@ -292,24 +292,6 @@ func TestPublisher_GenerateCRTListFileName(t *testing.T) {
 	}
 }
 
-func TestResolveAuxiliaryResourceNames(t *testing.T) {
-	items := []string{"error.http", "error.lua", strings.Repeat("A", 300) + ".txt"}
-	names := resolveAuxiliaryResourceNames(
-		items,
-		"-invalid",
-		func(item string) string { return sanitizeResourceName("haproxy-file-", item) },
-		func(item string) string { return item },
-	)
-
-	require.Len(t, names, len(items))
-	assert.NotEqual(t, names[0], names[1])
-	for _, name := range names {
-		assert.Empty(t, validation.IsDNS1123Subdomain(name), name)
-		assert.LessOrEqual(t, len(name), validation.DNS1123SubdomainMaxLength)
-		assert.True(t, strings.HasSuffix(name, "-invalid"))
-	}
-}
-
 // ---------------------------------------------------------------------------
 // calculateChecksum
 // ---------------------------------------------------------------------------

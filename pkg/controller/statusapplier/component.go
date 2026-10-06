@@ -653,6 +653,7 @@ type statusCacheEntry struct {
 	latestResourceVersion string
 	lastPhase             string
 	lastPayload           []byte
+	superseded            []statusWrite
 }
 
 // applyOnePatch applies one phase variant, using exact lineage to skip when available.
@@ -853,12 +854,14 @@ func (c *Component) cacheStatusApplySuccess(
 			"entries", len(c.statusCache))
 		c.statusCache = make(map[string]statusCacheEntry, statusCacheMaxEntries/4)
 	}
+	previous := c.statusCache[cacheKey]
 	c.statusCache[cacheKey] = statusCacheEntry{
 		uid:                   patch.UID,
 		baseResourceVersion:   patch.ResourceVersion,
 		latestResourceVersion: appliedResourceVersion,
 		lastPhase:             phase,
 		lastPayload:           bytes.Clone(payload),
+		superseded:            previous.supersededWrites(patch.UID, appliedResourceVersion),
 	}
 }
 
@@ -884,7 +887,9 @@ func (c *Component) statusApplyDecision(
 		// content change re-executes the render with a new source version.
 		return entry.latestResourceVersion, entry.lastPhase == phase && bytes.Equal(entry.lastPayload, payload)
 	default:
-		delete(c.statusCache, cacheKey)
+		if entry.lastPhase == phase && entry.isSupersededEcho(sourceResourceVersion, phase, payload) {
+			return entry.latestResourceVersion, true
+		}
 		return sourceResourceVersion, false
 	}
 }

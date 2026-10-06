@@ -216,39 +216,28 @@ func TestPublishConfig_StaleCleanupCannotDeleteNewPublication(t *testing.T) {
 
 func TestPublishConfig_StaleCleanupCannotDeleteNewNameForSameAuxiliarySet(t *testing.T) {
 	ctx, _, crdClient, publisher := newTestPublisher(t)
-	foreign := basePublishRequest()
-	foreign.TemplateConfigName = "foreign-config"
-	foreign.TemplateConfigUID = types.UID("foreign-uid")
-	foreign.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
-		Path: "/maps/host.map", Content: "ours",
-	}}}
-	foreignResult, err := publisher.PublishConfig(ctx, &foreign)
-	require.NoError(t, err)
-
 	req := basePublishRequest()
-	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{
-		Path: "/maps/host.map", Content: "ours",
-	}}}
+	req.AuxiliaryFiles = &AuxiliaryFiles{MapFiles: []auxiliaryfiles.MapFile{{Path: "/maps/host.map", Content: "ours"}}}
 	staleResult, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
-	require.Len(t, staleResult.MapFileNames, 1)
-	assert.NotEqual(t, foreignResult.MapFileNames[0], staleResult.MapFileNames[0])
-	staleRuntimeConfig, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").
-		Get(ctx, staleResult.RuntimeConfigName, metav1.GetOptions{})
+	configs := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default")
+	staleRuntimeConfig, err := configs.Get(ctx, staleResult.RuntimeConfigName, metav1.GetOptions{})
 	require.NoError(t, err)
-
-	err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
-		Delete(ctx, foreignResult.MapFileNames[0], metav1.DeleteOptions{})
+	maps := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default")
+	replacement, err := maps.Get(ctx, staleResult.MapFileNames[0], metav1.GetOptions{})
 	require.NoError(t, err)
-	currentResult, err := publisher.PublishConfig(ctx, &req)
+	replacement.Name = "replacement-" + replacement.Name
+	replacement.ResourceVersion = ""
+	_, err = maps.Create(ctx, replacement, metav1.CreateOptions{})
 	require.NoError(t, err)
-	require.Len(t, currentResult.MapFileNames, 1)
-	assert.Equal(t, foreignResult.MapFileNames[0], currentResult.MapFileNames[0])
+	current := staleRuntimeConfig.DeepCopy()
+	current.Status.AuxiliaryFiles.MapFiles[0].Name = replacement.Name
+	_, err = configs.UpdateStatus(ctx, current, metav1.UpdateOptions{})
+	require.NoError(t, err)
 
 	err = publisher.pruneAuxiliaryFiles(ctx, staleRuntimeConfig, staleResult)
 	require.ErrorContains(t, err, "no longer owns the committed auxiliary references")
-	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
-		Get(ctx, currentResult.MapFileNames[0], metav1.GetOptions{})
+	_, err = maps.Get(ctx, replacement.Name, metav1.GetOptions{})
 	require.NoError(t, err)
 }
 

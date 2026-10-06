@@ -101,15 +101,6 @@ var metalLBPoolGVR = schema.GroupVersionResource{
 	Resource: "ipaddresspools",
 }
 
-// experimentalFeatures are the experimental-channel features the chart
-// implements. Their fields exist only in the experimental CRDs, so they are
-// declared only on a cluster serving that channel.
-// HTTPRouteRetryConnectionError stays out: HAProxy answers a backend reset
-// with 502, the test accepts only 500 or 503.
-var experimentalFeatures = []features.FeatureName{
-	features.SupportHTTPRouteRetry,
-}
-
 func servesExperimentalChannel(ctx context.Context, c client.Client) (bool, error) {
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	if err := c.Get(ctx, client.ObjectKey{Name: "httproutes.gateway.networking.k8s.io"}, crd); err != nil {
@@ -208,7 +199,9 @@ func TestGatewayAPIConformance(t *testing.T) {
 	experimental, err := servesExperimentalChannel(t.Context(), c)
 	require.NoError(t, err)
 	if experimental {
-		supported.Insert(experimentalFeatures...)
+		retryFeature, err := retryCodesFeature(features.AllFeatures.UnsortedList())
+		require.NoError(t, err)
+		supported.Insert(retryFeature)
 	}
 
 	// Upstream defaults are sized for "any compliant implementation,

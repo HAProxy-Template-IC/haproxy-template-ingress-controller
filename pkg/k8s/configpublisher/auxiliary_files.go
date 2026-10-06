@@ -95,14 +95,14 @@ func auxiliaryMetadataEqual(
 //     create paths below use this predicate to actually re-Get and take the update
 //     branch instead of surfacing the AlreadyExists to the caller.
 func retriableWrite(err error) bool {
-	return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
+	return apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err) || apierrors.IsNotFound(err)
 }
 
 // auxResourceOps abstracts one auxiliary resource kind (map file, SSL secret,
 // general file, crt-list file) for createOrUpdateAuxResource. The closures
 // capture the typed client, the precomputed name/spec/labels, and the
 // kind-specific checksum location.
-type auxResourceOps[T interface{ GetName() string }] struct {
+type auxResourceOps[T metav1.Object] struct {
 	// kind names the resource in error messages (e.g. "map file").
 	kind string
 	// get fetches the current object (called inside the retry loop so every
@@ -141,7 +141,7 @@ func (e *auxiliaryResourceOwnershipError) Error() string {
 // createAbsentAuxResource creates the resource when the get returned NotFound,
 // running ops.onCreate on success. A returned AlreadyExists is left unwrapped so
 // retriableWrite re-drives the loop into the update branch.
-func createAbsentAuxResource[T interface{ GetName() string }](ctx context.Context, ops auxResourceOps[T]) (string, error) {
+func createAbsentAuxResource[T metav1.Object](ctx context.Context, ops auxResourceOps[T]) (string, error) {
 	created, err := ops.create(ctx)
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
@@ -160,7 +160,7 @@ func createAbsentAuxResource[T interface{ GetName() string }](ctx context.Contex
 // auxiliary resource: get → create when absent (retrying a lost create race
 // into the update branch) → skip when the desired state is unchanged → update.
 // Returns the name of the resource that ends up holding the desired state.
-func createOrUpdateAuxResource[T interface{ GetName() string }](ctx context.Context, ops auxResourceOps[T]) (string, error) {
+func createOrUpdateAuxResource[T metav1.Object](ctx context.Context, ops auxResourceOps[T]) (string, error) {
 	var resultName string
 	err := retry.OnError(retry.DefaultRetry, retriableWrite, func() error {
 		existing, err := ops.get(ctx)
@@ -171,6 +171,9 @@ func createOrUpdateAuxResource[T interface{ GetName() string }](ctx context.Cont
 			name, createErr := createAbsentAuxResource(ctx, ops)
 			resultName = name
 			return createErr
+		}
+		if existing.GetDeletionTimestamp() != nil {
+			return fmt.Errorf("%s %q is terminating; retry publication after deletion", ops.kind, existing.GetName())
 		}
 		if !ops.managedByOwner(existing) {
 			return &auxiliaryResourceOwnershipError{kind: ops.kind, name: existing.GetName()}
@@ -217,14 +220,18 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 		Compressed: result.compressed,
 	}
 	labels := runtimeConfigLabels(owner)
-	annotations := runtimeConfigAnnotations(owner)
+	annotations := auxiliaryClaimAnnotations(owner, req.auxiliaryClaim)
 	ownerReferences := runtimeConfigOwnerRefs(owner)
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(req.TemplateConfigNamespace)
 
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyMapFile]{
 		kind: "map file",
 		get: func(ctx context.Context) (*haproxyv1alpha1.HAProxyMapFile, error) {
-			return client.Get(ctx, name, metav1.GetOptions{})
+			existing, err := client.Get(ctx, name, metav1.GetOptions{})
+			if err == nil {
+				retainReferencedClaim(existing, annotations, owner, kindMapFile)
+			}
+			return existing, err
 		},
 		create: func(ctx context.Context) (*haproxyv1alpha1.HAProxyMapFile, error) {
 			return client.Create(ctx, &haproxyv1alpha1.HAProxyMapFile{
@@ -280,9 +287,10 @@ func (p *Publisher) createOrUpdateSSLFileSecret(
 	labels := runtimeConfigLabels(owner)
 	labels["haproxy-haptic.org/type"] = fileType
 	ownerReferences := runtimeConfigOwnerRefs(owner)
-	annotations := runtimeConfigAnnotations(owner)
+	annotations := auxiliaryClaimAnnotations(owner, req.auxiliaryClaim)
 	annotations["haproxy-haptic.org/compressed"] = strconv.FormatBool(result.compressed)
 	annotations[AuxiliaryChecksumAnnotationKey] = checksum
+	annotations[AuxiliaryPathAnnotationKey] = filePath
 	data := map[string][]byte{
 		dataKey: []byte(result.content),
 		"path":  []byte(filePath),
@@ -292,7 +300,11 @@ func (p *Publisher) createOrUpdateSSLFileSecret(
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*corev1.Secret]{
 		kind: "secret",
 		get: func(ctx context.Context) (*corev1.Secret, error) {
-			return client.Get(ctx, name, metav1.GetOptions{})
+			existing, err := client.Get(ctx, name, metav1.GetOptions{})
+			if err == nil {
+				retainReferencedClaim(existing, annotations, owner, "Secret")
+			}
+			return existing, err
 		},
 		create: func(ctx context.Context) (*corev1.Secret, error) {
 			return client.Create(ctx, &corev1.Secret{
@@ -343,14 +355,18 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 		CAFile:     generalFile.IsCaFile,
 	}
 	labels := runtimeConfigLabels(owner)
-	annotations := runtimeConfigAnnotations(owner)
+	annotations := auxiliaryClaimAnnotations(owner, req.auxiliaryClaim)
 	ownerReferences := runtimeConfigOwnerRefs(owner)
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(req.TemplateConfigNamespace)
 
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyGeneralFile]{
 		kind: "general file",
 		get: func(ctx context.Context) (*haproxyv1alpha1.HAProxyGeneralFile, error) {
-			return client.Get(ctx, name, metav1.GetOptions{})
+			existing, err := client.Get(ctx, name, metav1.GetOptions{})
+			if err == nil {
+				retainReferencedClaim(existing, annotations, owner, kindGeneralFile)
+			}
+			return existing, err
 		},
 		create: func(ctx context.Context) (*haproxyv1alpha1.HAProxyGeneralFile, error) {
 			return client.Create(ctx, &haproxyv1alpha1.HAProxyGeneralFile{
@@ -400,14 +416,18 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 		Compressed: result.compressed,
 	}
 	labels := runtimeConfigLabels(owner)
-	annotations := runtimeConfigAnnotations(owner)
+	annotations := auxiliaryClaimAnnotations(owner, req.auxiliaryClaim)
 	ownerReferences := runtimeConfigOwnerRefs(owner)
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(req.TemplateConfigNamespace)
 
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyCRTListFile]{
 		kind: "crt-list file",
 		get: func(ctx context.Context) (*haproxyv1alpha1.HAProxyCRTListFile, error) {
-			return client.Get(ctx, name, metav1.GetOptions{})
+			existing, err := client.Get(ctx, name, metav1.GetOptions{})
+			if err == nil {
+				retainReferencedClaim(existing, annotations, owner, kindCRTListFile)
+			}
+			return existing, err
 		},
 		create: func(ctx context.Context) (*haproxyv1alpha1.HAProxyCRTListFile, error) {
 			return client.Create(ctx, &haproxyv1alpha1.HAProxyCRTListFile{

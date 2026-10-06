@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-06
+
+HAPTIC 0.4 adds Gateway external authorization, header-based session persistence,
+and weighted TLS routing. It rejects invalid Helm values, improves controller
+startup at large route counts, and keeps independent routing updates moving when
+a watched resource is invalid or external HTTP content awaits validation.
+
+**Before upgrading:** check your Helm values, rename underscore-containing
+`auth-headers-request` entries, and review Gateway route timeouts. The
+[upgrade notes](./docs/site/docs/upgrade-notes.md#upgrading-to-04) cover each change.
+
 ### Added
 
 - `haptic_http_content_revoked_total` metric and `HTTPContentRevoked` Warning Event: `http.Fetch` content is taken back when HAProxy refuses a configuration containing it.
@@ -17,19 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Controllers use less CPU to validate a configuration before loading it, reducing startup time.
-- The `HAProxyCfg` shows a configuration change in half the time at 800 Ingresses: stale auxiliary files are pruned without re-reading the whole rendered config per deletion, and auxiliary files and their pod status are written in parallel.
+- Publishing a route change reuses unchanged auxiliary-file objects and pod-status entries; changed files are published in parallel, and cleanup avoids repeatedly reading the full configuration.
 - Deploying renders leave new `http.Fetch` content out until its background fetch and validation succeed; a `critical: true` source without accepted content fails the render.
 
 ### Fixed
 
 - Isolate invalid watched resource changes so independent endpoint updates and admission requests can continue through complete configuration validation.
+- Prevent overlapping renders from repeatedly rewriting unchanged status conditions and blocking resource updates.
 - Preserve event correlation for updates triggered by external HTTP content.
 - Lower controller memory at large route counts: a controller restarting with 3,000 Ingresses completes within a 3 GiB limit instead of being `OOMKilled` on every attempt.
 - A restarted controller whose first full render takes longer than the render timeout now finishes it instead of retrying it forever, so it deploys and validates admission requests again.
 - A replica still running its first full render leaves the admission webhook Service while another replica can validate; alone, it denies requests with a message that says why.
 - External auth forwards request headers whose names contain a dash, such as `X-Api-Key` from `auth-headers-request` and the default `X-Forwarded-For`/`-Proto`/`-Host`/`-Uri`; only `Authorization` and `Cookie` reached the auth service before (external-auth plugin v0.6.0).
-- New `http.Fetch` content is accepted while other watched resources keep changing; before, a busy cluster could keep it pending indefinitely and slow every deploy.
-- HTTP refresh responses survive concurrent renders that read the same source; before, those renders could discard a valid response.
+- New `http.Fetch` content is accepted while watched resources change or concurrent renders read the same source; valid responses are no longer discarded or kept pending indefinitely.
 - A failed `critical: true` `http.Fetch` fails the render as documented; before, `{{ http.Fetch(...) }}` rendered the source as empty.
 
 ### Helm chart

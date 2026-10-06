@@ -93,14 +93,6 @@ func runtimeConfigLabelValue(runtimeConfigName string) string {
 	return fmt.Sprintf("haptic-%x", hash[:8])
 }
 
-func auxiliaryResourceSuffix(setID, suffix string) string {
-	setID = strings.TrimPrefix(setID, "sha256:")
-	if setID == "" {
-		return suffix
-	}
-	return "-" + setID + suffix
-}
-
 // sanitizeResourceName strips a file extension from source and applies the
 // supplied character replacements (each pair is old, new), then prepends prefix.
 // The result is a Kubernetes-safe resource name segment.
@@ -135,30 +127,6 @@ func (p *Publisher) generateGeneralFileName(fileName string) string {
 
 func (p *Publisher) generateCRTListFileName(listPath string) string {
 	return sanitizeResourceName("haproxy-crtlist-", path.Base(listPath), "_", "-")
-}
-
-func resolveAuxiliaryResourceNames[T any](
-	items []T,
-	suffix string,
-	baseName func(T) string,
-	identity func(T) string,
-) []string {
-	baseNames := make([]string, len(items))
-	counts := make(map[string]int, len(items))
-	for i, item := range items {
-		baseNames[i] = baseName(item)
-		counts[baseNames[i]]++
-	}
-
-	names := make([]string, len(items))
-	for i, item := range items {
-		if counts[baseNames[i]] == 1 {
-			names[i] = stableResourceName(baseNames[i], suffix, identity(item))
-			continue
-		}
-		names[i] = disambiguatedResourceName(baseNames[i], suffix, identity(item))
-	}
-	return names
 }
 
 func stableResourceName(base, suffix, identity string) string {

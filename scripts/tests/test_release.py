@@ -12,6 +12,26 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_install_jobs_wait_for_runtime_image_preparation(self):
+        config = yaml.safe_load((ROOT / ".gitlab-ci.yml").read_text().replace("!reference", ""))
+        preparation = config["prepare-spoa-release"]
+        manual_rules = [rule for rule in preparation["rules"]
+                        if isinstance(rule, dict) and rule.get("when") == "manual"]
+        self.assertTrue(manual_rules)
+        for rule in manual_rules:
+            self.assertIs(rule["allow_failure"], False)
+        for name, job in config.items():
+            if not isinstance(job, dict):
+                continue
+            needs = {need if isinstance(need, str) else need["job"]: need
+                     for need in job.get("needs", [])}
+            if "build-snapshot" not in needs:
+                continue
+            with self.subTest(job=name):
+                self.assertEqual(needs.get("prepare-spoa-release"), {
+                    "job": "prepare-spoa-release", "optional": True, "artifacts": False,
+                })
+
     def test_release_tag_lookup_distinguishes_present_absent_and_failure(self):
         config = yaml.compose((ROOT / ".gitlab-ci.yml").read_text())
         jobs = {key.value: value for key, value in config.value}

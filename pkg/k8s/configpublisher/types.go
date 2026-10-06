@@ -102,6 +102,7 @@ type PublishRequest struct {
 	CompressionThreshold int64
 
 	auxiliarySetID string
+	auxiliaryClaim string
 }
 
 // PublishResult contains the result of publishing configuration resources.
