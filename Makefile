@@ -1032,19 +1032,21 @@ spoa-bundle-render: ## Render docs/.../spoa-hub.md bundled-versions table from v
 spoa-bundle-check: ## Verify docs/.../spoa-hub.md is in sync with versions-spoa.env (CI guard)
 	@bash scripts/render-spoa-bundle.sh --check
 
-spoa-hub-image: spoa-prep ## Build spoa-hub image locally (single-arch amd64, tagged spoa-hub:dev)
+SPOA_DEV_IMAGE ?= spoa-hub:dev
+
+spoa-hub-image: spoa-prep ## Build the SPOA hub locally (amd64; SPOA_DEV_IMAGE selects the tag)
 	@set -a; . ./versions-spoa.env; set +a; \
 	HUB_TAG="$${SPOA_HUB_VERSION#v}"; \
-	echo "Building spoa-hub:dev (linux/amd64, FROM hub $$HUB_TAG)"; \
+	echo "Building $(SPOA_DEV_IMAGE) (linux/amd64, FROM hub $$HUB_TAG)"; \
 	docker buildx build \
 		--platform linux/amd64 \
 		--build-arg "SPOA_HUB_VERSION=$$HUB_TAG" \
 		--build-context plugins=plugins \
 		--load \
 		-f Dockerfile.spoa-hub \
-		-t spoa-hub:dev \
+		-t "$(SPOA_DEV_IMAGE)" \
 		.
-	@echo "Built spoa-hub:dev"
+	@echo "Built $(SPOA_DEV_IMAGE)"
 
 test-spoa-reload: ## Verify removing Coraza in the chart-selected SPOA image
 	@chart_image="$$(bash scripts/chart-spoa-image.sh)" || exit; \

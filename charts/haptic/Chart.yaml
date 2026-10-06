@@ -6,8 +6,8 @@ type: application
 # restartPolicy: Always), GA in 1.33: they start before HAProxy and are stopped
 # only after it exited, so the drain socket, SPOE and log shipping outlive it.
 kubeVersion: ">=1.33.0-0"
-version: 0.3.0
-appVersion: "0.3.0"
+version: 0.4.0
+appVersion: "0.4.0"
 # Template libraries are packaged as conditional subcharts so a release only
 # carries the source of the libraries it enables — disabled subcharts are
 # pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
@@ -85,7 +85,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.3.0-haproxy3.4
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.4.0-haproxy3.4
       platforms:
         - linux/amd64
         - linux/arm64
@@ -96,12 +96,12 @@ annotations:
         - linux/amd64
         - linux/arm64
     - name: spoa-hub
-      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.3.0
+      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.4.0
       platforms:
         - linux/amd64
         - linux/arm64
     - name: varnish
-      image: registry.gitlab.com/haproxy-haptic/haptic/varnish:0.3.0
+      image: registry.gitlab.com/haproxy-haptic/haptic/varnish:0.4.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -111,40 +111,38 @@ annotations:
 
   # Release highlights; full notes are in the root CHANGELOG.md.
   artifacthub.io/changes: |
+    - kind: fixed
+      description: Invalid watched resources no longer block independent endpoint updates and admission requests
     - kind: added
-      description: HTTP/3 (QUIC) on every TLS-terminating HTTPS listener, on by default; the HAProxy and Gateway Services gain a UDP port
+      description: Gateway HTTPRoute ExternalAuth filters through the SPOA hub HTTP auth plugin
     - kind: added
-      description: nginx-ingress custom-http-errors, proxy-request-buffering, limit-burst-multiplier, affinity-mode and auth-tls-match-cn annotations, plus Warning Events for unknown annotations and oversized response headers
+      description: Gateway header session persistence, permanent cookies, and weighted TLSRoute backends
+    - kind: added
+      description: Governance rules can include or exempt specific namespaces
     - kind: changed
-      description: "BREAKING: rename extraContext timeout_* keys to camelCase and ssl_redirect_default to the boolean sslRedirectDefault; old keys fail the install"
+      description: "BREAKING: Helm rejects unknown or wrongly typed values; check the 0.4 upgrade notes before upgrading"
     - kind: changed
-      description: "BREAKING: hapticHstsMaxAge is replaced by tls.hsts.maxAge, so the haproxy-haptic.org/hsts default max-age drops to one year"
+      description: "BREAKING: Gateway timeouts.request is ignored; backendRequest sets server inactivity, and zero uses the maximum timeout"
+    - kind: changed
+      description: "BREAKING: auth-headers-request rejects header names containing underscores; rename them with dashes"
+    - kind: fixed
+      description: External auth forwards dashed request headers, including X-Api-Key and the default X-Forwarded headers
+    - kind: fixed
+      description: Large controller restarts use less memory and complete their first render even when it exceeds the regular render timeout
+    - kind: fixed
+      description: HTTP content acceptance progresses under resource churn and restores prior content when deployment validation refuses new content
+    - kind: changed
+      description: Auxiliary-file publication reuses unchanged objects and pod-status entries to reduce Kubernetes API writes
+    - kind: fixed
+      description: Gateway retry and session policies apply to their own route rule, with unsupported retry settings reported on the route
     - kind: security
-      description: "BREAKING: basic-auth Secrets accept only bcrypt, SHA-256/SHA-512 crypt and yescrypt hashes by default"
-    - kind: security
-      description: "BREAKING: host alias regexes match the whole hostname and never Gateway listeners, exact aliases must be hostnames, and an older Ingress keeps a contested alias host"
-    - kind: changed
-      description: "BREAKING: validationTest assertions no longer see your extraContext; fixtures also render with it and must pass haproxy -c"
-    - kind: changed
-      description: "BREAKING for Varnish users: the bundled non-root Varnish image needs the IPC_LOCK capability"
-    - kind: removed
-      description: "BREAKING: http.Fetch option delay, the strings_replace function, one-argument trim, and the haptic_events_dropped_total metric"
-    - kind: changed
-      description: Response headers the chart adds are set with http-after-response, so HAProxy-generated error pages carry them too
-    - kind: fixed
-      description: A configuration that keeps failing to load no longer denies admission cluster-wide; controllers probe readiness on /readyz and liveness on /livez
-    - kind: fixed
-      description: nginx-ingress use-regex and rewrite-target match regex paths case-insensitively and substitute capture groups
-    - kind: fixed
-      description: Leader lease released on shutdown during a configuration hand-over, and the first render after startup waits for every watched resource
-    - kind: fixed
-      description: Endpoint changes reach HAProxy without 503s during rolling restarts, and renders scale linearly with the number of watched resources
+      description: The pre-rollout validation values Secret omits generated agent credentials and the webhook private key
   artifacthub.io/containsSecurityUpdates: "true"
 
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://haproxy-haptic.org/docs/0.3.0/
+      url: https://haproxy-haptic.org/docs/0.4.0/
     - name: Issue Tracker
       url: https://gitlab.com/haproxy-haptic/haptic/-/issues
 

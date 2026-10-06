@@ -50,6 +50,12 @@ data:
         location /deny {
             return 401 "Unauthorized\n";
         }
+        location /require-api-key {
+            if ($http_x_api_key = "e2e-key") {
+                return 200 "OK\n";
+            }
+            return 401 "missing X-Api-Key\n";
+        }
         # /deny-with-fail-headers: 401 plus WWW-Authenticate +
         # X-Error-Reason. Used by the auth-headers-fail E2E test —
         # plugin v0.3.0+ extracts these on the failure path and the

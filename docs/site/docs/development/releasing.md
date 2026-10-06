@@ -100,7 +100,8 @@ glab mr create --title "release: haptic v<version>" \
 
 Run the manual `prepare-spoa-release` job in the release MR pipeline. It builds
 all three architectures under the chart's release tag, before the chart's
-install tests need that image. The chart itself remains unpublished.
+install tests need that image. Install-test jobs wait for this job to succeed
+before starting. The chart itself remains unpublished.
 
 The job records the upstream image digest, Docker build inputs, and verified
 plugin bytes in the image's input identity. An existing release image must
@@ -111,10 +112,10 @@ version.
 Temporary preparation tags use `ci-spoa-prepare-*`, covered by the project's
 configured `^ci-.*` registry cleanup policy. The versioned release tag is retained.
 
-Retry any install jobs that failed while the image was unavailable. Review and
-merge only after the full pipeline passes. The final tag pipeline verifies and
-reuses the prepared image, then signs it, attaches its software bill of materials,
-and smoke-tests amd64 and arm64 before publishing the chart.
+Review and merge only after image preparation and the full pipeline pass. The final
+tag pipeline verifies and reuses the prepared image, then signs it, attaches its
+software bill of materials, and smoke-tests amd64 and arm64 before publishing
+the chart.
 
 ### Automatic tag creation
 

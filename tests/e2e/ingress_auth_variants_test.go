@@ -133,3 +133,46 @@ func TestIngressAuthHeadersFail(t *testing.T) {
 		}},
 	})
 }
+
+func TestIngressAuthHeadersRequest(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, prefix string }{
+		{"haptic", "haproxy-haptic.org"},
+		{"haproxy-ingress", "haproxy-ingress.github.io"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			RunSimpleIngressTest(t, &SimpleIngressTest{
+				Description: "Ingress: auth-headers-request forwards a dashed header (" + tc.name + ")",
+				Host:        "ingress-auth-headers-request-" + tc.name + ".localdev.me",
+				Annotations: map[string]string{
+					tc.prefix + "/auth-url":             authServerBase() + "/require-api-key",
+					tc.prefix + "/auth-headers-request": "X-Api-Key",
+				},
+				Assess: []SimpleIngressAssertion{
+					{
+						Name: "no X-Api-Key → 401",
+						Check: func(t *testing.T, host string) {
+							t.Helper()
+							httpclient.New(t).GET(host, "/").ExpectStatus(t, http.StatusUnauthorized)
+						},
+					},
+					{
+						Name: "X-Api-Key reaches the auth server → 200",
+						Check: func(t *testing.T, host string) {
+							t.Helper()
+							httpclient.New(t).GET(host, "/").WithHeader("X-Api-Key", "e2e-key").ExpectOK(t)
+						},
+					},
+					{
+						Name: "X_Api_Key does not authorize → 401",
+						Check: func(t *testing.T, host string) {
+							t.Helper()
+							httpclient.New(t).GET(host, "/").WithHeader("X_Api_Key", "e2e-key").ExpectStatus(t, http.StatusUnauthorized)
+						},
+					},
+				},
+			})
+		})
+	}
+}

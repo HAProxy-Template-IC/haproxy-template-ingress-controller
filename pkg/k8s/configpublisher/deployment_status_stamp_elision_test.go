@@ -175,10 +175,10 @@ func TestUpdateDeploymentStatus_RestampsOnChangedPodIdentity(t *testing.T) {
 	assert.Equal(t, 12, counter.aux(), "a new pod stamps its own aux entries")
 }
 
-// TestUpdateDeploymentStatus_RestampsOnNewAuxSet verifies that a new
+// TestUpdateDeploymentStatus_RestampsOnlyChangedAuxiliaryFiles verifies that a new
 // content-hashed aux-file set (new set-id → new CR names) re-stamps: the changed
 // files are new keys, so nothing is wrongly skipped.
-func TestUpdateDeploymentStatus_RestampsOnNewAuxSet(t *testing.T) {
+func TestUpdateDeploymentStatus_RestampsOnlyChangedAuxiliaryFiles(t *testing.T) {
 	ctx, publisher, counter := newAuxPublisherWithCounter(t)
 
 	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
@@ -186,15 +186,13 @@ func TestUpdateDeploymentStatus_RestampsOnNewAuxSet(t *testing.T) {
 	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
 	require.Equal(t, 3, counter.aux(), "unchanged repeat elided")
 
-	// Republish with changed map content: the set-id rotates, so all aux CR
-	// names change and the pod re-stamps the new set.
 	req := auxPublishRequest()
 	req.AuxiliaryFiles.MapFiles[0].Content = "example.com be_b\n"
 	_, err := publisher.PublishConfig(ctx, &req)
 	require.NoError(t, err)
 
 	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
-	assert.Equal(t, 6, counter.aux(), "a new aux-file set re-stamps every file")
+	assert.Equal(t, 4, counter.aux(), "only the changed map needs a new pod stamp")
 }
 
 // TestCleanupPodReferences_EvictsAuxStamps proves the pod-departure invalidation:

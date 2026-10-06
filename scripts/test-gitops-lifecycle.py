@@ -31,6 +31,23 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def certificate_identity_matches(metadata, set_id, ca_file):
+    annotations = metadata.get("annotations", {})
+    if metadata.get("deletionTimestamp"):
+        return False
+    if not set_id.startswith("content-sha256:"):
+        return annotations.get("haproxy-haptic.org/auxiliary-set-id") == set_id
+    path = annotations.get("haproxy-haptic.org/auxiliary-path")
+    checksum = annotations.get("haproxy-haptic.org/checksum")
+    role = "ssl-ca" if ca_file else "ssl-certificate"
+    if not path or not checksum or metadata.get("labels", {}).get("haproxy-haptic.org/type") != role:
+        return False
+    identity = f"Secret\0{path}\0{checksum}\0{str(ca_file).lower()}"
+    suffix = "-content-" + hashlib.sha256(identity.encode()).hexdigest()
+    name = metadata["name"]
+    return name.endswith(suffix) or suffix + "-" in name
+
+
 def publication_matches(config, agents, secrets):
     metadata, status = config["metadata"], config.get("status", {})
     checksum = config.get("spec", {}).get("checksum")
@@ -47,14 +64,13 @@ def publication_matches(config, agents, secrets):
                 deployed.get("appliedPlanID") != state["applied_plan_id"] or
                 deployed.get("runningPlanID") != state["running_plan_id"]):
             return False
-    expected = {item["name"] for field in ["sslCertificates", "sslCaFiles"]
-                for item in references.get(field, [])}
+    expected = [(item["name"], field == "sslCaFiles") for field in ["sslCertificates", "sslCaFiles"]
+                for item in references.get(field, [])]
     owned = {secret["metadata"]["name"]: secret["metadata"] for secret in secrets
              if any(owner.get("uid") == metadata["uid"]
                     for owner in secret["metadata"].get("ownerReferences", []))}
-    return expected == set(owned) and all(
-        item.get("annotations", {}).get("haproxy-haptic.org/auxiliary-set-id") == set_id
-        for item in owned.values())
+    return {name for name, _ in expected} == set(owned) and all(
+        certificate_identity_matches(owned[name], set_id, ca_file) for name, ca_file in expected)
 
 
 class Lifecycle:

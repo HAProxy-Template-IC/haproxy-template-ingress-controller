@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	pb "sigs.k8s.io/gateway-api-conformance-images/echo-basic/grpcechoserver"
@@ -65,10 +66,14 @@ func TestGatewayRouteKindIsolation(t *testing.T) {
 			defer func() { _ = connection.Close() }()
 			assertGatewayGRPCResponseHeader(ctx, t, connection, "grpc")
 
-			require.NoError(t, client.Resources().Get(ctx, "same-name", ns, grpcRoute))
-			updated := gatewayIdentityRoute("GRPCRoute", ns, grpcHost, "grpc-updated", grpcBackend)
-			updated.SetResourceVersion(grpcRoute.GetResourceVersion())
-			require.NoError(t, client.Resources().Update(ctx, updated))
+			require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				if err := client.Resources().Get(ctx, "same-name", ns, grpcRoute); err != nil {
+					return err
+				}
+				updated := gatewayIdentityRoute("GRPCRoute", ns, grpcHost, "grpc-updated", grpcBackend)
+				grpcRoute.Object["spec"] = updated.Object["spec"]
+				return client.Resources().Update(ctx, grpcRoute)
+			}))
 			waitForRouteDeployed(ctx, t, client, grpcRouteGVR, ns, "same-name")
 			assertGatewayGRPCResponseHeader(ctx, t, connection, "grpc-updated")
 			require.Equal(t, "http", request.ExpectOK(t).Header.Get("X-Route-Kind"))

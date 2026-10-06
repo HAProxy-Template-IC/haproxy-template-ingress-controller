@@ -16,6 +16,7 @@ package configpublisher
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -256,6 +257,7 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		)
 	}
 	req = canonicalRequest
+	req.auxiliaryClaim = rand.Text()
 	if cached, ok := p.skippableResult(req); ok {
 		p.logger.Debug("Skipping unchanged republish",
 			"runtime_config", cached.RuntimeConfigName,
@@ -358,7 +360,7 @@ func canonicalizePublishRequest(req *PublishRequest) (*PublishRequest, error) {
 	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.SSLCaFiles)
 	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.GeneralFiles)
 	hashAuxiliaryContents(h, canonical.AuxiliaryFiles.CRTListFiles)
-	canonical.auxiliarySetID = fmt.Sprintf("sha256:%x", h.Sum(nil))
+	canonical.auxiliarySetID = fmt.Sprintf("%s%x", contentSetPrefix, h.Sum(nil))
 	return &canonical, nil
 }
 
@@ -488,7 +490,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
 	result *PublishResult,
 ) error {
-	suffix := auxiliaryResourceSuffix(req.auxiliarySetID, req.NameSuffix)
+	suffix := req.NameSuffix
 	files := req.AuxiliaryFiles
 	var err error
 	if result.MapFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindMapFile, suffix, files.MapFiles,
@@ -545,7 +547,7 @@ const auxiliaryPublishConcurrency = 8
 // publishAuxiliaryKind writes one kind's children in parallel and returns
 // the names it published, in input order. identity returns a file's base name
 // and the identity that disambiguates it.
-func publishAuxiliaryKind[T any](
+func publishAuxiliaryKind[T auxiliaryfiles.FileItem](
 	ctx context.Context,
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
 	kind, suffix string,
@@ -553,17 +555,16 @@ func publishAuxiliaryKind[T any](
 	identity func(T) (baseName, id string),
 	publish func(context.Context, T, string) (string, error),
 ) ([]string, error) {
-	names := resolveAuxiliaryResourceNames(files, suffix,
-		func(file T) string { baseName, _ := identity(file); return baseName },
-		func(file T) string { _, id := identity(file); return id },
-	)
 	published := make([]string, len(files))
 	work, workCtx := errgroup.WithContext(ctx)
 	work.SetLimit(auxiliaryPublishConcurrency)
 	for i, file := range files {
 		work.Go(func() error {
 			baseName, id := identity(file)
-			name, attempted, err := publishAuxiliaryResource(names[i], baseName, suffix, id, runtimeConfig.Name,
+			contentSuffix := auxiliaryFileIdentity(kind, file) + suffix
+			ownerIdentity := runtimeConfig.Name + "\x00" + string(runtimeConfig.UID)
+			initialName := disambiguatedResourceName(baseName, contentSuffix, ownerIdentity+"\x00"+id)
+			name, attempted, err := publishAuxiliaryResource(initialName, baseName, contentSuffix, id, ownerIdentity,
 				func(name string) (string, error) { return publish(workCtx, file, name) })
 			if err != nil {
 				return incompletePublicationError(PublicationStageAuxiliary, runtimeConfig.Namespace,

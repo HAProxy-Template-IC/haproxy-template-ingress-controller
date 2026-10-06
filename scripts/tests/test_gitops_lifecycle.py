@@ -1,6 +1,7 @@
 """GitOps snapshots require completed publication, including certificate cleanup."""
 
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -72,6 +73,63 @@ class PublicationTest(unittest.TestCase):
     def test_stale_certificate_publication(self):
         self.secrets[0]["metadata"]["annotations"]["haproxy-haptic.org/auxiliary-set-id"] = "previous"
         self.assertFalse(self.ready())
+
+    def content_publication(self, ca_file=False):
+        set_id = "content-sha256:current"
+        self.config["metadata"]["annotations"]["haproxy-haptic.org/auxiliary-set-id"] = set_id
+        metadata = self.secrets[0]["metadata"]
+        checksum = "sha256:" + hashlib.sha256(b"certificate").hexdigest()
+        metadata["annotations"] = {"haproxy-haptic.org/auxiliary-path": "/certs/site.pem",
+            "haproxy-haptic.org/checksum": checksum, "haproxy-haptic.org/auxiliary-claim": "retained"}
+        metadata["labels"] = {"haproxy-haptic.org/type": "ssl-ca" if ca_file else "ssl-certificate"}
+        identity = f"Secret\0/certs/site.pem\0{checksum}\0{str(ca_file).lower()}"
+        metadata["name"] = "certificate-content-" + hashlib.sha256(identity.encode()).hexdigest()
+        field = "sslCaFiles" if ca_file else "sslCertificates"
+        self.config["status"]["auxiliaryFiles"] = {"setID": set_id, field: [{"name": metadata["name"]}]}
+        return metadata
+
+    def test_reused_content_publication(self):
+        for ca_file in [False, True]:
+            with self.subTest(ca_file=ca_file):
+                self.content_publication(ca_file)
+                self.assertTrue(self.ready())
+
+    def test_content_publication_rejects_changed_identity(self):
+        for annotation in ["auxiliary-path", "checksum"]:
+            with self.subTest(annotation=annotation):
+                metadata = self.content_publication()
+                metadata["annotations"]["haproxy-haptic.org/" + annotation] = "different"
+                self.assertFalse(self.ready())
+                del metadata["annotations"]["haproxy-haptic.org/" + annotation]
+                self.assertFalse(self.ready())
+
+    def test_content_publication_rejects_wrong_role(self):
+        metadata = self.content_publication()
+        metadata["labels"]["haproxy-haptic.org/type"] = "ssl-ca"
+        self.assertFalse(self.ready())
+        references = self.config["status"]["auxiliaryFiles"]
+        references["sslCaFiles"] = references.pop("sslCertificates")
+        self.assertFalse(self.ready())
+
+    def test_content_publication_rejects_pending_cleanup(self):
+        self.content_publication()
+        previous = copy.deepcopy(self.secrets[0])
+        previous["metadata"]["name"] = "previous-certificate"
+        self.secrets.append(previous)
+        self.assertFalse(self.ready())
+
+    def test_content_publication_rejects_missing_or_terminating_certificate(self):
+        metadata = self.content_publication()
+        metadata["deletionTimestamp"] = "2026-10-06T22:00:00Z"
+        self.assertFalse(self.ready())
+        self.secrets.clear()
+        self.assertFalse(self.ready())
+
+    def test_content_publication_with_publication_suffix(self):
+        metadata = self.content_publication()
+        metadata["name"] += "-publication"
+        self.config["status"]["auxiliaryFiles"]["sslCertificates"][0]["name"] = metadata["name"]
+        self.assertTrue(self.ready())
 
     def lifecycle(self):
         lifecycle = object.__new__(LIFECYCLE.Lifecycle)

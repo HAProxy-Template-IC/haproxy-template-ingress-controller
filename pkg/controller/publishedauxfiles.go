@@ -16,12 +16,14 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"path"
 	"slices"
+	"strings"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -84,17 +86,18 @@ type publishedStoreSyncer interface {
 type publishedAuxFiles struct {
 	mu sync.RWMutex
 
-	namespace      string
-	commit         *publishedAuxCommit
-	byGVR          map[string]map[string]publishedAuxFile
-	current        map[string]string
-	currentRoot    *currentAuxFilesMapRoot
-	ready          bool
-	legacy         bool
-	leader         bool
-	modernAccepted bool
-	lastErr        error
-	unavailable    error
+	namespace       string
+	commit          *publishedAuxCommit
+	byGVR           map[string]map[string]publishedAuxFile
+	current         map[string]string
+	currentRoot     *currentAuxFilesMapRoot
+	ready           bool
+	legacy          bool
+	leader          bool
+	modernAccepted  bool
+	contentAccepted bool
+	lastErr         error
+	unavailable     error
 }
 
 func newPublishedAuxFiles(namespace string) *publishedAuxFiles {
@@ -144,6 +147,10 @@ func (p *publishedAuxFiles) setCommit(commit *publishedAuxCommit) {
 
 	legacyChanged := p.legacy && !publishedAuxCommitsEqual(p.commit, commit)
 	p.commit = commit
+	if p.contentAccepted && (commit == nil || !configpublisher.UsesContentIdentity(commit.setID)) {
+		p.unavailable = errors.New("auxiliary publication lost its content identity; currentFiles is unavailable until a content-verified set is committed")
+		return
+	}
 	if p.modernAccepted && (commit == nil || commit.setID == "") {
 		p.legacy = false
 		p.markModernDowngradeUnavailable()
@@ -258,6 +265,7 @@ func (p *publishedAuxFiles) advanceLocked() {
 	p.lastErr = nil
 	if !p.legacy {
 		p.modernAccepted = true
+		p.contentAccepted = p.contentAccepted || configpublisher.UsesContentIdentity(p.commit.setID)
 		p.unavailable = nil
 	}
 }
@@ -283,7 +291,7 @@ func (p *publishedAuxFiles) resolveCommitLocked() (map[string]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				if err := validatePublishedSetID(p.commit.setID, &legacySetID, file.setID); err != nil {
+				if err := validatePublishedFileIdentity(p.commit.setID, &legacySetID, kind, referenceField, ref, &file); err != nil {
 					return nil, fmt.Errorf("committed %s %s/%s: %w", kind.kind, p.namespace, ref.name, err)
 				}
 				if kind.contentField != "" && !file.caFile {
@@ -326,6 +334,26 @@ func (p *publishedAuxFiles) resolvePublishedFile(kind *publishedAuxCRD, ref publ
 		return publishedAuxFile{}, fmt.Errorf("committed %s %s/%s is unavailable", kind.kind, p.namespace, ref.name)
 	}
 	return file, nil
+}
+
+func validatePublishedFileIdentity(setID string, legacy **string, kind *publishedAuxCRD, field string, ref publishedAuxRef, file *publishedAuxFile) error {
+	if !configpublisher.UsesContentIdentity(setID) {
+		return validatePublishedSetID(setID, legacy, file.setID)
+	}
+	checksum := file.checksum
+	if kind.contentField != "" {
+		checksum = fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(file.content)))
+	} else if file.caFile != (field == "sslCaFiles") {
+		return errors.New("secret role does not match its committed reference")
+	}
+	if file.path == "" || checksum == "" {
+		return errors.New("content identity is missing its path or checksum")
+	}
+	want := configpublisher.AuxiliaryContentSuffix(kind.kind, file.path, checksum, file.caFile)
+	if !strings.HasSuffix(ref.name, want) && !strings.Contains(ref.name, want+"-") {
+		return errors.New("content identity does not match the committed reference")
+	}
+	return nil
 }
 
 func validatePublishedSetID(want string, legacy **string, got string) error {
@@ -508,7 +536,17 @@ func publishedAuxFileFromObject(obj map[string]any, kind *publishedAuxCRD) (name
 		if err != nil {
 			return "", publishedAuxFile{}, false, fmt.Errorf("reading %s resource version: %w", name, err)
 		}
+		filePath, _, err := unstructured.NestedString(obj, "metadata", "annotations", configpublisher.AuxiliaryPathAnnotationKey)
+		if err != nil {
+			return "", publishedAuxFile{}, false, fmt.Errorf("reading %s path: %w", name, err)
+		}
+		fileType, _, err := unstructured.NestedString(obj, "metadata", "labels", "haproxy-haptic.org/type")
+		if err != nil {
+			return "", publishedAuxFile{}, false, fmt.Errorf("reading %s type: %w", name, err)
+		}
 		return name, publishedAuxFile{
+			path:            filePath,
+			caFile:          fileType == "ssl-ca",
 			setID:           setID,
 			checksum:        checksum,
 			resourceVersion: resourceVersion,

@@ -1391,10 +1391,10 @@ prepare-spoa-release:
     - !reference [.not-mirror-refresh, rules]
     - if: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^release\/v/
       when: manual
-      allow_failure: true
+      allow_failure: false
     - if: $CI_COMMIT_BRANCH =~ /^release\/v/
       when: manual
-      allow_failure: true
+      allow_failure: false
   script:
     - bash scripts/spoa-release-image.sh prepare
 
@@ -1773,6 +1773,9 @@ test-acceptance:
   timeout: 30 minutes
   interruptible: true
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
@@ -1874,6 +1877,9 @@ test-acceptance:
   timeout: 25 minutes
   interruptible: true
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
@@ -2224,6 +2230,9 @@ test-chart-upgrade:
     matrix:
       - BASELINE_CHART_VERSION: ["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0", "0.2.0-alpha.3"]
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
@@ -2280,6 +2289,9 @@ test-install-without-gateway-api:
   timeout: 30 minutes
   interruptible: true
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
@@ -2337,6 +2349,9 @@ test-gitops-lifecycle:
   timeout: 40 minutes
   interruptible: true
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - compute-ci-image-tag
     - build-ci
     - build-snapshot
@@ -2487,6 +2502,9 @@ test-gateway-conformance:
     # knob is visible where the runner class is chosen.
     CONFORMANCE_PARALLEL: "4"
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
@@ -3020,6 +3038,9 @@ gateway-conformance-report:
     - .snapshot-version
   interruptible: true
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - job: compute-ci-image-tag
       optional: true
     - job: build-ci
@@ -3352,6 +3373,9 @@ test-ingress-conformance:
     HAPROXY_VERSION: "3.4"
     INGRESS_CONFORMANCE_IMAGE: "${CI_REGISTRY_IMAGE}/ingress-conformance:ci-${CI_PIPELINE_ID}-haproxy3.4"
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
@@ -3621,6 +3645,9 @@ test-helm-defaults:
   timeout: 15 minutes
   interruptible: true
   needs:
+    - job: prepare-spoa-release
+      optional: true
+      artifacts: false
     - compute-ci-image-tag
     - job: build-ci
     - job: build-snapshot
