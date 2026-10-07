@@ -7,6 +7,7 @@ stages:
   - build
   - integration
   - deploy
+  - verify
 
 default:
   interruptible: true
@@ -64,6 +65,7 @@ variables:
   # Publish the multi-arch controller, SPOA-hub, and chart snapshot only from an
   # explicit main-branch web/API/scheduled pipeline that sets this to "true".
   PUBLISH_MAIN_SNAPSHOT: "false"
+  REUSE_TRAIN_VERIFICATION: "false"
 
 # Reusable rules for path-based filtering.
 #
@@ -88,8 +90,40 @@ variables:
 # mirror-ingress-conformance-image; every other job's rules start with this.
 .not-mirror-refresh:
   rules:
-    - if: $MIRROR_IMAGES == "true"
+    - if: '$MIRROR_IMAGES == "true" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
       when: never
+
+.rules-train-common:
+  rules:
+    - if: '$CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
+
+.rules-train-tests:
+  rules:
+    - if: '$CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
+      changes:
+        regexp: &train-code-changes '\A(?!(?:README\.md|CHANGELOG\.md|CONTRIBUTING\.md|LICENSE|charts/CLAUDE\.md|charts/haptic/README\.md|charts/haptic/CHANGELOG\.md|docs/site/docs/.*\.md)\z)'
+    - if: '$CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
+      when: never
+
+.rules-post-merge-reuse:
+  rules:
+    - if: >-
+        $REUSE_TRAIN_VERIFICATION == "true" &&
+        $SCHEDULE_KIND != "nightly" && $SCALE_RUN != "1" &&
+        $CI_PIPELINE_SOURCE == "push" &&
+        ($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//)
+      when: never
+
+.rules-train-artifact:
+  rules:
+    - !reference [.rules-train-tests, rules]
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
+
+.rules-train-full:
+  rules:
+    - !reference [.rules-train-artifact, rules]
+    - !reference [.rules-post-merge-reuse, rules]
 
 .rules-code:
   rules:
@@ -258,9 +292,18 @@ compute-ci-image-tag:
     - saas-linux-small-amd64
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-common, rules]
     - when: on_success
+  variables:
+    GIT_DEPTH: "0"
   script:
     - apk add --no-cache bash git python3 py3-yaml
+    - |
+      if [ "${CI_MERGE_REQUEST_EVENT_TYPE:-}" = "merge_train" ]; then
+        python3 -m scripts.ci.verification --train-context
+      elif [ "${CI_COMMIT_BRANCH:-}" = "${CI_DEFAULT_BRANCH}" ] || [ "${CI_COMMIT_BRANCH#maint/}" != "${CI_COMMIT_BRANCH:-}" ] || [ -n "${CI_COMMIT_TAG:-}" ]; then
+        python3 -m scripts.ci.verification --publication
+      fi
     - ./scripts/check-image-pins.sh
     - |
       BUILD_INPUT_HASH=$(scripts/ci-image-input-hash.sh)
@@ -304,6 +347,10 @@ compute-ci-image-tag:
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > ~/.docker/config.json
 
 build-ci:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-common, rules]
+    - !reference [.build-ci-image, rules]
   extends:
     - .build-ci-image
     - .haproxy-version-matrix
@@ -374,6 +421,7 @@ build-python-docs:
   # tag exclusion that used to live in .build-ci-image here.
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-common, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - when: on_success
@@ -431,6 +479,7 @@ lint:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-common, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
@@ -457,6 +506,7 @@ audit:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-tests, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
@@ -482,6 +532,7 @@ chart-test:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
@@ -502,6 +553,10 @@ chart-test:
     when: always
 
 chart-test-minimum-kubernetes:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [chart-test, rules]
   extends: chart-test
   variables:
     KIND_NODE_VERSION: "v1.33.0"
@@ -513,6 +568,7 @@ chart-schema-check:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
@@ -540,6 +596,18 @@ test:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-tests, rules]
+    - !reference [.rules-post-merge-reuse, rules]
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - "**/*.go"
+        - "**/*.pgo"
+        - "**/go.mod"
+        - "**/go.sum"
+        - "**/testdata/**"
+        - .tool-versions
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
     - if: $CI_COMMIT_TAG
       when: never
     # Unit tests only depend on Go sources + testdata fixtures — on main as much
@@ -586,6 +654,7 @@ test-coverage-unit:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-go, rules]
@@ -630,8 +699,6 @@ test-coverage-unit:
     - job: build-ci
   rules:
     - !reference [.not-mirror-refresh, rules]
-    # Runs post-merge on the default branch too — see .test-e2e-base for
-    # the merge-result / heartbeat rationale.
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-chart-inputs, rules]
@@ -656,6 +723,10 @@ test-coverage-unit:
     - make validate-helm-libraries HAPROXY_VERSION=$HAPROXY_VERSION
 
 validate-helm-libraries:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [.validate-helm-libraries-base, rules]
   extends:
     - .validate-helm-libraries-base
     - .haproxy-version-matrix
@@ -862,6 +933,7 @@ build-snapshot:
   # still gets its image.
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-go, rules]
@@ -911,8 +983,7 @@ build-ingress-conformance-image:
     - job: build-ci
   rules:
     - !reference [.not-mirror-refresh, rules]
-    # Runs post-merge on the default branch too — see .test-e2e-base for
-    # the merge-result / heartbeat rationale.
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -1010,6 +1081,7 @@ build-playground-wasm:
     - job: build-ci
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-artifact, rules]
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: $CI_COMMIT_TAG =~ /^v.*/
@@ -1201,6 +1273,7 @@ docs-spoa-versions:
   needs: []
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - !reference [.rules-spoa, rules]
   interruptible: true
   before_script:
@@ -1221,6 +1294,7 @@ prep-spoa-plugins:
   needs: []
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     # The explicit multi-arch publisher always needs the plugin bundle, even
     # when the selected main commit did not change a SPOA input.
     - !reference [.rules-main-snapshot-publish, rules]
@@ -1356,6 +1430,7 @@ build-spoa-image-snapshot:
   extends: .build-spoa-image-base
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-spoa, rules]
@@ -1389,7 +1464,7 @@ prepare-spoa-release:
   resource_group: spoa-release-publish
   rules:
     - !reference [.not-mirror-refresh, rules]
-    - if: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^release\/v/
+    - if: '$CI_MERGE_REQUEST_EVENT_TYPE == "merge_train" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^release\/v/'
       when: manual
       allow_failure: false
     - if: $CI_COMMIT_BRANCH =~ /^release\/v/
@@ -1516,6 +1591,7 @@ smoke-spoa-amd64:
     - saas-linux-small-amd64
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
     - if: $CI_COMMIT_TAG
       when: never
@@ -1604,21 +1680,18 @@ smoke-spoa-arm64:
     expire_in: 1 week
 
 test-integration:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [.test-integration-base, rules]
   tags:
     - saas-linux-2xlarge-amd64
   extends:
     - .test-integration-base
-  # MRs run only the 3.0/3.4 bracket (oldest + newest supported HAProxy) for
-  # fast feedback; the interior versions run post-merge on main and nightly
-  # (test-integration-extra-versions). Releases are cut from main, so the full
-  # 5-version integration gate still runs before any release.
   parallel:
     matrix:
       - HAPROXY_VERSION: ["3.0", "3.4"]
 
-# Interior HAProxy versions (3.1–3.3) for integration — main + nightly only.
-# Inherits .test-integration-base but overrides its rules to drop the
-# .rules-go MR trigger, so these never run on an MR pipeline.
 test-integration-extra-versions:
   tags:
     - saas-linux-2xlarge-amd64
@@ -1629,6 +1702,7 @@ test-integration-extra-versions:
       - HAPROXY_VERSION: ["3.1", "3.2", "3.3"]
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     # Nightly wins on any branch (kept in lockstep with the sibling
@@ -1655,6 +1729,7 @@ test-agent-docker:
     - saas-linux-medium-amd64
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-go, rules]
@@ -1680,6 +1755,7 @@ coverage-combined:
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     # Follows `test` + `test-integration` (both .rules-go) in lockstep —
@@ -1764,8 +1840,7 @@ test-acceptance:
     - .docker-dind
   rules:
     - !reference [.not-mirror-refresh, rules]
-    # Runs post-merge on the default branch too — see .test-e2e-base for
-    # the merge-result / heartbeat rationale.
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - changes: *chart-inputs
@@ -1894,14 +1969,6 @@ test-acceptance:
     SKIP_DOCKER_BUILD: "1"
   rules:
     - !reference [.not-mirror-refresh, rules]
-    # Runs on the default branch too (post-merge). MR pipelines test the
-    # SOURCE branch, not the merge result, so semantic conflicts between two
-    # independently-green MRs land unverified without this. On main-branch
-    # pipelines `changes:` evaluates against the merge commit's diff, so
-    # trigger decisions (and the needs-lockstep with
-    # build-spoa-image-snapshot) match what the MR pipeline decided. On
-    # scheduled pipelines `changes:` is always true — the nightly heartbeat
-    # that keeps full-stack coverage alive through merge-quiet weeks.
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -2122,6 +2189,10 @@ test-acceptance:
     when: always
 
 test-e2e:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [.test-e2e-base, rules]
   extends:
     - .test-e2e-sharded
   # MRs run only the 3.0/3.4 bracket; interior versions run on main + nightly
@@ -2132,6 +2203,10 @@ test-e2e:
         E2E_SHARD_INDEX: ["1", "2", "3"]
 
 test-e2e-minimum-kubernetes:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [.test-e2e-base, rules]
   extends: .test-e2e-sharded
   variables:
     HAPROXY_VERSION: "3.4"
@@ -2150,6 +2225,7 @@ test-e2e-extra-versions:
         E2E_SHARD_INDEX: ["1", "2", "3"]
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     # Nightly wins on any branch; then exclude MR/feature-branch pipelines;
@@ -2186,6 +2262,7 @@ test-vector-spans:
     - job: build-ci
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - if: $SCHEDULE_KIND == "nightly"
@@ -2243,6 +2320,7 @@ test-chart-upgrade:
     SKIP_DOCKER_BUILD: "1"
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - if: $SCHEDULE_KIND == "nightly"
@@ -2300,6 +2378,7 @@ test-install-without-gateway-api:
     SKIP_DOCKER_BUILD: "1"
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - if: $SCHEDULE_KIND == "nightly"
@@ -2325,6 +2404,10 @@ test-install-without-gateway-api:
     - make test-install-without-gateway-api
 
 test-chart-upgrade-minimum-kubernetes:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [test-chart-upgrade, rules]
   extends: test-chart-upgrade
   variables:
     KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
@@ -2365,6 +2448,7 @@ test-gitops-lifecycle:
     GITOPS_IMAGE: haptic:test
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - if: $SCHEDULE_KIND == "nightly"
@@ -2393,6 +2477,10 @@ test-gitops-lifecycle:
       - debug-logs/gitops/
 
 test-install-without-gateway-api-minimum-kubernetes:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [test-install-without-gateway-api, rules]
   extends: test-install-without-gateway-api
   variables:
     KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
@@ -2415,6 +2503,10 @@ test-install-without-gateway-api-minimum-kubernetes:
 # tier is version-agnostic, so it runs the current LTS. Loads the stock Varnish image into kind (see
 # loadControllerImage) so the StatefulSet needn't reach Docker Hub.
 test-e2e-cache:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [.test-e2e-base, rules]
   extends: .test-e2e-sharded
   variables:
     HAPROXY_VERSION: "3.4"
@@ -2427,6 +2519,10 @@ test-e2e-cache:
 # version-agnostic, so it runs the current LTS. Loads the stock Valkey image into kind (see
 # loadControllerImage) so the Deployment needn't reach Docker Hub.
 test-e2e-rate-limit:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [.test-e2e-base, rules]
   extends: .test-e2e-sharded
   variables:
     HAPROXY_VERSION: "3.4"
@@ -2442,6 +2538,10 @@ test-e2e-rate-limit:
 # can create experimental HTTPRoute fields: TestGatewayExternalAuth and
 # TestGatewaySessionPersistence skip everywhere else.
 test-e2e-api-gateway:
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
+    - !reference [.test-e2e-base, rules]
   extends: .test-e2e-sharded
   variables:
     HAPROXY_VERSION: "3.4"
@@ -2511,6 +2611,7 @@ test-gateway-conformance:
     - job: build-spoa-image-snapshot
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     # Full 4-shard suite runs on the default branch (merge-result / heartbeat,
     # see .test-e2e-base) and nightly — NOT on MRs. MRs get a deterministic
     # 1-of-4 smoke instead (test-gateway-conformance-smoke) to cut xlarge
@@ -2815,6 +2916,8 @@ test-gateway-conformance-smoke:
   artifacts: !reference [test-gateway-conformance, artifacts]
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
@@ -3054,6 +3157,9 @@ gateway-conformance-report:
       artifacts: false
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-post-merge-reuse, rules]
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
+      when: never
     - if: $CI_COMMIT_TAG
       when: never
     - when: manual
@@ -3383,6 +3489,7 @@ test-ingress-conformance:
     - job: build-ingress-conformance-image
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-full, rules]
     # Full 4-shard suite runs on the default branch (merge-result / heartbeat,
     # see .test-e2e-base) and nightly — NOT on MRs. MRs get a deterministic
     # 1-of-4 smoke instead (test-ingress-conformance-smoke).
@@ -3606,6 +3713,8 @@ test-ingress-conformance-smoke:
   artifacts: !reference [test-ingress-conformance, artifacts]
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: never
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
@@ -3635,8 +3744,7 @@ test-helm-defaults:
     - .snapshot-version
   rules:
     - !reference [.not-mirror-refresh, rules]
-    # Runs post-merge on the default branch too — see .test-e2e-base for
-    # the merge-result / heartbeat rationale.
+    - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-spoa-chart, rules]
@@ -3903,6 +4011,7 @@ test-agent-skill-package:
     - job: build-python-docs
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-common, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -3929,6 +4038,7 @@ pages-preview:
     - job: build-python-docs
   rules:
     - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-train-common, rules]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &pages-preview-changes
         - "**/*.md"
@@ -4030,6 +4140,8 @@ trigger-pages:
   # deploy if the bundle job is ever ruled out). Only the bundle is needed —
   # not the full build/test matrix — so the docs deploy stays fast.
   needs:
+    - job: compute-ci-image-tag
+      artifacts: false
     - job: build-playground-wasm
       optional: true
   rules:
@@ -4085,9 +4197,7 @@ create-release-tag:
   tags:
     - saas-linux-small-amd64
   interruptible: false
-  # No `needs:` — stage ordering makes this wait for the WHOLE pipeline,
-  # so the full post-merge stack (unit, e2e matrix, conformance) gates every
-  # release tag. `dependencies` still fetches the CI image tag dotenv.
+  # Stage ordering waits for every selected job; compute-ci-image-tag verifies the train receipt.
   dependencies:
     - compute-ci-image-tag
   rules:
@@ -4162,3 +4272,22 @@ report-pipeline-failure:
       when: always
   script:
     - ./scripts/ci-report-failure.sh
+
+verify-merge-train:
+  stage: verify
+  image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
+  tags:
+    - saas-linux-small-amd64
+  dependencies:
+    - compute-ci-image-tag
+  rules:
+    - !reference [.not-mirror-refresh, rules]
+    - if: '$CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - python3 -m scripts.ci.verification
+  artifacts:
+    paths:
+      - ci-verification.json
+    expire_in: never

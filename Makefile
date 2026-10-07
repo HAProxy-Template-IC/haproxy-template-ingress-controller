@@ -316,7 +316,11 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 
 .PHONY: test-ci-rules
 test-ci-rules: ## Check that CI selects chart inputs and excludes chart prose
-	python3 -m unittest scripts/tests/test_ci_chart_rules.py
+	python3 -m unittest scripts/tests/test_ci_chart_rules.py scripts/tests/test_ci_verification.py scripts/tests/test_ci_budget.py
+
+.PHONY: ci-budget
+ci-budget: ## Check live CI headroom (CI_CANDIDATE_MINUTES is required)
+	python3 -m scripts.ci.budget --candidate-minutes "$(CI_CANDIDATE_MINUTES)"
 
 .PHONY: test-admission-readiness
 .PHONY: check-no-lua

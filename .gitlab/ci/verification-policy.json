@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "prose_paths": [
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "charts/CLAUDE.md",
+    "charts/haptic/README.md",
+    "charts/haptic/CHANGELOG.md"
+  ],
+  "prose_patterns": [
+    "docs/site/docs/.*\\.md"
+  ],
+  "common_jobs": [
+    "compute-ci-image-tag",
+    "build-ci",
+    "build-python-docs",
+    "lint",
+    "pages-preview",
+    "test-agent-skill-package"
+  ],
+  "full_jobs": [
+    "audit",
+    "chart-test",
+    "chart-test-minimum-kubernetes",
+    "chart-schema-check",
+    "test",
+    "test-coverage-unit",
+    "validate-helm-libraries",
+    "build-snapshot",
+    "build-ingress-conformance-image",
+    "build-playground-wasm",
+    "docs-spoa-versions",
+    "prep-spoa-plugins",
+    "build-spoa-image-snapshot",
+    "smoke-spoa-amd64",
+    "test-integration",
+    "test-integration-extra-versions",
+    "test-agent-docker",
+    "coverage-combined",
+    "test-acceptance",
+    "test-e2e",
+    "test-e2e-minimum-kubernetes",
+    "test-e2e-extra-versions",
+    "test-vector-spans",
+    "test-chart-upgrade",
+    "test-chart-upgrade-minimum-kubernetes",
+    "check-chart-upgrade-baselines",
+    "test-install-without-gateway-api",
+    "test-install-without-gateway-api-minimum-kubernetes",
+    "test-gitops-lifecycle",
+    "test-e2e-cache",
+    "test-e2e-rate-limit",
+    "test-e2e-api-gateway",
+    "test-gateway-conformance",
+    "test-ingress-conformance",
+    "test-helm-defaults"
+  ]
+}
