@@ -48,7 +48,7 @@ nothing:
 ```bash
 helm template "$HAPTIC_RELEASE" \
   oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --version 0.4.0 --namespace "$HAPTIC_NAMESPACE" \
+  --version 0.4.1 --namespace "$HAPTIC_NAMESPACE" \
   --values haptic-values-0.4.yaml > /dev/null
 ```
 
@@ -135,7 +135,7 @@ defaults, so the release doesn't carry rejected keys forward:
 ```bash
 helm upgrade "$HAPTIC_RELEASE" \
   oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
-  --namespace "$HAPTIC_NAMESPACE" --version 0.4.0 \
+  --namespace "$HAPTIC_NAMESPACE" --version 0.4.1 \
   --reset-values \
   --values haptic-values-0.4.yaml
 ```
