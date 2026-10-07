@@ -394,21 +394,28 @@ func journalChangesThrough(
 	return bounded, true
 }
 
-func snapshotCursorChanges(ctx context.Context, journal stores.ExactRevisionJournal, cursor incrementalStoreCursor, snapshot stores.ReadSnapshot) ([]stores.RevisionChange, bool, error) {
-	changes, complete := journalChangesThrough(journal, cursor.sequence, snapshot.Sequence())
+func snapshotCursorChanges(
+	ctx context.Context,
+	journal stores.ExactRevisionJournal,
+	cursor incrementalStoreCursor,
+	snapshot stores.ReadSnapshot,
+) (changes []stores.RevisionChange, revisionBase stores.ReadSnapshot, complete bool, err error) {
+	changes, complete = journalChangesThrough(journal, cursor.sequence, snapshot.Sequence())
 	if complete {
-		return changes, true, nil
+		return changes, nil, true, nil
 	}
 	if cursor.diffBase == nil {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	previous := cursor.diffBase.snapshot
 	if previous.RevisionSource() != cursor.source || previous.Sequence() != cursor.sequence {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	differ, supported := snapshot.(stores.ExactSnapshotDiffer)
 	if !supported {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
-	return differ.ChangesFrom(ctx, previous)
+	// Equal values across branches can still have different read-scope revision tokens.
+	changes, complete, err = differ.ChangesFrom(ctx, previous)
+	return changes, previous, complete, err
 }

@@ -885,7 +885,7 @@ func (r *incrementalRenderSession) markSourceMembershipPin(
 		return err
 	}
 	r.mu.Lock()
-	if previous, exists := r.membershipPins[alias]; exists && previous != cursor {
+	if previous, exists := r.membershipPins[alias]; exists && (previous.source != cursor.source || previous.sequence != cursor.sequence) {
 		r.mu.Unlock()
 		return incremental.ErrRevisionConflict
 	}
@@ -958,44 +958,105 @@ func (r *incrementalRenderSession) applyResourceJournals(ctx context.Context) (b
 	}
 	slices.Sort(aliases)
 	for _, alias := range aliases {
-		if err := ctx.Err(); err != nil {
-			return false, err
+		cold, err := r.applyResourceJournal(ctx, alias)
+		if err != nil || cold {
+			return cold, err
 		}
-		store := r.baseStores[alias]
-		snapshot := r.baseSnapshots[alias]
-		journal, journalOK := store.(stores.ExactRevisionJournal)
-		cursor := r.cursors[alias]
-		if snapshot == nil || !journalOK || journal.ExactRevisionJournalSource() != snapshot.RevisionSource() ||
-			snapshot.RevisionSource() != cursor.source {
-			r.coldReason = "store-revision-source-changed:" + alias
+	}
+	return false, nil
+}
+
+func (r *incrementalRenderSession) applyResourceJournal(ctx context.Context, alias string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	store := r.baseStores[alias]
+	snapshot := r.baseSnapshots[alias]
+	journal, journalOK := store.(stores.ExactRevisionJournal)
+	cursor := r.cursors[alias]
+	if snapshot == nil || !journalOK || journal.ExactRevisionJournalSource() != snapshot.RevisionSource() ||
+		snapshot.RevisionSource() != cursor.source {
+		r.coldReason = "store-revision-source-changed:" + alias
+		return true, nil
+	}
+	changes, revisionBase, complete, err := snapshotCursorChanges(ctx, journal, cursor, snapshot)
+	if err != nil {
+		return false, err
+	}
+	if !complete {
+		r.coldReason = "journal-incomplete:" + alias
+		return true, nil
+	}
+	_, isComponentSource := r.bindingPlan.bySource[alias]
+	if isComponentSource {
+		err = r.markSourceMembershipPin(alias, snapshot, true)
+	} else {
+		err = r.updateResourceCursor(alias, snapshot)
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := r.applyJournalChanges(alias, changes); err != nil {
+		if errors.Is(err, errIncrementalUnsupported) {
+			r.coldReason = "journal-change-unsupported:" + alias
 			return true, nil
 		}
-		changes, complete, err := snapshotCursorChanges(ctx, journal, cursor, snapshot)
-		if err != nil {
-			return false, err
-		}
-		if !complete {
-			r.coldReason = "journal-incomplete:" + alias
-			return true, nil
-		}
-		_, isComponentSource := r.bindingPlan.bySource[alias]
-		if isComponentSource {
-			err = r.markSourceMembershipPin(alias, snapshot, true)
-		} else {
-			err = r.updateResourceCursor(alias, snapshot)
-		}
-		if err != nil {
-			return false, err
-		}
-		if err := r.applyJournalChanges(alias, changes); err != nil {
-			if errors.Is(err, errIncrementalUnsupported) {
-				r.coldReason = "journal-change-unsupported:" + alias
-				return true, nil
-			}
+		return false, err
+	}
+	if revisionBase != nil {
+		if err := r.refreshSnapshotRevisions(ctx, alias, revisionBase, snapshot); err != nil {
 			return false, err
 		}
 	}
 	return false, nil
+}
+
+func (r *incrementalRenderSession) refreshSnapshotRevisions(
+	ctx context.Context,
+	alias string,
+	before, after stores.ReadSnapshot,
+) error {
+	catalog, err := r.authenticatedCatalog()
+	if err != nil {
+		return err
+	}
+	if !catalog.base.valid() {
+		return errors.New("incremental resource catalog has invalid base")
+	}
+	affected := map[string]resourceInputSpec{}
+	var walkErr error
+	catalog.base.Root().WalkPrefix(resourceInputPrefix(alias), func(rawKey []byte, _ struct{}) bool {
+		if walkErr = ctx.Err(); walkErr != nil {
+			return true
+		}
+		key := incremental.NewInputKey(string(rawKey))
+		walkErr = r.collectChangedSnapshotRevision(key, before, after, affected)
+		return walkErr != nil
+	})
+	if walkErr != nil {
+		return walkErr
+	}
+	return r.refreshKnownInputs(alias, affected)
+}
+
+func (r *incrementalRenderSession) collectChangedSnapshotRevision(
+	key incremental.InputKey,
+	before, after stores.ReadSnapshot,
+	affected map[string]resourceInputSpec,
+) error {
+	spec, exists, err := r.catalogGet(key)
+	if err != nil || !exists {
+		return err
+	}
+	previous, err := resourceSnapshotRevision(before, &spec)
+	if err != nil {
+		return err
+	}
+	current, err := resourceSnapshotRevision(after, &spec)
+	if err != nil || current == previous {
+		return err
+	}
+	return r.collectKnownInput(&spec, affected)
 }
 
 func (r *incrementalRenderSession) reloadActiveSources(ctx context.Context) error {

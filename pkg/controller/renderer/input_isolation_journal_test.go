@@ -15,16 +15,53 @@
 package renderer
 
 import (
+	"fmt"
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
 
 	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
+
+func TestInputIsolationMembershipPinUsesSnapshotIdentity(t *testing.T) {
+	base := k8sstore.NewSnapshotBranch(2)
+	live := k8sstore.NewMemoryStore(2)
+	require.NoError(t, live.Add(ingressBackendIngressResource("a", "echo", nil), []string{"default", "a"}))
+	snapshot, err := live.Pin()
+	require.NoError(t, err)
+	changes, err := base.Changes(t.Context(), snapshot, []string{"metadata.namespace", "metadata.name"})
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name     string
+		snapshot stores.ReadSnapshot
+		conflict bool
+	}{
+		{name: "same root", snapshot: base},
+		{name: "changed revision", snapshot: base.Apply(changes), conflict: true},
+		{name: "different source", snapshot: k8sstore.NewSnapshotBranch(2), conflict: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := &incrementalRenderSession{
+				membershipPins: map[string]incrementalStoreCursor{},
+				cursors:        map[string]incrementalStoreCursor{},
+			}
+			require.NoError(t, session.markSourceMembershipPin("objects", base, true))
+			err := session.markSourceMembershipPin("objects", test.snapshot, false)
+			if test.conflict {
+				require.ErrorIs(t, err, incremental.ErrRevisionConflict)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
 
 func TestInputIsolationJournalSupportsBatchesWithoutAcceptingSiblingHistory(t *testing.T) {
 	live := k8sstore.NewMemoryStore(2)
@@ -130,4 +167,51 @@ func TestInputIsolationAdmissionRetainsWarmGraphAfterConcurrentAcceptance(t *tes
 	require.Contains(t, result.HAProxyConfig, "backend default_observed_svc_echo_http")
 	require.NotContains(t, result.HAProxyConfig, "backend default_later_svc_echo_http")
 	require.Equal(t, before, fixture.executions(ingressBackendComponent, "stable"))
+}
+
+func TestInputIsolationAdmissionAcrossIdenticalSiblingSnapshots(t *testing.T) {
+	fixture := newGatewayRouteAnalysisFixture(t)
+	observed := fixture.provider
+	branches := map[string]*k8sstore.SnapshotBranch{}
+	for alias, watch := range fixture.config.WatchedResources {
+		branches[alias] = k8sstore.NewSnapshotBranch(len(watch.IndexBy))
+	}
+	capture := func() {
+		values := map[string]stores.Store{}
+		for alias, watch := range fixture.config.WatchedResources {
+			snapshot, err := observed.GetStore(alias).(stores.SnapshotProvider).Pin()
+			require.NoError(t, err)
+			changes, err := branches[alias].Changes(t.Context(), snapshot, watch.IndexBy)
+			require.NoError(t, err)
+			branches[alias] = branches[alias].Apply(changes)
+			values[alias] = branches[alias]
+		}
+		fixture.provider = stores.NewRealStoreProvider(values)
+	}
+	capture()
+	fixture.renderAndCommitCacheReady(t)
+	for index := range 2 {
+		name := fmt.Sprintf("gw-%02d", index)
+		fixture.addGateway(t, gatewayHostMapGateway(name, "2026-01-01T00:00:00Z", "", 80))
+		before := maps.Clone(branches)
+		capture()
+		admissionProvider := fixture.provider
+		branches = before
+		capture()
+		fixture.renderAndCommitCacheReady(t)
+		proposed := gatewayRouteAnalysisRoute(name, name+".example.com", "/", "")
+		proposed["spec"].(map[string]any)["parentRefs"] = []any{gatewayParentRef("Gateway", name)}
+		overlay := stores.NewOverlayStoreProvider(admissionProvider, stores.NewValidationContext(map[string]*stores.StoreOverlay{
+			"httproutes": stores.NewStoreOverlayForCreate(&unstructured.Unstructured{Object: proposed}),
+		}))
+		result, err := fixture.service.Render(t.Context(), overlay, rendercontext.RenderModeAdmission,
+			rendercontext.WithAdmissionSubject("httproutes", "default", name))
+		require.NoError(t, err, "route %s", name)
+		require.Contains(t, result.HAProxyConfig, name+".example.com:")
+		require.NotEqual(t, "cold", result.CacheState)
+		result.InputTransaction.Abort()
+		fixture.addHTTPRoute(t, proposed)
+		capture()
+		fixture.renderAndCommitCacheReady(t)
+	}
 }
