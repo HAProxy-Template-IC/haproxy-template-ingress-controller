@@ -590,3 +590,13 @@ func TestMetrics_RuntimeMapDivergence(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("host.map")))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.RuntimeMapDivergence.WithLabelValues("never-seen.map")))
 }
+
+func TestComponent_HTTPContentRejected(t *testing.T) {
+	metrics, bus := startTestComponent(t)
+	bus.Publish(events.NewHTTPContentRejectedEvent("https://example.test/a"))
+	bus.Publish(events.NewHTTPContentRejectedEvent("https://example.test/b"))
+	assert.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.HTTPContentRejectedTotal) == 2
+	}, time.Second, 5*time.Millisecond)
+	assert.Zero(t, testutil.ToFloat64(metrics.HTTPContentRevokedTotal))
+}

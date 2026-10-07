@@ -57,9 +57,10 @@ const (
 	eventReasonValidated        = "Validated"
 	// Render-gate Event reasons: HAProxy's verdict on a render that was
 	// already dispatched, as opposed to a config the load gate refused.
-	eventReasonRenderRefused  = "RenderRefusedByHAProxy"
-	eventReasonRenderAccepted = "RenderAcceptedByHAProxy"
-	eventReasonContentRevoked = "HTTPContentRevoked"
+	eventReasonRenderRefused   = "RenderRefusedByHAProxy"
+	eventReasonRenderAccepted  = "RenderAcceptedByHAProxy"
+	eventReasonContentRevoked  = "HTTPContentRevoked"
+	eventReasonContentRejected = "HTTPContentRejected"
 
 	// conditionValidated is the status condition type reporting whether the
 	// controller accepted (validated) the observed config generation. Its
@@ -183,6 +184,7 @@ func NewStatusUpdater(
 			events.EventTypeValidationFailed,
 			events.EventTypeRenderGateCompleted,
 			events.EventTypeHTTPContentRevoked,
+			events.EventTypeHTTPContentRejected,
 		},
 	})
 
@@ -227,6 +229,8 @@ func (u *StatusUpdater) HandleEvent(event busevents.Event) {
 		u.restoreValidatedAfterPass(u.ctx, e)
 	case *events.HTTPContentRevokedEvent:
 		u.handleHTTPContentRevoked(e)
+	case *events.HTTPContentRejectedEvent:
+		u.handleHTTPContentRejected(e)
 	}
 }
 
@@ -323,6 +327,24 @@ func (u *StatusUpdater) handleHTTPContentRevoked(event *events.HTTPContentRevoke
 		}
 		u.recorder.Event(object, corev1.EventTypeWarning, eventReasonContentRevoked,
 			httpContentRevokedMessage(event))
+	}
+}
+
+func (u *StatusUpdater) handleHTTPContentRejected(event *events.HTTPContentRejectedEvent) {
+	if u.recorder == nil {
+		return
+	}
+	u.mu.RLock()
+	refs := slices.Clone(u.configRefs)
+	u.mu.RUnlock()
+	for _, ref := range refs {
+		object := &v1alpha1.HAProxyTemplateConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: ref.Name, Namespace: ref.Namespace, UID: ref.UID, ResourceVersion: ref.ResourceVersion,
+			},
+		}
+		u.recorder.Eventf(object, corev1.EventTypeWarning, eventReasonContentRejected,
+			"New content from %s failed configuration validation. It was not applied; any previously accepted content remains active. Fix the fetched content or its template.", event.URL)
 	}
 }
 
@@ -514,9 +536,11 @@ func sourceRefsOrFallback(refs []events.ConfigSourceRef, htc *v1alpha1.HAProxyTe
 		return refs
 	}
 	return []events.ConfigSourceRef{{
-		Namespace:  htc.Namespace,
-		Name:       htc.Name,
-		Generation: htc.Generation,
+		Namespace:       htc.Namespace,
+		Name:            htc.Name,
+		Generation:      htc.Generation,
+		UID:             htc.UID,
+		ResourceVersion: htc.ResourceVersion,
 	}}
 }
 

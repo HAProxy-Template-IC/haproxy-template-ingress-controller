@@ -317,6 +317,12 @@ don't replace the content used by the running configuration. During startup,
 first renders and their validation checks run one at a time; waiting for HTTP
 responses releases that slot so other renders can proceed.
 
+If refreshed content fails validation before acceptance, HAPTIC keeps any previously
+accepted content and records an `HTTPContentRejected` Warning Event on the
+`HAProxyTemplateConfig`. The `haptic_http_content_rejected_total` counter increases
+once per rejected URL version. Fix the fetched content or the template that uses
+it; a repaired response can replace the saved content after validation.
+
 If HAProxy refuses a configuration containing newly accepted content, HAPTIC
 takes the content back and renders without it, or with the version it accepted
 before. It records an `HTTPContentRevoked` Warning Event on the

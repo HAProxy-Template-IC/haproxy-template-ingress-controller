@@ -141,6 +141,7 @@ const (
 
 	EventTypeHTTPContentAcceptanceRequested = "http.content.acceptance.requested"
 	EventTypeHTTPContentRevoked             = "http.content.revoked"
+	EventTypeHTTPContentRejected            = "http.content.rejected"
 
 	// Proposal validation event types.
 	// Used for validating hypothetical configuration changes before committing them.

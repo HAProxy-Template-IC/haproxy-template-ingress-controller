@@ -305,8 +305,10 @@ func sourceRefs(sources []*unstructured.Unstructured) []events.ConfigSourceRef {
 		return nil
 	}
 	return []events.ConfigSourceRef{{
-		Namespace:  config.GetNamespace(),
-		Name:       config.GetName(),
-		Generation: config.GetGeneration(),
+		Namespace:       config.GetNamespace(),
+		Name:            config.GetName(),
+		Generation:      config.GetGeneration(),
+		UID:             config.GetUID(),
+		ResourceVersion: config.GetResourceVersion(),
 	}}
 }

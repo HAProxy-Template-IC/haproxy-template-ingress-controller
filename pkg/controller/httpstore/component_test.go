@@ -18,6 +18,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -890,4 +891,44 @@ func TestSourceReplacementFailureDoesNotBlockNextPendingValidation(t *testing.T)
 	nextRequest := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, validationRequests, testutil.EventTimeout)
 	assert.NotEqual(t, retiredRequest.ID, nextRequest.ID)
 	assert.True(t, nextRequest.HTTPOverlay.HasPendingURL(otherServer.URL))
+}
+
+func TestHTTPContentRejectionReportsOnlyCurrentPendingVersion(t *testing.T) {
+	responses := []string{"accepted", "superseded", "invalid"}
+	var count atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(responses[min(int(count.Add(1)-1), len(responses)-1)]))
+	}))
+	defer server.Close()
+	url := strings.Replace(server.URL, "http://", "http://user:password@", 1) + "/list?token=secret#private"
+	bus, logger := testutil.NewTestBusAndLogger()
+	component := New(bus, logger, 0)
+	requests := bus.SubscribeTypes("requests", 2, events.EventTypeProposalValidationRequested)
+	rejections := bus.SubscribeTypes("rejections", 2, events.EventTypeHTTPContentRejected)
+	bus.Start()
+
+	_, err := component.store.Fetch(t.Context(), url, httpstore.FetchOptions{}, nil)
+	require.NoError(t, err)
+	changed, err := component.store.RefreshURL(t.Context(), url)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.triggerProposalValidation(url)
+	first := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requests, testutil.EventTimeout)
+	require.True(t, component.store.RejectPending(url))
+	changed, err = component.store.RefreshURL(t.Context(), url)
+	require.NoError(t, err)
+	require.True(t, changed)
+	component.handleProposalValidationCompleted(events.NewProposalValidationFailedEvent(first.ID, "validation", nil, 1))
+	testutil.AssertNoEvent[*events.HTTPContentRejectedEvent](t, rejections, testutil.NoEventTimeout)
+
+	current := testutil.WaitForEvent[*events.ProposalValidationRequestedEvent](t, requests, testutil.EventTimeout)
+	failure := events.NewProposalValidationFailedEvent(current.ID, "validation", nil, 1)
+	component.handleProposalValidationCompleted(failure)
+	rejected := testutil.WaitForEvent[*events.HTTPContentRejectedEvent](t, rejections, testutil.EventTimeout)
+	assert.Equal(t, server.URL+"/list", rejected.URL)
+	content, ok := component.store.Get(url)
+	require.True(t, ok)
+	assert.Equal(t, "accepted", content)
+	component.handleProposalValidationCompleted(failure)
+	testutil.AssertNoEvent[*events.HTTPContentRejectedEvent](t, rejections, testutil.NoEventTimeout)
 }

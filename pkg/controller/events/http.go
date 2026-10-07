@@ -102,3 +102,15 @@ func NewHTTPContentRevokedEvent(url, checksum string, restored, critical bool) *
 }
 
 func (e *HTTPContentRevokedEvent) EventType() string { return EventTypeHTTPContentRevoked }
+
+// HTTPContentRejectedEvent reports pending content refused before acceptance.
+type HTTPContentRejectedEvent struct {
+	URL string // Credentials, query, and fragment are redacted.
+	timestamped
+}
+
+func NewHTTPContentRejectedEvent(url string) *HTTPContentRejectedEvent {
+	return &HTTPContentRejectedEvent{URL: url, timestamped: newTimestamped()}
+}
+
+func (e *HTTPContentRejectedEvent) EventType() string { return EventTypeHTTPContentRejected }
