@@ -2228,7 +2228,7 @@ test-chart-upgrade:
   # published release is missing here.
   parallel:
     matrix:
-      - BASELINE_CHART_VERSION: ["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0", "0.2.0-alpha.3"]
+      - BASELINE_CHART_VERSION: ["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0", "0.4.0", "0.2.0-alpha.3"]
   needs:
     - job: prepare-spoa-release
       optional: true
