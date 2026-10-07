@@ -29,6 +29,16 @@ import (
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 )
 
+const (
+	verbGet    = "get"
+	verbList   = "list"
+	verbWatch  = "watch"
+	verbCreate = "create"
+	verbUpdate = "update"
+	verbPatch  = "patch"
+	verbDelete = "delete"
+)
+
 // InitialConfigYAML is the initial controller configuration.
 const InitialConfigYAML = `
 pod_selector:
@@ -303,75 +313,13 @@ func NewSecret(namespace, name string) *corev1.Secret {
 	}
 }
 
-// NewWebhookCertSecret creates a Secret with dummy TLS certificates for webhook testing.
-// The certificates are self-signed and only used for controller startup - acceptance tests
-// don't actually use the webhook endpoint.
-func NewWebhookCertSecret(namespace, name string) *corev1.Secret {
-	// Minimal self-signed certificate (valid for 10 years, CN=webhook)
-	// Generated with: openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=webhook"
-	cert := `-----BEGIN CERTIFICATE-----
-MIIDCzCCAfOgAwIBAgIUFQ7xGq8VPvT8wF8nVqHt0TkGYCwwDQYJKoZIhvcNAQEL
-BQAwFTETMBEGA1UEAwwKd2ViaG9vazEwMB4XDTI1MDEyNjAwMDAwMFoXDTM1MDEy
-NDAwMDAwMFowFTETMBEGA1UEAwwKd2ViaG9vazEwMIIBIjANBgkqhkiG9w0BAQEF
-AAOCAQ8AMIIBCgKCAQEAr8VQqLFfhkX2YJ4KGg9kPMYxGh2vH2xK3fY5N8nY8fXJ
-eDGH8ZfX4V5YQj4C5H9xBjR7CJdN3jJ8WYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V
-5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9x
-H5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8
-fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH
-4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7Y
-fC8VQwIDAQABo1MwUTAdBgNVHQ4EFgQU5Q9xH5C8fYqH4J7YfC8V5Q9xH5AwHwYD
-VR0jBBgwFoAU5Q9xH5C8fYqH4J7YfC8V5Q9xH5AwDwYDVR0TAQH/BAUwAwEB/zAN
-BgkqhkiG9w0BAQsFAAOCAQEAC8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5
-C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fY
-qH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J
-7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC
-8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q
-9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5
-C8fYqH4J7YfC8V5Q9xH5Cw==
------END CERTIFICATE-----`
-
-	key := `-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCvxVCosV+GRfZg
-ngoad2Q8xjEaHa8fbErd9jk3ydjx9cl4MYfxl9fhXlhCPgLkf3EGNHsIl03eMnxZ
-iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofg
-nth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8
-LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXl
-D3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3Ef
-kLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxVDAgMBAAEC
-ggEAC8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5
-C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fY
-qH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J
-7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC
-8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q
-9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5QQKBg
-QDlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXl
-D3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3Ef
-kLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LwKBgQDBXlD3
-EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkL
-x9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9io
-fgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgQKBgC8V5Q9xH5C8fYqH4J7Y
-fC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V
-5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfC8V5Q9x
-H5C8fYqH4J7YfC8V5Q9xH5C8fYqH4J7YfAoGBALx9iofgnth8LxXlD3EfkLx9iofg
-nth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8
-LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXl
-D3EfkLx9iofgnth8LxXlBAoGAD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXl
-D3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3Ef
-kLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9iofgnth8LxXlD3EfkLx9
-iofgnth8Lw==
------END PRIVATE KEY-----`
-
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Data: map[string][]byte{
-			"tls.crt": []byte(cert),
-			"tls.key": []byte(key),
-		},
-		Type: corev1.SecretTypeTLS,
+// NewWebhookCertSecret creates a valid self-signed webhook certificate.
+func NewWebhookCertSecret(namespace, name string) (*corev1.Secret, error) {
+	cert, key, err := genSelfSignedServerCert(1, "haptic-webhook."+namespace+".svc")
+	if err != nil {
+		return nil, err
 	}
+	return newTLSSecret(namespace, name, cert, key), nil
 }
 
 // DefaultHAProxyTemplate is the default HAProxy configuration template used in tests.
@@ -596,6 +544,8 @@ func NewRole(namespace, name string) *rbacv1.Role {
 			Namespace: namespace,
 		},
 		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"events"}, Verbs: []string{verbCreate, verbPatch}},
+
 			{
 				// Both kinds: the library watch starts unconditionally, and a
 				// denied list/watch fails its cache sync, which fails the whole
@@ -603,14 +553,14 @@ func NewRole(namespace, name string) *rbacv1.Role {
 				// reconciliation_total 0 with nothing pointing at RBAC.
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxytemplateconfigs", "haproxytemplatelibraries"},
-				Verbs:     []string{"get", "watch", "list"},
+				Verbs:     []string{verbGet, verbWatch, verbList},
 			},
 			{
 				// Stamping the config as owner of the libraries it references,
 				// so resource-tree views show the relationship.
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxytemplatelibraries"},
-				Verbs:     []string{"patch"},
+				Verbs:     []string{verbPatch},
 			},
 			{
 				// Mirrors the chart ClusterRole — the status_updater writes
@@ -618,67 +568,67 @@ func NewRole(namespace, name string) *rbacv1.Role {
 				// haproxytemplateconfigs/status.
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxytemplateconfigs/status"},
-				Verbs:     []string{"get", "update", "patch"},
+				Verbs:     []string{verbGet, verbUpdate, verbPatch},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxycfgs"},
-				Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
+				Verbs:     []string{verbGet, verbList, verbWatch, verbCreate, verbUpdate, verbPatch},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxycfgs/status"},
-				Verbs:     []string{"get", "update", "patch"},
+				Verbs:     []string{verbGet, verbUpdate, verbPatch},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxymapfiles"},
-				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+				Verbs:     []string{verbGet, verbList, verbWatch, verbCreate, verbUpdate, verbPatch, verbDelete},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxymapfiles/status"},
-				Verbs:     []string{"get", "update", "patch"},
+				Verbs:     []string{verbGet, verbUpdate, verbPatch},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxygeneralfiles"},
-				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+				Verbs:     []string{verbGet, verbList, verbWatch, verbCreate, verbUpdate, verbPatch, verbDelete},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxygeneralfiles/status"},
-				Verbs:     []string{"get", "update", "patch"},
+				Verbs:     []string{verbGet, verbUpdate, verbPatch},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxycrtlistfiles"},
-				Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+				Verbs:     []string{verbGet, verbList, verbWatch, verbCreate, verbUpdate, verbPatch, verbDelete},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxycrtlistfiles/status"},
-				Verbs:     []string{"get", "update", "patch"},
+				Verbs:     []string{verbGet, verbUpdate, verbPatch},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"configmaps"},
-				Verbs:     []string{"get", "watch", "list"},
+				Verbs:     []string{verbGet, verbWatch, verbList},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"secrets"},
-				Verbs:     []string{"get", "watch", "list"},
+				Verbs:     []string{verbGet, verbWatch, verbList},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"pods"},
-				Verbs:     []string{"get", "watch", "list"},
+				Verbs:     []string{verbGet, verbWatch, verbList},
 			},
 			{
 				APIGroups: []string{"networking.k8s.io"},
 				Resources: []string{"ingresses"},
-				Verbs:     []string{"get", "watch", "list"},
+				Verbs:     []string{verbGet, verbWatch, verbList},
 			},
 		},
 	}
@@ -718,6 +668,9 @@ func NewClusterRole(name, namespace string) *rbacv1.ClusterRole {
 			},
 		},
 		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{verbGet, verbList, verbWatch}},
+			{APIGroups: []string{"apiextensions.k8s.io"}, Resources: []string{"customresourcedefinitions"}, Verbs: []string{verbGet, verbList, verbWatch}},
+
 			{
 				// Both kinds: the library watch starts unconditionally, and a
 				// denied list/watch fails its cache sync, which fails the whole
@@ -725,34 +678,34 @@ func NewClusterRole(name, namespace string) *rbacv1.ClusterRole {
 				// reconciliation_total 0 with nothing pointing at RBAC.
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxytemplateconfigs", "haproxytemplatelibraries"},
-				Verbs:     []string{"get", "watch", "list"},
+				Verbs:     []string{verbGet, verbWatch, verbList},
 			},
 			{
 				// Stamping the config as owner of the libraries it references,
 				// so resource-tree views show the relationship.
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxytemplatelibraries"},
-				Verbs:     []string{"patch"},
+				Verbs:     []string{verbPatch},
 			},
 			{
 				APIGroups: []string{"networking.k8s.io"},
 				Resources: []string{"ingresses"},
-				Verbs:     []string{"get", "watch", "list"},
+				Verbs:     []string{verbGet, verbWatch, verbList},
 			},
 			{
 				APIGroups: []string{""},
 				Resources: []string{"services", "secrets"},
-				Verbs:     []string{"get", "watch", "list"},
+				Verbs:     []string{verbGet, verbWatch, verbList},
 			},
 			{
 				APIGroups: []string{"admissionregistration.k8s.io"},
 				Resources: []string{"validatingwebhookconfigurations"},
-				Verbs:     []string{"create", "update", "get", "list", "watch", "delete"},
+				Verbs:     []string{verbCreate, verbUpdate, verbGet, verbList, verbWatch, verbDelete},
 			},
 			{
 				APIGroups: []string{"coordination.k8s.io"},
 				Resources: []string{"leases"},
-				Verbs:     []string{"get", "create", "update"},
+				Verbs:     []string{verbGet, verbCreate, verbUpdate},
 			},
 		},
 	}
@@ -787,7 +740,6 @@ func NewClusterRoleBinding(name, clusterRoleName, serviceAccountName, serviceAcc
 
 // NewControllerDeployment creates a controller deployment.
 func NewControllerDeployment(namespace, crdName, secretName, serviceAccountName string, debugPort int32, replicas int32) *appsv1.Deployment {
-
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ControllerDeploymentName,

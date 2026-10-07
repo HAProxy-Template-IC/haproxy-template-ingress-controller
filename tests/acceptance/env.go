@@ -232,7 +232,11 @@ func CreateControllerEnvironment(ctx context.Context, t *testing.T, cfg klient.C
 			return fmt.Errorf("failed to create credentials secret: %w", err)
 		}
 	}
-	if err := cfg.Resources().Create(ctx, NewWebhookCertSecret(namespace, WebhookCertSecretName)); err != nil {
+	webhookSecret, err := NewWebhookCertSecret(namespace, WebhookCertSecretName)
+	if err != nil {
+		return fmt.Errorf("failed to generate webhook certificate: %w", err)
+	}
+	if err := cfg.Resources().Create(ctx, webhookSecret); err != nil {
 		return fmt.Errorf("failed to create webhook cert secret: %w", err)
 	}
 	if opts.SkipCredentialsSecret {

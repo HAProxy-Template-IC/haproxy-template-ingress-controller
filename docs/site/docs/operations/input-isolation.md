@@ -14,8 +14,9 @@ rejected.
 
 ## Find and repair a rejected change
 
-1. Check controller logs for `Watched resource change rejected`. The record names
-   the watched collection, namespace, and resource.
+1. Run `kubectl describe` on the affected resource and look for the `InputRejected`
+   Warning event. It explains the failure and asks you to correct the resource.
+   Controller logs also record `Watched resource change rejected`.
 2. Inspect `/debug/vars/inputRejections` through the controller's debug interface
    for the current rejected-resource list.
 3. Correct the named resource. HAPTIC retries observed changes automatically and

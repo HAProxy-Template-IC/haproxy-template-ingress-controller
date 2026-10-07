@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Admission no longer mistakes unchanged inputs for conflicting updates, which could reject valid changes under load.
+- Repaired fetched HTTP lists can pass validation and replace the previously accepted content.
+- Rejected watched-resource changes emit a Kubernetes Warning event on the affected resource.
 
 ## [0.4.0] - 2026-10-06
 

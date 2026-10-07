@@ -215,6 +215,7 @@ type incrementalRenderSession struct {
 	exactCycleCacheCommitted     bool
 	exactCycleOutputOnlyReplay   bool
 	cacheOutputGeneration        uint64
+	pendingHTTPOverlay           bool
 	cacheBaseUnavailable         bool
 	coldReason                   string
 	cachePublicationDeferred     bool
@@ -299,7 +300,8 @@ func (s *incrementalRenderState) begin(
 		return nil, fmt.Errorf("planning component bindings: %w", err)
 	}
 
-	if err := validateIncrementalHTTPOverlay(provider); err != nil {
+	pendingHTTPOverlay, err := validateIncrementalHTTPOverlay(provider, mode, httpSources.wrapper)
+	if err != nil {
 		return nil, fmt.Errorf("validating http overlay: %w", err)
 	}
 	snapshots, err := pinIncrementalStoreSnapshotsContext(ctx, s.config, bindings.required(s.required), provider)
@@ -360,6 +362,7 @@ func (s *incrementalRenderState) begin(
 		exactCycleRootCalls:     map[string][]exactCycleIncrementalObservation{},
 		exactCycleRootAuthority: newExactCycleIncrementalAuthority(),
 		cacheBaseUnavailable:    s.cachePending,
+		pendingHTTPOverlay:      pendingHTTPOverlay,
 		cachePublishable:        true,
 		cachePublicationEnabled: mode == rendercontext.RenderModeReconcile && !snapshots.hasK8sOverlays,
 		bindingPlan:             bindings,
@@ -721,16 +724,20 @@ func (r *incrementalRenderSession) collectDirtyQueries() error {
 	return nil
 }
 
-func validateIncrementalHTTPOverlay(provider stores.StoreProvider) error {
+func validateIncrementalHTTPOverlay(provider stores.StoreProvider, mode rendercontext.RenderMode, source httpstore.SourceID) (bool, error) {
 	overlayProvider, ok := provider.(*stores.OverlayStoreProvider)
 	if !ok {
-		return nil
+		return false, nil
 	}
-	httpOverlay := overlayProvider.GetHTTPOverlay()
-	if httpOverlay != nil && !httpOverlay.IsEmpty() {
-		return fmt.Errorf("%w: pending HTTP overlay", errIncrementalUnsupported)
+	overlay := overlayProvider.GetHTTPOverlay()
+	if overlay == nil || overlay.IsEmpty() {
+		return false, nil
 	}
-	return nil
+	frozen, exact := overlay.(*httpstore.HTTPOverlay)
+	if mode != rendercontext.RenderModeAdmission || !exact || source == 0 || frozen.RevisionSource() != source {
+		return false, fmt.Errorf("%w: pending HTTP overlay requires a matching immutable source in proposal validation", errIncrementalUnsupported)
+	}
+	return true, nil
 }
 
 func incrementalHTTPWrapper(

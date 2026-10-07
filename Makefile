@@ -432,7 +432,7 @@ test-acceptance: docker-build-test ## Run acceptance tests (builds image, create
 	@echo "Note: This will create a kind cluster and may take several minutes"
 	@echo "Environment variables:"
 	@echo "  KIND_NODE_IMAGE - Kind node image (default: kindest/node:v1.32.0)"
-	$(GO) test -tags=acceptance -v -timeout 15m ./tests/acceptance/...
+	$(GO) test -tags=acceptance -count=1 -v -timeout 15m $(if $(TEST_RUN_PATTERN),-run '$(TEST_RUN_PATTERN)',) ./tests/acceptance/...
 
 test-acceptance-parallel: docker-build-test ## Run acceptance tests in parallel (faster, shared cluster)
 	@echo "Running acceptance tests in parallel..."
@@ -440,7 +440,7 @@ test-acceptance-parallel: docker-build-test ## Run acceptance tests in parallel 
 	@echo "Environment variables:"
 	@echo "  KIND_NODE_IMAGE - Kind node image (default: kindest/node:v1.32.0)"
 	@echo "  PARALLEL        - Max concurrent tests (default: 4)"
-	$(GO) test -tags=acceptance -v -timeout 30m -parallel $${PARALLEL:-4} -run TestAllAcceptanceParallel ./tests/acceptance/...
+	$(GO) test -tags=acceptance -count=1 -v -timeout 30m -parallel $${PARALLEL:-4} -run TestAllAcceptanceParallel ./tests/acceptance/...
 
 CONFORMANCE_IMAGE ?= haptic-conformance-test:latest
 CONFORMANCE_KIND_NETWORK ?= kind

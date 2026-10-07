@@ -11,6 +11,7 @@ Like `tests/integration`, every file is tagged `//go:build acceptance` — a pla
 | `compression_test.go` | `configPublishing.compressionThreshold` and zstd-compressed `HAProxyCfg` content |
 | `error_scenarios_test.go` | Template/validation failures stay visible in status + events, do not deploy broken config |
 | `http_store_test.go` | HTTP Store: templates calling `http.Fetch(...)` auto-register URLs; the controller fetches, caches, and re-renders on content change. (No top-level `spec.httpResources` field — see `pkg/controller/httpstore/README.md`.) |
+| `input_isolation_test.go`, `input_isolation_cases_test.go` | Malformed basic-auth Secret across a controller restart; invalid annotations, Ingress snippets, and fetched lists; Warning events, independent updates, admission, and repair |
 | `leader_election_test.go` | Two-replica failover — deleting the leader pod; `haptic_leader_election_*` metrics reflect the transition |
 | `metrics_test.go` | `/metrics` exposes every name in the file's local `expectedMetrics` slice (analogous to `pkg/controller/metrics.TestMetrics_AllMetricsRegistered`) |
 | `parallel_test.go` | `test-acceptance-parallel` safety — multiple test cases share a cluster without interference |

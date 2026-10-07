@@ -18,13 +18,7 @@ package acceptance
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
-	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -89,9 +83,6 @@ func TestWebhookCertHotRotation(t *testing.T) {
 			require.NoError(t, createControllerRBAC(ctx, client, namespace), "create RBAC")
 			require.NoError(t, client.Resources().Create(ctx, NewSecret(namespace, ControllerSecretName)), "create credentials secret")
 
-			// Webhook TLS Secret carrying the REAL cert A (the shared
-			// NewWebhookCertSecret fixture ships a placeholder that cannot
-			// complete a handshake, so we build our own).
 			require.NoError(t, client.Resources().Create(ctx,
 				newTLSSecret(namespace, WebhookCertSecretName, certA, keyA)), "create webhook cert secret")
 
@@ -218,20 +209,6 @@ func newProberPod(namespace string) *corev1.Pod {
 	}
 }
 
-// newTLSSecret builds a kubernetes.io/tls Secret with the standard
-// tls.crt / tls.key keys (consumed both by the controller's API-fetch path
-// and, when mounted, as files for the reloading server).
-func newTLSSecret(namespace, name string, certPEM, keyPEM []byte) *corev1.Secret {
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Type:       corev1.SecretTypeTLS,
-		Data: map[string][]byte{
-			"tls.crt": certPEM,
-			"tls.key": keyPEM,
-		},
-	}
-}
-
 // rotateTLSSecret overwrites the cert/key of an existing TLS Secret in place.
 func rotateTLSSecret(ctx context.Context, t *testing.T, client klient.Client, namespace, name string, certPEM, keyPEM []byte) {
 	t.Helper()
@@ -299,33 +276,4 @@ func containerRestarts(pod *corev1.Pod, container string) int32 {
 		}
 	}
 	return -1
-}
-
-// genSelfSignedServerCert builds a self-signed server certificate with the
-// given serial number and DNS SAN. Distinct serials let the test detect a
-// rotation purely from the served certificate.
-func genSelfSignedServerCert(serial int64, dnsName string) (certPEM, keyPEM []byte, err error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, fmt.Errorf("generating key: %w", err)
-	}
-
-	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(serial),
-		Subject:      pkix.Name{CommonName: dnsName},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{dnsName},
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return nil, nil, fmt.Errorf("creating certificate: %w", err)
-	}
-
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	return certPEM, keyPEM, nil
 }

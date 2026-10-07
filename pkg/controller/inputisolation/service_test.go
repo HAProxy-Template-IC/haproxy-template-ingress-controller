@@ -27,6 +27,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
@@ -272,4 +273,34 @@ func TestRepeatedInvalidRevisionDoesNotRepeatWarning(t *testing.T) {
 	_, err := selector.Execute(t.Context(), provider, rendercontext.RenderModeReconcile)
 	require.NoError(t, err)
 	require.Equal(t, 2, strings.Count(log.String(), "level=WARN"))
+}
+
+func TestRejectionNotificationsTrackCurrentSnapshot(t *testing.T) {
+	live := k8sstore.NewMemoryStore(2)
+	provider := stores.NewRealStoreProvider(map[string]stores.Store{"widgets": live})
+	watch := config.WatchedResource{APIVersion: "example.test/v1", Resources: "widgets", IndexBy: []string{"metadata.namespace", "metadata.name"}}
+	var current []Rejection
+	selector := New(&validatingFixture{}, map[string]config.WatchedResource{"widgets": watch}, nil, Callbacks{Updated: func(rejected []Rejection) { current = rejected }})
+	bad := widget("bad", "before")
+	bad.SetUID("original-uid")
+	bad.SetResourceVersion("1")
+	require.NoError(t, live.Add(bad, []string{"default", "bad"}))
+	_, err := selector.Execute(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.Empty(t, current)
+	bad.SetResourceVersion("2")
+	bad.SetAnnotations(map[string]string{"invalid": "true"})
+	require.NoError(t, live.Update(bad, []string{"default", "bad"}))
+	_, err = selector.Execute(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.Len(t, current, 1)
+	require.Equal(t, corev1.ObjectReference{APIVersion: "example.test/v1", Kind: "Widget", Namespace: "default", Name: "bad", UID: "original-uid", ResourceVersion: "2"}, current[0].Object)
+	current[0].Reason = "mutated observer copy"
+	_, snapshot, _ := selector.Snapshot()
+	require.NotEqual(t, current[0].Reason, snapshot[0].Reason)
+	bad.SetAnnotations(nil)
+	require.NoError(t, live.Update(bad, []string{"default", "bad"}))
+	_, err = selector.Execute(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.NoError(t, err)
+	require.Empty(t, current, "repair must clear the rejection notification")
 }

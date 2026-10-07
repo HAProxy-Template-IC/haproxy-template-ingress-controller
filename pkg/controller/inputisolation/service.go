@@ -25,6 +25,8 @@ import (
 	"strings"
 	"sync/atomic"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -39,22 +41,24 @@ type Pipeline interface {
 
 // Rejection identifies a watched resource revision that has not been accepted.
 type Rejection struct {
-	Store     string `json:"store"`
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	Deleted   bool   `json:"deleted"`
-	Reason    string `json:"reason"`
-	revision  stores.Revision
+	Store     string                 `json:"store"`
+	Namespace string                 `json:"namespace"`
+	Name      string                 `json:"name"`
+	Deleted   bool                   `json:"deleted"`
+	Reason    string                 `json:"reason"`
+	Object    corev1.ObjectReference `json:"object"`
+
+	revision stores.Revision
 }
 
 // Service retains validated inputs while independently valid changes advance.
 type Service struct {
-	pipeline     Pipeline
-	watches      map[string]config.WatchedResource
-	logger       *slog.Logger
-	permit       chan struct{}
-	accepted     atomic.Pointer[acceptedInputs]
-	onRejections func(int)
+	pipeline  Pipeline
+	watches   map[string]config.WatchedResource
+	logger    *slog.Logger
+	permit    chan struct{}
+	accepted  atomic.Pointer[acceptedInputs]
+	callbacks Callbacks
 }
 
 type acceptedInputs struct {
@@ -78,14 +82,20 @@ type attempt struct {
 	initialError error
 }
 
+// Callbacks reports accepted rejection diagnostics without changing validation.
+type Callbacks struct {
+	Count   func(int)
+	Updated func([]Rejection)
+}
+
 // New creates an input selector. The supplied pipeline must run full validation.
-func New(validatingPipeline Pipeline, watches map[string]config.WatchedResource, logger *slog.Logger, onRejections ...func(int)) *Service {
+func New(validatingPipeline Pipeline, watches map[string]config.WatchedResource, logger *slog.Logger, callbacks ...Callbacks) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	service := &Service{pipeline: validatingPipeline, watches: maps.Clone(watches), logger: logger, permit: make(chan struct{}, 1)}
-	if len(onRejections) > 0 {
-		service.onRejections = onRejections[0]
+	if len(callbacks) > 0 {
+		service.callbacks = callbacks[0]
 	}
 	return service
 }
@@ -163,7 +173,7 @@ func (s *Service) Execute(ctx context.Context, observed stores.StoreProvider, mo
 			break
 		}
 	}
-	rejections := s.describeRejections(a.rejected)
+	rejections := s.describeRejections(ctx, a.rejected, candidate, base)
 	return s.accept(ctx, a.branches, a.result, rejections)
 }
 
@@ -327,18 +337,6 @@ func stopInputTrial(ctx context.Context, err error) bool {
 		pipeline.WaitsForCriticalContent(err)
 }
 
-func (s *Service) describeRejections(groups []changeGroup) []Rejection {
-	var rejected []Rejection
-	for _, group := range groups {
-		for _, alias := range slices.Sorted(maps.Keys(group.changes)) {
-			for _, change := range group.changes[alias] {
-				rejected = append(rejected, Rejection{Store: alias, Namespace: change.Namespace(), Name: change.Name(), Deleted: change.Deleted(), Reason: group.reason.Error(), revision: change.Revision()})
-			}
-		}
-	}
-	return rejected
-}
-
 func (s *Service) accept(ctx context.Context, branches map[string]*k8sstore.SnapshotBranch, result *pipeline.PipelineResult, rejected []Rejection) (*pipeline.PipelineResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -347,29 +345,12 @@ func (s *Service) accept(ctx context.Context, branches map[string]*k8sstore.Snap
 		return nil, errors.New("input validation returned no rendered result")
 	}
 	previous := s.accepted.Swap(&acceptedInputs{branches: branches, rejections: rejected})
-	if s.onRejections != nil {
-		s.onRejections(len(rejected))
+	if s.callbacks.Count != nil {
+		s.callbacks.Count(len(rejected))
 	}
-	if previous != nil && sameRejectedChanges(previous.rejections, rejected) {
-		return result, nil
+	if s.callbacks.Updated != nil {
+		s.callbacks.Updated(slices.Clone(rejected))
 	}
-	for _, rejection := range rejected {
-		s.logger.Warn("Watched resource change rejected; other resources continue updating. Correct this resource to apply the change.",
-			"store", rejection.Store, "namespace", rejection.Namespace, "name", rejection.Name, "deleted", rejection.Deleted, "reason", rejection.Reason, "diagnostics", "/debug/vars/inputRejections")
-	}
+	s.reportRejections(previous, rejected)
 	return result, nil
-}
-
-func sameRejectedChanges(left, right []Rejection) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		a, b := &left[index], &right[index]
-		if a.Store != b.Store || a.Namespace != b.Namespace || a.Name != b.Name ||
-			a.Deleted != b.Deleted || a.revision != b.revision {
-			return false
-		}
-	}
-	return true
 }

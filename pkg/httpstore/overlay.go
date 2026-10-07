@@ -144,6 +144,11 @@ func newHTTPOverlayFromState(
 	}
 }
 
+// RevisionSource identifies the store that supplied this immutable overlay.
+func (o *HTTPOverlay) RevisionSource() SourceID {
+	return o.source
+}
+
 // IsEmpty returns true if the overlay contains no pending content.
 // Implements the stores.ContentOverlay interface.
 func (o *HTTPOverlay) IsEmpty() bool {

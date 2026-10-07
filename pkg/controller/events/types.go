@@ -72,9 +72,10 @@ const (
 	EventTypeLibrarySetChanged        = "snippets.set.changed"
 
 	// Resource event types.
-	EventTypeResourceIndexUpdated = "resource.index.updated"
-	EventTypeResourceSyncComplete = "resource.sync.complete"
-	EventTypeIndexSynchronized    = "index.synchronized"
+	EventTypeWatchedInputsRejected = "resource.input.rejected"
+	EventTypeResourceIndexUpdated  = "resource.index.updated"
+	EventTypeResourceSyncComplete  = "resource.sync.complete"
+	EventTypeIndexSynchronized     = "index.synchronized"
 
 	// Reconciliation event types.
 	EventTypeReconciliationTriggered = "reconciliation.triggered"
