@@ -89,6 +89,7 @@ func New(metrics *Metrics, eventBus *busevents.EventBus) *Component {
 		events.EventTypeHAProxyPodRejected,
 		events.EventTypeConfigInvalid,
 		events.EventTypeHTTPContentRevoked,
+		events.EventTypeHTTPContentRejected,
 	)
 
 	return &Component{
@@ -182,18 +183,22 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.handleLostLeadership(e)
 	case *events.HAProxyPodRejectedEvent:
 		c.metrics.RecordHAProxyPodRejected(e.Reason)
+	case *events.HTTPContentRejectedEvent:
+		c.metrics.RecordHTTPContentRejected()
 	case *events.HTTPContentRevokedEvent:
 		c.metrics.RecordHTTPContentRevoked()
 	case *events.ConfigInvalidEvent:
-		// One increment per validator that rejected the config. The map is keyed
-		// by validator name; an empty/absent map still counts as one rejection
-		// under the "coordinator" label so a refusal is never silently uncounted.
-		if len(e.ValidationErrors) == 0 {
-			c.metrics.RecordConfigRejected("coordinator")
-		}
-		for validatorName := range e.ValidationErrors {
-			c.metrics.RecordConfigRejected(validatorName)
-		}
+		c.handleConfigInvalid(e)
+	}
+}
+
+func (c *Component) handleConfigInvalid(event *events.ConfigInvalidEvent) {
+	// A missing validator verdict is still a coordinator rejection.
+	if len(event.ValidationErrors) == 0 {
+		c.metrics.RecordConfigRejected("coordinator")
+	}
+	for validator := range event.ValidationErrors {
+		c.metrics.RecordConfigRejected(validator)
 	}
 }
 

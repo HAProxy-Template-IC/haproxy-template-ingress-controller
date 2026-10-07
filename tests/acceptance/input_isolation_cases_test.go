@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/inputisolation"
 )
 
@@ -198,15 +199,7 @@ func assessFetchedListIsolation(ctx context.Context, t *testing.T, cfg *envconf.
 	require.NoError(t, err)
 	require.NoError(t, debug.WaitForAuxFileContains(ctx, "blocked-ips.acl", "192.168.1.0/24", 30*time.Second))
 	require.NoError(t, UpdateBlocklistAndRestart(ctx, t, client, clientset, namespace, InvalidBlocklistContent))
-	// The accepted file alone cannot prove that the invalid refresh was attempted.
-	require.NoError(t, debug.waitFor(ctx, 30*time.Second, "fetched list validation failure", func(ctx context.Context) (bool, error) {
-		pod, err := GetControllerPod(ctx, client, namespace)
-		if err != nil {
-			return false, err
-		}
-		logs, err := GetPodLogs(ctx, clientset, pod, 200)
-		return strings.Contains(logs, "HTTP content validation failed, rejecting pending content") && strings.Contains(logs, "not-an-ip-address"), err
-	}))
+	waitFetchedListRejection(ctx, t, client, clientset, namespace, debug)
 	advanceIsolationEndpoints(ctx, t, clientset, namespace, "192.0.2.20")
 	checkIsolationAdmission(ctx, t, client, namespace, "unrelated")
 	waitIsolationConfig(ctx, t, debug, "192.0.2.20:8080", "unrelated.example.test")
@@ -277,4 +270,40 @@ func waitRestartedHashRejection(ctx context.Context, t *testing.T, clientset kub
 		Name: rejected.Name, Namespace: rejected.Namespace, UID: rejected.UID, ResourceVersion: rejected.ResourceVersion,
 	}}
 	waitIsolationWarning(ctx, t, clientset, debug, object, rejected.Kind, since)
+}
+
+func waitFetchedListRejection(ctx context.Context, t *testing.T, client klient.Client, clientset kubernetes.Interface, namespace string, debug *DebugClient) {
+	t.Helper()
+	config := &v1alpha1.HAProxyTemplateConfig{}
+	require.NoError(t, client.Resources().Get(ctx, ControllerCRDName, namespace, config))
+	require.NotEmpty(t, config.UID)
+	require.NoError(t, debug.waitFor(ctx, 30*time.Second, "HTTPContentRejected Warning on the config", func(ctx context.Context) (bool, error) {
+		list, err := clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+			FieldSelector: fields.OneTermEqualSelector("involvedObject.uid", string(config.UID)).String(),
+		})
+		if err != nil {
+			return false, err
+		}
+		for _, event := range list.Items {
+			if event.Type == corev1.EventTypeWarning && event.Reason == "HTTPContentRejected" {
+				require.Equal(t, "HAProxyTemplateConfig", event.InvolvedObject.Kind)
+				require.Equal(t, config.Name, event.InvolvedObject.Name)
+				require.NotEmpty(t, event.InvolvedObject.ResourceVersion)
+				require.Contains(t, event.Message, "previously accepted content remains active")
+				require.Contains(t, event.Message, "Fix the fetched content or its template")
+				return true, nil
+			}
+		}
+		return false, nil
+	}))
+	metrics, err := SetupMetricsAccess(ctx, client, clientset, namespace, 30*time.Second)
+	require.NoError(t, err)
+	require.NoError(t, debug.waitFor(ctx, 30*time.Second, "HTTP content rejection counter", func(ctx context.Context) (bool, error) {
+		values, err := metrics.GetMetricValues(ctx, []string{"haptic_http_content_rejected_total", "haptic_http_content_revoked_total"})
+		if err != nil {
+			return false, err
+		}
+		require.Zero(t, values["haptic_http_content_revoked_total"], "invalid content must be rejected before acceptance")
+		return values["haptic_http_content_rejected_total"] > 0, nil
+	}))
 }

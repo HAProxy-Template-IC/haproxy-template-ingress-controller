@@ -180,9 +180,11 @@ func fetchAndValidateInitialConfig(
 	// Status is written to the HAProxyTemplateConfig only; the libraries are a
 	// different kind (same rule as configloader.sourceRefs).
 	sourceRefs := []events.ConfigSourceRef{{
-		Namespace:  configResource.GetNamespace(),
-		Name:       configResource.GetName(),
-		Generation: configResource.GetGeneration(),
+		Namespace:       configResource.GetNamespace(),
+		Name:            configResource.GetName(),
+		Generation:      configResource.GetGeneration(),
+		UID:             configResource.GetUID(),
+		ResourceVersion: configResource.GetResourceVersion(),
 	}}
 
 	bundle := &InitialConfigBundle{

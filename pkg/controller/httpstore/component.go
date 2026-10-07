@@ -256,7 +256,9 @@ func (c *Component) handleValidationFailure(batch *validationBatch, phase, errMs
 		"error", errMsg)
 
 	for _, entry := range batch.entries {
-		c.store.RejectPendingVersion(entry.url, entry.checksum, entry.revision)
+		if c.store.RejectPendingVersion(entry.url, entry.checksum, entry.revision) {
+			c.eventBus.Publish(events.NewHTTPContentRejectedEvent(httpstore.RedactURL(entry.url)))
+		}
 	}
 }
 

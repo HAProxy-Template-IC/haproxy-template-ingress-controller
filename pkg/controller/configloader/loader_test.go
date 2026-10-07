@@ -30,6 +30,7 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 			Name:            "test-config",
 			Namespace:       "default",
 			ResourceVersion: "12345",
+			UID:             "config-uid",
 			Generation:      7,
 		},
 		Spec: v1alpha1.HAProxyTemplateConfigSpec{
@@ -76,6 +77,9 @@ func TestConfigLoaderComponent_ProcessCRD(t *testing.T) {
 	assert.Equal(t, "test-config=7", parsedEvent.Version,
 		"the composite version keys on generation, so a status write cannot look like a config change")
 	assert.NotNil(t, parsedEvent.Config)
+	require.Len(t, parsedEvent.Sources, 1)
+	assert.Equal(t, crd.UID, parsedEvent.Sources[0].UID)
+	assert.Equal(t, crd.ResourceVersion, parsedEvent.Sources[0].ResourceVersion)
 }
 
 func TestConfigLoaderComponent_UnsupportedResourceType(t *testing.T) {

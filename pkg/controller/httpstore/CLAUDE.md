@@ -202,6 +202,7 @@ Published events (defined in `pkg/controller/events/`):
 |-------|------|---------|
 | `ProposalValidationRequestedEvent` | Refresh produced new content; before promoting it | Asks the proposal pipeline to validate one immutable pending-content batch and records its request ID and URL checksums |
 | `HTTPResourceUpdatedEvent` | Same call as above — sibling event for observability | Lets `commentator` / metrics see that content changed without subscribing to validation events |
+| `HTTPContentRejectedEvent` | Validation rejected the exact pending URL version | Warning Event on the active HAProxyTemplateConfig and a rejection counter; saved content stays active |
 | `HTTPResourceAcceptedEvent` | After a matching `ProposalValidationCompletedEvent` with `Valid == true` | Observability that pending → accepted promotion happened |
 | `ReconciliationTriggeredEvent("http_content_validated", true)` | After a successful promotion (in `handleValidationSuccess`) | Coalescible reconciliation request so HAProxy picks up the new content |
 | `HTTPContentAcceptanceRequestedEvent` | A deploying render (`WithCandidatesWithheld`) left out an unaccepted source | The leader's coordinator runs one acceptance attempt beside the reconcile loop (ADR-0030) |

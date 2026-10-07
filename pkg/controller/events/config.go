@@ -17,6 +17,8 @@ package events
 import (
 	"fmt"
 	"time"
+
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // ConfigParsedEvent is published when the HAProxyTemplateConfig CRD has been
@@ -30,9 +32,11 @@ import (
 // meaningful against the same object's metadata.generation — a designated
 // primary could not even represent "your shard edit was observed" (ADR-0016).
 type ConfigSourceRef struct {
-	Namespace  string
-	Name       string
-	Generation int64
+	Namespace       string
+	Name            string
+	Generation      int64
+	UID             types.UID
+	ResourceVersion string
 }
 
 type ConfigParsedEvent struct {

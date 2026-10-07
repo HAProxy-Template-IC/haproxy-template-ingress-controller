@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -691,5 +692,39 @@ func TestStatusUpdaterEmitsHTTPContentRevocationEffects(t *testing.T) {
 
 			assertNextEvent(t, recorder, "Warning", eventReasonContentRevoked, test.message)
 		})
+	}
+}
+
+func TestStatusUpdaterHTTPRejectionIdentifiesConfig(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, v1alpha1.AddToScheme(scheme))
+	broadcaster := record.NewBroadcaster()
+	defer broadcaster.Shutdown()
+	recorded := make(chan *corev1.Event, 1)
+	watcher := broadcaster.StartEventWatcher(func(event *corev1.Event) { recorded <- event })
+	defer watcher.Stop()
+	updater, _ := newStatusUpdaterFixture(t)
+	updater.recorder = broadcaster.NewRecorder(scheme, corev1.EventSource{Component: "haptic"})
+	htc := newHTC()
+	htc.UID = "config-uid"
+	htc.ResourceVersion = "42"
+	updater.cacheConfigRefs(sourceRefsOrFallback(nil, htc))
+
+	updater.HandleEvent(events.NewHTTPContentRejectedEvent("https://example.test/list"))
+	select {
+	case event := <-recorded:
+		assert.Equal(t, corev1.EventTypeWarning, event.Type)
+		assert.Equal(t, eventReasonContentRejected, event.Reason)
+		assert.Equal(t, htc.UID, event.InvolvedObject.UID)
+		assert.Equal(t, htc.ResourceVersion, event.InvolvedObject.ResourceVersion)
+		assert.Equal(t, htc.Name, event.InvolvedObject.Name)
+		assert.Equal(t, htc.Namespace, event.InvolvedObject.Namespace)
+		assert.Equal(t, "HAProxyTemplateConfig", event.InvolvedObject.Kind)
+		assert.Contains(t, event.Message, "https://example.test/list")
+		assert.Contains(t, event.Message, "previously accepted content remains active")
+		assert.Contains(t, event.Message, "Fix the fetched content or its template")
+	case <-time.After(time.Second):
+		t.Fatal("no HTTPContentRejected Warning recorded")
 	}
 }

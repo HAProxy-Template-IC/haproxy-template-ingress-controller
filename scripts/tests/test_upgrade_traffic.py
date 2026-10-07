@@ -31,17 +31,33 @@ signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 if os.environ.get("FORWARD_FAILURE"):
     print("forwarding failed", flush=True)
     sys.exit(1)
+offset = 100 * (len((work / "pids").read_text().splitlines()) - 1) if os.environ.get("LOSE_FORWARDER") else 0
 print("Warning: unrelated diagnostic", flush=True)
-print("Forwarding from 127.0.0.1:23443 -> " + os.environ.get("POD_HTTPS_PORT", "443"), flush=True)
-print("Forwarding from 127.0.0.1:23080 -> " + os.environ.get("POD_HTTP_PORT", "80"), flush=True)
+print(f"Forwarding from 127.0.0.1:{23443 + offset} -> " + os.environ.get("POD_HTTPS_PORT", "443"), flush=True)
+print(f"Forwarding from 127.0.0.1:{23080 + offset} -> " + os.environ.get("POD_HTTP_PORT", "80"), flush=True)
 signal.pause()
 ''')
         self.write_command("curl", '''#!/usr/bin/env python3
 import json
+import os
+from pathlib import Path
+import signal
 import sys
 
+work = Path(os.environ["WORK"])
+pids = (work / "pids").read_text().splitlines()
+offset = 100 * (len(pids) - 1) if os.environ.get("LOSE_FORWARDER") else 0
 resolve = sys.argv[sys.argv.index("--resolve") + 1]
-assert resolve in ["http.upgrade.test:23080:127.0.0.1", "tls.upgrade.test:23443:127.0.0.1"], resolve
+with (work / "requests").open("a") as output:
+    print(resolve, file=output)
+assert resolve in [f"http.upgrade.test:{23080 + offset}:127.0.0.1", f"tls.upgrade.test:{23443 + offset}:127.0.0.1"], resolve
+if os.environ.get("LOSE_FORWARDER") == "always" or (os.environ.get("LOSE_FORWARDER") and len(pids) == 1):
+    try:
+        os.kill(int(pids[-1]), signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    print("listener not ready", file=sys.stderr)
+    sys.exit(7)
 print(json.dumps({"environment": {"HOSTNAME": "upgrade-backend-test"}, "http": {"originalUrl": "/upgrade-check"}}))
 ''')
         self.addCleanup(self.stop_forwarders)
@@ -88,7 +104,11 @@ k() {
 }
 info() { :; }
 fail() { echo "$*" >&2; return 1; }
-wait_upgrade_traffic upgrade
+if [ -n "${TEST_ROUTE_TIMEOUT:-}" ]; then
+  probe_upgrade_pod first "$TEST_ROUTE_TIMEOUT"
+else
+  wait_upgrade_traffic upgrade
+fi
 '''], cwd=REPO, env=self.env, capture_output=True, text=True, timeout=15)
 
     def test_both_pods_use_current_forwarding_ports_and_stop_forwarders(self):
@@ -108,6 +128,28 @@ wait_upgrade_traffic upgrade
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("forwarding failed", result.stdout)
         self.assertFalse((self.work / "response.json").exists())
+
+    def test_listener_becoming_ready_reconnects_with_fresh_ports(self):
+        self.env["LOSE_FORWARDER"] = "once"
+        result = self.run_traffic()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.forward_pids()), 3)
+        requests = (self.work / "requests").read_text().splitlines()
+        for endpoint in ("http.upgrade.test:23180", "tls.upgrade.test:23543",
+                         "http.upgrade.test:23280", "tls.upgrade.test:23643"):
+            self.assertIn(endpoint + ":127.0.0.1", requests)
+        for pid in self.forward_pids():
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
+
+    def test_persistent_listener_failure_still_expires(self):
+        self.env.update(LOSE_FORWARDER="always", TEST_ROUTE_TIMEOUT="2")
+        result = self.run_traffic()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("listener not ready", result.stdout)
+        for pid in self.forward_pids():
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
 
     def test_controller_pod_gone_while_terminating_does_not_fail_the_phase(self):
         result = self.run_traffic()

@@ -30,7 +30,7 @@ func (ec *EventCommentator) determineLogLevel(event busevents.Event) slog.Level 
 			return slog.LevelInfo
 		}
 		return slog.LevelWarn
-	case events.EventTypeHAProxyPodRejected:
+	case events.EventTypeHAProxyPodRejected, events.EventTypeHTTPContentRejected:
 		return slog.LevelWarn
 
 	// Info level - lifecycle and completion events

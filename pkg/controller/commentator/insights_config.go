@@ -28,6 +28,10 @@ import (
 // ConfigValidated, ConfigInvalid, CertResourceChanged, and CertParsed events.
 func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (insight string, args []any) {
 	switch e := event.(type) {
+	case *events.HTTPContentRejectedEvent:
+		return "Fetched content failed validation; previously accepted content is unchanged. Fix the fetched content or its template.",
+			append(attrs, "url", e.URL)
+
 	case *events.ConfigParsedEvent:
 		return fmt.Sprintf("Configuration parsed successfully (version %s)", e.Version),
 			append(attrs, "version", e.Version, "secret_version", e.SecretVersion)
