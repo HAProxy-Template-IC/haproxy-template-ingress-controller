@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 from .configuration import instances, load
 from .gitlab import GitLab
@@ -118,6 +119,21 @@ def validate_receipt(receipt, mr, train, jobs, project, tree, policy, config):
         raise ValueError("Required job results changed after train verification")
 
 
+def completed_train_pipeline(api, project, train, timeout=180):
+    pipeline_id = train["pipeline"]["id"]
+    deadline = time.monotonic() + timeout
+    while True:
+        pipeline = api.get(f"projects/{project}/pipelines/{pipeline_id}")
+        if pipeline["status"] == "success":
+            return pipeline
+        if train["status"] not in {"merged", "merging"} or pipeline["status"] not in {"created", "pending", "running", "waiting_for_resource", "preparing"}:
+            raise ValueError(f"Merge train pipeline {pipeline_id} ended with {pipeline['status']}")
+        if time.monotonic() >= deadline:
+            raise ValueError(f"Merge train pipeline {pipeline_id} did not finish before publication")
+        print(f"Waiting for merged train {pipeline_id} to finish cleanup", flush=True)
+        time.sleep(5)
+
+
 def verify_publication(api, env):
     project, sha = env["CI_PROJECT_ID"], env["CI_COMMIT_SHA"]
     branch = env.get("CI_COMMIT_BRANCH")
@@ -133,7 +149,7 @@ def verify_publication(api, env):
     if not (mr["target_branch"] == "main" or mr["target_branch"].startswith("maint/")):
         raise ValueError("Publication requires a main or maintenance merge")
     train = api.get(f"projects/{project}/merge_trains/merge_requests/{mr['iid']}")
-    pipeline = api.get(f"projects/{project}/pipelines/{train['pipeline']['id']}")
+    pipeline = completed_train_pipeline(api, project, train)
     train["pipeline"] = pipeline
     jobs = list(api.all(f"projects/{project}/pipelines/{pipeline['id']}/jobs"))
     gate = validate_jobs(jobs, ["verify-merge-train"], pipeline["id"], pipeline["sha"])[0]
