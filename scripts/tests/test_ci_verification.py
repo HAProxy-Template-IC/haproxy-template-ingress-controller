@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from scripts.ci.configuration import expand, job, load
-from scripts.ci.verification import context, profile, required_jobs, validate_jobs, validate_receipt, verify_publication
+from scripts.ci.verification import completed_train_pipeline, context, profile, required_jobs, validate_jobs, validate_receipt, verify_publication
 
 
 SHA = "a" * 40
@@ -147,6 +147,35 @@ class SelectionTests(unittest.TestCase):
     def test_release_preparation_is_required_only_for_release_candidates(self):
         self.assertIn("prepare-spoa-release", required_jobs(self.config, self.policy, "full", "release/v0.5.0"))
         self.assertNotIn("prepare-spoa-release", required_jobs(self.config, self.policy, "full", "fix/bug"))
+
+
+class PipelineCompletionTests(unittest.TestCase):
+    def setUp(self):
+        self.train = {"status": "merged", "pipeline": {"id": 20}}
+        self.api = Mock()
+
+    def test_merged_train_can_finish_automatic_environment_cleanup(self):
+        self.api.get.side_effect = [{"status": "running"}, {"status": "success"}]
+        with patch("scripts.ci.verification.time.sleep") as sleep:
+            self.assertEqual(completed_train_pipeline(self.api, "30", self.train), {"status": "success"})
+        sleep.assert_called_once_with(5)
+        self.assertEqual(self.api.get.call_count, 2)
+
+    def test_terminal_failure_or_unmerged_train_is_not_retried(self):
+        for status in ["failed", "canceled", "skipped", "manual"]:
+            self.api.get.return_value = {"status": status}
+            with self.subTest(status=status), self.assertRaises(ValueError), patch("scripts.ci.verification.time.sleep") as sleep:
+                completed_train_pipeline(self.api, "30", self.train)
+            sleep.assert_not_called()
+        self.train["status"] = "fresh"
+        self.api.get.return_value = {"status": "running"}
+        with self.assertRaises(ValueError):
+            completed_train_pipeline(self.api, "30", self.train)
+
+    def test_cleanup_that_never_finishes_blocks_publication(self):
+        self.api.get.return_value = {"status": "running"}
+        with patch("scripts.ci.verification.time.monotonic", side_effect=[0, 181]), self.assertRaises(ValueError):
+            completed_train_pipeline(self.api, "30", self.train)
 
 
 class PublicationTests(unittest.TestCase):
