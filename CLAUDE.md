@@ -309,14 +309,10 @@ make check-all
 
 ### CI minutes
 
-The GitLab compute-minute budget is finite. HAPTIC receives the [GitLab for Open Source cost factor](https://docs.gitlab.com/ci/pipelines/compute_minutes/#cost-factors): 0.5 compute-minutes per minute of job time across hosted runner sizes. Checked on 2026-10-06 against project billing: MR pipeline 2915500308 used about 369 compute-minutes and main pipeline 2914875982 about 469. Estimate each campaign from its expected jobs and current billing factor; check the namespace's remaining quota before a full matrix.
-
-- Push each MR once, after `make lint`, `make test`, and (for `charts/`) `./scripts/test-templates.sh` pass locally; fold fixups, changelog, and review fixes into that push.
-- When you do push again, cancel the superseded pipeline.
-- Never start pipelines, schedule plays, or job retries by hand, except to retry a GitLab-infrastructure failure (e.g. `git clone` 503); state the cost before any deliberate run.
-- Rebase an open MR only on a real conflict; merged-results pipelines already test against current `main`.
-- Docs-only changes are cheap: push them, don't hoard them.
-- Feature branches get no branch pipeline (`workflow:rules`), so `-o ci.skip` is unnecessary.
+Follow [CI spending and merge verification](docs/agents/ci.md) before pushing,
+starting or retrying CI, or merging. Batch local fixes, account for active pipelines,
+and reserve one final train run for the reviewed candidate. Never skip CI to make a
+merge affordable. A budget shortfall leaves the MR unmerged with the reason reported.
 
 ### GitLab CLI (glab) Commands
 
@@ -1104,7 +1100,7 @@ To prepare a release:
 
 1. **Curate `CHANGELOG.md` [Unreleased]** - Rewrite the accumulated entries into user-facing release notes (merge related entries, drop items that never shipped in a release); also update the hand-curated `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml`
 2. **Run `./scripts/release.sh <version>`** - Promotes `[Unreleased]` to the version section and updates every version-bearing file (VERSION, Chart.yaml, install examples) in one commit; the docs-site changelog page is generated from `CHANGELOG.md` at mkdocs build time and needs no release-time sync
-3. **Merge the release MR to main** - CI creates the `v<version>` tag after the full post-merge pipeline passes; the tag pipeline publishes binaries, images, the chart, and versioned docs
+3. **Merge the release MR to main** - CI creates the `v<version>` tag after the verified train and post-merge publication checks pass; the tag pipeline publishes binaries, images, the chart, and versioned docs
 
 See `docs/site/docs/development/releasing.md` for the full process.
 

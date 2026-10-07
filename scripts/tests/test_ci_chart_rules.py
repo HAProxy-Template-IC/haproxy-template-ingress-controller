@@ -169,7 +169,7 @@ class ChartRulesTests(unittest.TestCase):
                          "a Makefile change must not pull in the chart matrix")
 
     def test_mirror_refresh_schedule_runs_only_the_mirror_job(self):
-        mirror_only = {"if": '$MIRROR_IMAGES == "true"', "when": "never"}
+        mirror_only = {"if": '$MIRROR_IMAGES == "true" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"', "when": "never"}
         self.assertNotIn(mirror_only, expand(self.config["workflow"]["rules"], self.config))
         reserved = {"include", "stages", "default", "workflow", "variables"}
         jobs = [name for name, job in self.config.items()

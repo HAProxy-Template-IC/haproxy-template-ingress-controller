@@ -98,7 +98,9 @@ glab mr create --title "release: haptic v<version>" \
 
 ### Step 5: Prepare the SPOA release image
 
-Run the manual `prepare-spoa-release` job in the release MR pipeline. It builds
+Wait for the MR preflight pipeline and code review to pass, then enable auto-merge
+to enter the merge train. Run the manual `prepare-spoa-release` job in the train
+pipeline. It builds
 all three architectures under the chart's release tag, before the chart's
 install tests need that image. Install-test jobs wait for this job to succeed
 before starting. The chart itself remains unpublished.
@@ -112,7 +114,7 @@ version.
 Temporary preparation tags use `ci-spoa-prepare-*`, covered by the project's
 configured `^ci-.*` registry cleanup policy. The versioned release tag is retained.
 
-Review and merge only after image preparation and the full pipeline pass. The final
+The train merges only after image preparation and the full pipeline pass. The final
 tag pipeline verifies and reuses the prepared image, then signs it, attaches its
 software bill of materials, and smoke-tests amd64 and arm64 before publishing
 the chart.
@@ -121,7 +123,7 @@ the chart.
 
 After the MR is merged, CI automatically:
 
-1. Runs the full post-merge pipeline (unit, e2e matrix, conformance) — the tag job waits for all of it
+1. Verifies the merged tree against its successful merge train; during the initial rollout, also repeats the full test matrix
 2. Verifies `VERSION`, `Chart.yaml` `version`, and `appVersion` agree
 3. Creates and pushes the `v<version>` tag
 4. Triggers the release pipeline
@@ -225,11 +227,11 @@ glab mr create --target-branch maint/<major>.<minor> \
   --description "Release haptic v<version>"
 ```
 
-Run the manual `prepare-spoa-release` job in the merge request pipeline, as in [Step 5](#step-5-prepare-the-spoa-release-image) of the regular release.
+Run the manual `prepare-spoa-release` job in the merge train pipeline, as in [Step 5](#step-5-prepare-the-spoa-release-image) of the regular release.
 
 ### Step 4: Merge and let CI tag
 
-A push to `maint/*` runs the same post-merge pipeline as `main`, including the interior HAProxy versions and the full Gateway API and Ingress conformance suites. `create-release-tag` creates `v<version>` only after that whole pipeline passes, with the same `VERSION`/`Chart.yaml` check as on `main`.
+Maintenance merge requests run the same full merge-train matrix as `main`, including every supported HAProxy version and both conformance suites. The post-merge pipeline verifies the tested tree before `create-release-tag` creates `v<version>`, with the same `VERSION`/`Chart.yaml` check as on `main`.
 
 `test-chart-upgrade` upgrades only from published stable versions at or below the branch's `VERSION`, so a release from a newer line, such as `0.3.0` on `maint/0.2`, is never used as a baseline.
 
