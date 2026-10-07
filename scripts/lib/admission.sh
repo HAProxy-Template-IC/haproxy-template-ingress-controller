@@ -4,6 +4,7 @@ admission_connection_pending() {
     case "$line" in
       "Error from server (InternalError): "*"Internal error occurred: failed calling webhook "*"failed to call webhook: "*"connect: connection refused") pending=true ;;
       "Error from server (InternalError): "*"Internal error occurred: failed calling webhook "*"no endpoints available for service "*) pending=true ;;
+      "error when creating "*": Post \"https://"*"\": context deadline exceeded") pending=true ;;
       ""|Warning:*) ;;
       *) return 1 ;;
     esac

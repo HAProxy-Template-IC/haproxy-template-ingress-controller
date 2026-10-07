@@ -6,8 +6,8 @@ type: application
 # restartPolicy: Always), GA in 1.33: they start before HAProxy and are stopped
 # only after it exited, so the drain socket, SPOE and log shipping outlive it.
 kubeVersion: ">=1.33.0-0"
-version: 0.4.0
-appVersion: "0.4.0"
+version: 0.4.1
+appVersion: "0.4.1"
 # Template libraries are packaged as conditional subcharts so a release only
 # carries the source of the libraries it enables — disabled subcharts are
 # pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
@@ -85,7 +85,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.4.0-haproxy3.4
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.4.1-haproxy3.4
       platforms:
         - linux/amd64
         - linux/arm64
@@ -96,12 +96,12 @@ annotations:
         - linux/amd64
         - linux/arm64
     - name: spoa-hub
-      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.4.0
+      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.4.1
       platforms:
         - linux/amd64
         - linux/arm64
     - name: varnish
-      image: registry.gitlab.com/haproxy-haptic/haptic/varnish:0.4.0
+      image: registry.gitlab.com/haproxy-haptic/haptic/varnish:0.4.1
       platforms:
         - linux/amd64
         - linux/arm64
@@ -112,37 +112,19 @@ annotations:
   # Release highlights; full notes are in the root CHANGELOG.md.
   artifacthub.io/changes: |
     - kind: fixed
-      description: Invalid watched resources no longer block independent endpoint updates and admission requests
-    - kind: added
-      description: Gateway HTTPRoute ExternalAuth filters through the SPOA hub HTTP auth plugin
-    - kind: added
-      description: Gateway header session persistence, permanent cookies, and weighted TLSRoute backends
-    - kind: added
-      description: Governance rules can include or exempt specific namespaces
-    - kind: changed
-      description: "BREAKING: Helm rejects unknown or wrongly typed values; check the 0.4 upgrade notes before upgrading"
-    - kind: changed
-      description: "BREAKING: Gateway timeouts.request is ignored; backendRequest sets server inactivity, and zero uses the maximum timeout"
-    - kind: changed
-      description: "BREAKING: auth-headers-request rejects header names containing underscores; rename them with dashes"
+      description: Valid admission requests no longer conflict with unchanged inputs
     - kind: fixed
-      description: External auth forwards dashed request headers, including X-Api-Key and the default X-Forwarded headers
+      description: Repaired fetched HTTP lists can replace previously accepted content
     - kind: fixed
-      description: Large controller restarts use less memory and complete their first render even when it exceeds the regular render timeout
+      description: Rejected watched-resource changes produce Kubernetes Warning events on the affected objects
     - kind: fixed
-      description: HTTP content acceptance progresses under resource churn and restores prior content when deployment validation refuses new content
-    - kind: changed
-      description: Auxiliary-file publication reuses unchanged objects and pod-status entries to reduce Kubernetes API writes
-    - kind: fixed
-      description: Gateway retry and session policies apply to their own route rule, with unsupported retry settings reported on the route
-    - kind: security
-      description: The pre-rollout validation values Secret omits generated agent credentials and the webhook private key
-  artifacthub.io/containsSecurityUpdates: "true"
+      description: Rejected fetched-list refreshes produce a Warning event and an alertable rejection counter
+  artifacthub.io/containsSecurityUpdates: "false"
 
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://haproxy-haptic.org/docs/0.4.0/
+      url: https://haproxy-haptic.org/docs/0.4.1/
     - name: Issue Tracker
       url: https://gitlab.com/haproxy-haptic/haptic/-/issues
 

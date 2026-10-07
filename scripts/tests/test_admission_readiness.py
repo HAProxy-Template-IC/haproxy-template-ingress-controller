@@ -16,6 +16,10 @@ NO_ENDPOINTS = ('Error from server (InternalError): error when creating "routes.
                 'no endpoints available for service "haptic-webhook"')
 DENIED = ('Error from server (Forbidden): error when creating "routes.yaml": '
           'admission webhook "ingresses.validation.haptic" denied the request: invalid configuration')
+CLIENT_TIMEOUT = ('error when creating "routes.yaml": Post '
+                  '"https://docker:36487/apis/networking.k8s.io/v1/namespaces/haptic/ingresses'
+                  '?dryRun=All&fieldManager=kubectl-create&fieldValidation=Strict&timeout=10s": '
+                  'context deadline exceeded')
 
 
 class AdmissionReadinessTests(unittest.TestCase):
@@ -73,18 +77,29 @@ wait_admission_ready routes.yaml "$1"
         self.assertIn(REFUSED, result.stderr)
 
     def test_validation_and_other_failures_are_not_retried(self):
-        for error in (DENIED, REFUSED + "\n" + DENIED, "error: malformed manifest", "error: Unauthorized"):
+        for error in (DENIED, REFUSED + "\n" + DENIED, CLIENT_TIMEOUT + "\n" + DENIED,
+                      DENIED + ": context deadline exceeded", "error: malformed manifest", "error: Unauthorized"):
             with self.subTest(error=error):
                 result, calls = self.probe([error, ""])
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(len(calls), 1)
                 self.assertIn(error, result.stderr)
 
+    def test_client_timeout_waits_for_a_successful_dry_run(self):
+        for error in (CLIENT_TIMEOUT, REFUSED + "\n" + CLIENT_TIMEOUT):
+            with self.subTest(error=error):
+                result, calls = self.probe([error, ""])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(calls), 2)
+                self.assertIn(error, result.stderr)
+
     def test_unreachable_webhook_fails_at_the_deadline(self):
-        result, calls = self.probe([REFUSED], timeout=2)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(len(calls), 2)
-        self.assertIn("readiness deadline", result.stderr)
+        for error in (REFUSED, CLIENT_TIMEOUT):
+            with self.subTest(error=error):
+                result, calls = self.probe([error], timeout=2)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(len(calls), 2)
+                self.assertIn("readiness deadline", result.stderr)
 
 
 if __name__ == "__main__":
