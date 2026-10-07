@@ -29,6 +29,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
 	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
@@ -93,4 +94,58 @@ func TestComponentSeesWithheldContentAsPending(t *testing.T) {
 	require.Contains(t, accepting.HAProxyConfig, "b=page pending=false")
 	require.NoError(t, accepting.InputTransaction.Commit(t.Context()))
 	require.NoError(t, service.RetireIncrementalCache())
+}
+
+func TestPendingHTTPOverlayValidatesFrozenContentWithoutPublishing(t *testing.T) {
+	fixture := newIncrementalHTTPTestFixture(t)
+	require.Equal(t, "a=first\nb=stable\n", fixture.render(t))
+	require.Equal(t, "a=first\nb=stable\n", fixture.render(t))
+	acceptedCache := fixture.service.incremental.snapshot
+	store := fixture.httpComponent.GetStore()
+	fixture.bodyA.Store("candidate")
+	candidate, err := store.RefreshURLVersion(t.Context(), fixture.urlA)
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+	overlay := purehttpstore.NewHTTPOverlay(store)
+
+	require.True(t, store.RejectPendingVersion(fixture.urlA, candidate.Checksum, candidate.Revision))
+	fixture.bodyA.Store("replacement")
+	replacement, err := store.RefreshURLVersion(t.Context(), fixture.urlA)
+	require.NoError(t, err)
+	require.NotNil(t, replacement)
+	provider := stores.NewOverlayStoreProvider(fixture.provider, stores.NewValidationContext(nil).WithHTTPOverlay(overlay))
+	result, err := fixture.service.Render(t.Context(), provider, rendercontext.RenderModeAdmission)
+	require.NoError(t, err)
+	require.Equal(t, "a=candidate\nb=stable\n", result.HAProxyConfig)
+	require.NoError(t, result.InputTransaction.Commit(t.Context()))
+	require.Same(t, acceptedCache, fixture.service.incremental.snapshot)
+	accepted, ok := store.Get(fixture.urlA)
+	require.True(t, ok)
+	require.Equal(t, "first", accepted)
+	require.False(t, store.PromotePendingVersion(fixture.urlA, candidate.Checksum, candidate.Revision))
+	require.Equal(t, "a=first\nb=stable\n", fixture.render(t))
+
+	require.True(t, store.PromotePendingVersion(fixture.urlA, replacement.Checksum, replacement.Revision))
+	require.Equal(t, "a=replacement\nb=stable\n", fixture.render(t))
+	require.NoError(t, fixture.service.RetireIncrementalCache())
+}
+
+func TestPendingHTTPOverlayRequiresMatchingSourceAndValidationMode(t *testing.T) {
+	fixture := newIncrementalHTTPTestFixture(t)
+	require.Equal(t, "a=first\nb=stable\n", fixture.render(t))
+	fixture.bodyA.Store("candidate")
+	_, err := fixture.httpComponent.GetStore().RefreshURLVersion(t.Context(), fixture.urlA)
+	require.NoError(t, err)
+	overlay := purehttpstore.NewHTTPOverlay(fixture.httpComponent.GetStore())
+	provider := stores.NewOverlayStoreProvider(fixture.provider, stores.NewValidationContext(nil).WithHTTPOverlay(overlay))
+	_, err = fixture.service.Render(t.Context(), provider, rendercontext.RenderModeReconcile)
+	require.ErrorIs(t, err, errIncrementalUnsupported)
+
+	other := newIncrementalHTTPTestFixture(t)
+	require.Equal(t, "a=first\nb=stable\n", other.render(t))
+	foreignProvider := stores.NewOverlayStoreProvider(other.provider, stores.NewValidationContext(nil).WithHTTPOverlay(overlay))
+	_, err = other.service.Render(t.Context(), foreignProvider, rendercontext.RenderModeAdmission)
+	require.ErrorIs(t, err, errIncrementalUnsupported)
+	require.NoError(t, fixture.service.RetireIncrementalCache())
+	require.NoError(t, other.service.RetireIncrementalCache())
 }

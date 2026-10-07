@@ -17,6 +17,7 @@ package controller
 import (
 	"log/slog"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/inputisolation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
@@ -24,8 +25,16 @@ import (
 )
 
 func newInputSelector(setup *componentSetup, cfg *config.Config, validatingPipeline *pipeline.Pipeline, logger *slog.Logger) *inputisolation.Service {
-	selector := inputisolation.New(validatingPipeline, cfg.WatchedResources, logger, func(count int) {
-		setup.MetricsComponent.Metrics().RejectedWatchedInputs.Set(float64(count))
+	selector := inputisolation.New(validatingPipeline, cfg.WatchedResources, logger, inputisolation.Callbacks{
+		Count: func(count int) { setup.MetricsComponent.Metrics().RejectedWatchedInputs.Set(float64(count)) },
+		Updated: func(rejections []inputisolation.Rejection) {
+			changes := make([]events.InputRejection, len(rejections))
+			for i := range rejections {
+				r := &rejections[i]
+				changes[i] = events.InputRejection{Object: r.Object, Deleted: r.Deleted, Reason: r.Reason}
+			}
+			setup.Bus.Publish(events.NewWatchedInputsRejectedEvent(changes))
+		},
 	})
 	setup.IntrospectionRegistry.Publish("inputRejections", introspection.Func(func() (any, error) {
 		_, rejected, ready := selector.Snapshot()

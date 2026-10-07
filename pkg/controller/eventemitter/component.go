@@ -12,22 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package eventemitter emits template-requested Kubernetes Events against the
-// resources they concern. Templates call recordEvent(resource, reason, message)
-// during rendering (the resource's namespace/name/apiVersion/kind are read off
-// it); those events ride on ReconciliationCompletedEvent and this leader-only
-// component forwards each newly added event to the API server via an EventRecorder.
-//
-// It is resource-agnostic (RULE #1): every event carries its own
-// apiVersion/kind/namespace/name, so the emitter builds a bare
-// *corev1.ObjectReference for the involved object and never needs a typed
-// client or hardcoded GVK. client-go's reference.GetReference short-circuits
-// for an *ObjectReference, so the recorder's scheme need not know the type.
+// Package eventemitter publishes Kubernetes Events for rendered configuration,
+// deployment failures, and rejected watched inputs. Only the leader emits.
 package eventemitter
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
@@ -57,13 +51,7 @@ const (
 	eventSourceComponent = "haptic-controller"
 )
 
-// Component forwards template-recorded Events to the Kubernetes API.
-//
-// All-replica subscription, leader-gated emission: the source
-// ReconciliationCompletedEvent is published only by the leader-only Coordinator,
-// and the leader flag is a defensive second gate so a stray event never makes a
-// follower double-emit (the EventRecorder aggregates duplicates, but this keeps
-// the count clean).
+// Component forwards controller notifications to Kubernetes Events.
 type Component struct {
 	*component.Base
 
@@ -76,6 +64,7 @@ type Component struct {
 	mu         sync.Mutex
 	isLeader   bool
 	lastEvents *templating.RenderedEventSnapshot
+	rejections []events.InputRejection
 }
 
 // Config wires the component's dependencies.
@@ -97,6 +86,7 @@ func New(cfg *Config) *Component {
 		Handler:    c,
 		EventTypes: []string{
 			events.EventTypeReconciliationCompleted,
+			events.EventTypeWatchedInputsRejected,
 			events.EventTypeInstanceDeploymentFailed,
 			events.EventTypeBecameLeader,
 			events.EventTypeLostLeadership,
@@ -136,6 +126,8 @@ func (c *Component) ensureRecorder() {
 // HandleEvent implements component.EventHandler.
 func (c *Component) HandleEvent(event busevents.Event) {
 	switch e := event.(type) {
+	case *events.WatchedInputsRejectedEvent:
+		c.handleWatchedInputsRejected(e)
 	case *events.ReconciliationCompletedEvent:
 		c.handleReconciliationCompleted(e)
 	case *events.InstanceDeploymentFailedEvent:
@@ -143,6 +135,7 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	case *events.BecameLeaderEvent:
 		c.ensureRecorder()
 		c.setLeader(true)
+		c.emitNewRejections(nil, c.rejections)
 	case *events.LostLeadershipEvent:
 		c.setLeader(false)
 	}
@@ -250,4 +243,56 @@ func (c *Component) handleInstanceDeploymentFailed(e *events.InstanceDeploymentF
 		Name:       endpoint.PodName,
 		UID:        types.UID(endpoint.PodUID),
 	}, corev1.EventTypeWarning, applyFailedReason, e.Error)
+}
+
+func (c *Component) handleWatchedInputsRejected(e *events.WatchedInputsRejectedEvent) {
+	c.emitNewRejections(c.rejections, e.Rejections)
+	c.rejections = slices.Clone(e.Rejections)
+}
+
+func (c *Component) emitNewRejections(previous, current []events.InputRejection) {
+	if !c.leader() || c.recorder == nil {
+		return
+	}
+	seen := make(map[rejectionIdentity]bool, len(current))
+	for i := range previous {
+		seen[inputRejectionIdentity(&previous[i])] = true
+	}
+	for i := range current {
+		rejection := &current[i]
+		if rejection.Object.Name == "" || rejection.Object.Kind == "" || rejection.Object.APIVersion == "" {
+			continue
+		}
+		identity := inputRejectionIdentity(rejection)
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		action := "Change"
+		if rejection.Deleted {
+			action = "Deletion"
+		}
+		message := fmt.Sprintf("%s rejected: %s. Other resources continue updating. Correct this resource to apply the change.", action, rejection.Reason)
+		ref := rejection.Object
+		c.recorder.Event(&ref, corev1.EventTypeWarning, "InputRejected", message)
+	}
+}
+
+type rejectionIdentity struct {
+	uid                                    types.UID
+	group, kind, namespace, name, revision string
+	deleted                                bool
+}
+
+func inputRejectionIdentity(rejection *events.InputRejection) rejectionIdentity {
+	ref := rejection.Object
+	identity := rejectionIdentity{uid: ref.UID, revision: ref.ResourceVersion, deleted: rejection.Deleted}
+	if ref.UID == "" {
+		group, _, qualified := strings.Cut(ref.APIVersion, "/")
+		if !qualified {
+			group = ""
+		}
+		identity.group, identity.kind, identity.namespace, identity.name = group, ref.Kind, ref.Namespace, ref.Name
+	}
+	return identity
 }

@@ -1867,7 +1867,7 @@ test-acceptance:
       docker pull ${TEST_IMAGE}
       docker tag ${TEST_IMAGE} haptic:test
   script:
-    - go tool gotestsum --junitfile report-acceptance.xml --format testname -- -tags=acceptance -v -timeout 25m -run TestAllAcceptanceParallel ./tests/acceptance/...
+    - go tool gotestsum --junitfile report-acceptance.xml --format testname -- -tags=acceptance -count=1 -v -timeout 25m -run TestAllAcceptanceParallel ./tests/acceptance/...
   after_script:
     # Extract debug logs on failure for troubleshooting
     - |

@@ -59,6 +59,10 @@ func TestAllAcceptanceParallel(t *testing.T) {
 	features := []types.Feature{
 		// Error scenarios tests
 		buildInvalidHAProxyConfigFeature(),
+		buildBasicAuthInputIsolationFeature(),
+		buildIngressInputIsolationFeature("annotation", "haproxy.org/auth-type", "invalid-auth-type"),
+		buildIngressInputIsolationFeature("snippet", "haproxy-haptic.org/config-backend", "invalid-haproxy-directive"),
+		buildFetchedListInputIsolationFeature(),
 		buildCredentialsMissingFeature(),
 		buildControllerCrashRecoveryFeature(),
 		buildRapidConfigUpdatesFeature(),

@@ -62,6 +62,11 @@ func (r *incrementalRenderSession) selectFreshColdStart() (bool, error) {
 	if r == nil || r.state == nil || r.state.graph == nil || r.base == nil {
 		return false, errors.New("incremental cold-start state is unavailable")
 	}
+	// Pending bytes must execute every consumer and never reuse accepted output.
+	if r.pendingHTTPOverlay {
+		r.coldReason = "pending-http-overlay"
+		return true, nil
+	}
 	if r.cacheBaseUnavailable {
 		r.coldReason = "cache-build-still-pending"
 		return true, nil

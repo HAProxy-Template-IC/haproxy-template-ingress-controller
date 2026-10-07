@@ -464,10 +464,11 @@ make test-acceptance-parallel
 
 ```
 
-`make test-acceptance` has no test filter — unlike `test-integration`, `test-e2e`
-and the conformance targets, its recipe passes no `-run`, so `TEST_RUN_PATTERN`
-is silently ignored and the whole suite runs. To narrow it down, add `-run` to
-the `test-acceptance` recipe temporarily.
+Use `TEST_RUN_PATTERN` to select acceptance tests without editing the recipe:
+
+```bash
+make test-acceptance TEST_RUN_PATTERN='^TestBasicAuthInputIsolation$'
+```
 
 The Make targets automatically:
 

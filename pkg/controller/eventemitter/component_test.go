@@ -447,3 +447,64 @@ func TestComponent_leaderTransitions(t *testing.T) {
 	c.HandleEvent(&events.LostLeadershipEvent{})
 	assert.False(t, c.leader())
 }
+
+func TestWatchedInputRejectionEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		leader, deleted bool
+		want            int
+		message         string
+	}{
+		{name: "leader", leader: true, want: 1, message: "Change rejected"},
+		{name: "follower"},
+		{name: "deletion", leader: true, deleted: true, want: 1, message: "Deletion rejected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &fakeRecorder{}
+			c := newTestComponent(t, recorder)
+			c.setLeader(tc.leader)
+			ref := corev1.ObjectReference{APIVersion: "example.test/v1", Kind: "Widget", Namespace: "team", Name: "bad", UID: "uid", ResourceVersion: "2"}
+			c.HandleEvent(events.NewWatchedInputsRejectedEvent([]events.InputRejection{{Object: ref, Deleted: tc.deleted, Reason: "invalid value"}}))
+			require.Len(t, recorder.events, tc.want)
+			if tc.want == 0 {
+				return
+			}
+			event := recorder.events[0]
+			require.Equal(t, &ref, event.obj)
+			require.Equal(t, "Warning", event.etype)
+			require.Equal(t, "InputRejected", event.reason)
+			require.Contains(t, event.message, tc.message)
+			require.Contains(t, event.message, "invalid value")
+			require.Contains(t, event.message, "Correct this resource")
+		})
+	}
+}
+
+func TestRejectionsSurviveLeadershipAndClearAfterRepair(t *testing.T) {
+	recorder := &fakeRecorder{}
+	c := newTestComponent(t, recorder)
+	c.setLeader(false)
+	rejection := events.InputRejection{Object: corev1.ObjectReference{APIVersion: "example.test/v1", Kind: "Widget", Name: "bad", UID: "uid", ResourceVersion: "2"}, Reason: "invalid"}
+	alias := rejection
+	alias.Object.APIVersion = "example.test/v2"
+	update := events.NewWatchedInputsRejectedEvent([]events.InputRejection{rejection, alias})
+	c.HandleEvent(update)
+	require.Empty(t, recorder.events)
+	c.HandleEvent(events.NewBecameLeaderEvent("leader"))
+	require.Len(t, recorder.events, 1)
+	c.HandleEvent(update)
+	require.Len(t, recorder.events, 1)
+	c.HandleEvent(events.NewWatchedInputsRejectedEvent(nil))
+	c.HandleEvent(update)
+	require.Len(t, recorder.events, 2, "repair clears the rejection identity")
+}
+
+func TestRepairedFollowerDoesNotEmitStaleRejectionOnLeadership(t *testing.T) {
+	recorder := &fakeRecorder{}
+	c := newTestComponent(t, recorder)
+	c.setLeader(false)
+	c.HandleEvent(events.NewWatchedInputsRejectedEvent([]events.InputRejection{{Object: corev1.ObjectReference{APIVersion: "v1", Kind: "Example", Name: "bad", UID: "uid"}}}))
+	c.HandleEvent(events.NewWatchedInputsRejectedEvent(nil))
+	c.HandleEvent(events.NewBecameLeaderEvent("leader"))
+	require.Empty(t, recorder.events)
+}
