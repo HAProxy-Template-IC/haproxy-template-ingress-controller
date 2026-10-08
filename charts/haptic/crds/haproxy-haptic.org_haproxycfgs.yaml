@@ -82,6 +82,10 @@ spec:
                   Default: /etc/haproxy/haproxy.cfg
                 minLength: 1
                 type: string
+              retainedPlan:
+                description: RetainedPlan contains zstd+base64 encoded deployment
+                  declarations for a retained snapshot.
+                type: string
             required:
             - checksum
             - content
@@ -355,6 +359,10 @@ spec:
                       description: RunningPlanID is the render plan this pod's running
                         HAProxy serves.
                       type: string
+                    workerOpsPlanID:
+                      description: WorkerOpsPlanID identifies the configuration after
+                        accepted runtime operations.
+                      type: string
                   required:
                   - podName
                   type: object
@@ -369,6 +377,25 @@ spec:
                   This is used to track whether status is up-to-date with latest spec changes.
                 format: int64
                 type: integer
+              retainedConfigs:
+                description: RetainedConfigs references complete, acknowledged snapshots,
+                  newest first.
+                items:
+                  description: RetainedConfigReference binds a recovery checkpoint
+                    to one object incarnation.
+                  properties:
+                    checksum:
+                      type: string
+                    name:
+                      type: string
+                    uid:
+                      type: string
+                  required:
+                  - checksum
+                  - name
+                  - uid
+                  type: object
+                type: array
               validationError:
                 description: |-
                   ValidationError contains the error message if this configuration failed validation.

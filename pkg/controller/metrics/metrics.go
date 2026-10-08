@@ -30,6 +30,7 @@ const reasonLabel = "reason"
 // When the iteration ends (e.g., on config reload), metrics are garbage collected.
 // This prevents stale state from surviving across reinitialization cycles.
 type Metrics struct {
+	RetainedConfigActive prometheus.Gauge
 	// Reconciliation metrics
 	ReconciliationDuration prometheus.Histogram
 	ReconciliationTotal    prometheus.Counter
@@ -439,6 +440,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"haptic_config_pinned",
 			"1 while the render gate holds renders HAProxy refused: the fleet keeps serving the last accepted config and no new render reaches it until the input is fixed (leader-only; 0 on followers).",
 		),
+		RetainedConfigActive: pkgmetrics.NewGauge(registry, "haptic_retained_config_active", "1 while the leader uses retained configuration to start HAProxy pods after a failed render."),
 		RejectedWatchedInputs: pkgmetrics.NewGauge(
 			registry,
 			"haptic_rejected_watched_inputs",

@@ -508,3 +508,20 @@ func TestRepairedFollowerDoesNotEmitStaleRejectionOnLeadership(t *testing.T) {
 	c.HandleEvent(events.NewBecameLeaderEvent("leader"))
 	require.Empty(t, recorder.events)
 }
+
+func TestRetainedWarningNamesTemplateOwnerAndOnlyLeaderEmits(t *testing.T) {
+	recorder := &fakeRecorder{}
+	c := newTestComponent(t, recorder)
+	event := events.NewRetainedConfigEvent("team", "fleet", "template-uid", "RetainedConfigActive", "Retained checksum abc: critical fetch failed")
+	c.setLeader(false)
+	c.HandleEvent(event)
+	require.Empty(t, recorder.events)
+	c.setLeader(true)
+	c.HandleEvent(event)
+	require.Len(t, recorder.events, 1)
+	got := recorder.events[0]
+	require.Equal(t, &corev1.ObjectReference{APIVersion: "haproxy-haptic.org/v1alpha1", Kind: "HAProxyTemplateConfig", Namespace: "team", Name: "fleet", UID: "template-uid"}, got.obj)
+	require.Equal(t, corev1.EventTypeWarning, got.etype)
+	require.Equal(t, event.Reason, got.reason)
+	require.Equal(t, event.Message, got.message)
+}

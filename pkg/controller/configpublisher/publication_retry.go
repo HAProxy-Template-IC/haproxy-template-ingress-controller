@@ -90,6 +90,9 @@ func (c *Component) publishWorkCurrent(work *publishWorkItem) bool {
 }
 
 func (c *Component) publishWorkCurrentLocked(work *publishWorkItem) bool {
+	if c.publicationBlocked || c.gatePinned {
+		return false
+	}
 	if work.term != 0 && work.term != c.publicationTerm {
 		return false
 	}

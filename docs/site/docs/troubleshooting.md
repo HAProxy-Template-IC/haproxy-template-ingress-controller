@@ -37,12 +37,48 @@ For a specific symptom, use the table below.
 | `kubectl apply` denied by an admission webhook | [Admission webhook denied the apply](#admission-webhook-denied-the-apply) |
 | "connection refused" to an HAProxy pod | [Can't reach the agent](#cant-reach-the-agent) |
 | Controller reports success but HAProxy unchanged | [Configuration Not Updating](#configuration-not-updating) |
+| New HAProxy pods serve old routes or can't become Ready after controller restart | [Retained configuration recovery](#retained-configuration-recovery) |
 | 503 errors / no servers in HAProxy stats | [Requests Not Reaching Backend](#requests-not-reaching-backend) |
 | 404 for a host or path that should route | [404: no route matched](#404-no-route-matched) |
 | SSL handshake failures | [SSL/TLS Issues](#ssltls-issues) |
 | High CPU or slow reconciliation | [Slow Reconciliation](#slow-reconciliation) |
 | OOMKilled / gradual memory growth | [High Memory Usage](#high-memory-usage) |
 | "shm-stats-file-max-objects" / reload failures | [Shared Memory Stats Limit](#shared-memory-stats-limit) |
+
+## Retained configuration recovery
+
+`RetainedConfigActive` means rendering failed and HAPTIC is starting new HAProxy
+pods from an acknowledged configuration stored in Kubernetes. Existing pods stay
+untouched. Endpoint and route updates remain blocked, so Ready pods can still
+contain stale server addresses. `/healthz` includes the last render error under
+`components.reconciliation-coordinator.error`; HTTP 200 still means the controller
+components are available, not that rendering succeeded.
+
+1. Read the Warning event for the retained checksum and render error:
+
+    ```bash
+    kubectl get events --namespace "$HAPTIC_NAMESPACE" \
+      --field-selector involvedObject.kind=HAProxyTemplateConfig,type=Warning \
+      --sort-by=.metadata.creationTimestamp
+    ```
+
+2. Repair the named template, global setting, or critical fetched source. Keep
+   the published `HAProxyCfg` and its auxiliary files intact; editing them can
+   make recovery fail its integrity checks.
+
+3. Confirm that the next render succeeds and all HAProxy pods converge. The
+   leader's `haptic_retained_config_active` gauge returns to `0` after convergence.
+
+`RetainedConfigUnavailable` explains why HAPTIC can't start replacement pods.
+Possible reasons include no acknowledged checkpoint, changed ownership or content,
+no agreement with running pods, a newer deployment without a saved checkpoint,
+or rejection by the current HAProxy binary.
+Repair rendering or restore the complete original checkpoint from a trusted
+backup. Changing a checksum to match edited content doesn't restore its identity.
+
+If every controller fails its startup load gate, this recovery path can't run.
+Fix the startup error first. See [controller failure behavior](operations/high-availability.md#what-happens-when-a-controller-fails)
+for checkpoint prerequisites and the limits of retained configuration.
 
 ## Install issues
 
@@ -264,7 +300,7 @@ values.
 
 <a id="can't-reach-the-agent"></a>
 
-<a id="cannot-reach-the-agent"></a>
+<a id="can't-reach-the-agent"></a>
 
 ### Can't reach the agent
 

@@ -107,12 +107,15 @@ func (o *podOutcome) reasons() []string {
 // state and diffs again; a pod whose baseline this controller cannot produce
 // gets the complete file set and a reload.
 func (c *Component) applyToPod(ctx context.Context, endpoint *dataplane.Endpoint, req *deployRequest) (*podOutcome, error) {
+	if req.preparationError != nil {
+		return nil, req.preparationError
+	}
 	client, err := c.clients.For(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("creating agent client: %w", err)
 	}
 	stateStarted := time.Now()
-	state, err := client.State(ctx, api.StateRead{Verify: req.verify})
+	state, err := client.State(ctx, api.StateRead{Verify: req.verify || req.bootstrapOnly})
 	if err != nil {
 		return nil, fmt.Errorf("reading agent state: %w", err)
 	}
@@ -174,6 +177,9 @@ type podApply struct {
 
 // applyOnce sends the complete decision as one fenced agent transaction.
 func (c *Component) applyOnce(ctx context.Context, attempt *podApply) (*podOutcome, error) {
+	if err := attempt.checkRetainedDispatch(ctx); err != nil {
+		return nil, err
+	}
 	authority := podKey(attempt.endpoint)
 	if outcome := c.observeReload(attempt, authority); outcome != nil {
 		return outcome, nil
@@ -274,6 +280,9 @@ func (c *Component) send(ctx context.Context, attempt *podApply, manifest *api.M
 		blobStarted := time.Now()
 		blob := attempt.planBlob(withBlob)
 		attempt.phases.BlobWaitMs += time.Since(blobStarted).Milliseconds()
+		if err := attempt.checkRetainedDispatch(ctx); err != nil {
+			return nil, err
+		}
 		sendStarted := time.Now()
 		result, err := attempt.client.Apply(ctx, manifest, parts, blob)
 		attempt.phases.SendMs += time.Since(sendStarted).Milliseconds()

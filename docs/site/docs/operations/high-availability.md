@@ -17,6 +17,44 @@ If the leader fails, a follower acquires the lease and renders the current state
 before deploying. A voluntary handoff releases the lease without waiting for it
 to expire. HAProxy continues serving its existing configuration during election.
 
+If the new leader can't render, it can start new HAProxy pods with an acknowledged
+configuration retained in Kubernetes. This also works after every controller
+replica restarts. A warm follower keeps render caches, but those caches don't
+provide the deployer's last validated configuration.
+
+The controller checks the retained configuration and every auxiliary file against
+their recorded content, ownership, and applied-pod evidence. It runs the current
+HAProxy binary's configuration check before dispatch. Existing configured pods
+receive no apply or reload. A new pod becomes Ready only when HAProxy loads the
+configuration; a rejected apply leaves it NotReady.
+
+Recovery requires the latest recorded deployment and every configured HAProxy pod
+to agree. Before applying a configuration, the leader records its identity on the
+Kubernetes Lease. If a newer deployment started but its checkpoint wasn't saved,
+an older checkpoint can't start replacement pods. A partial rollout, an unreachable
+pod, or disagreement with the checkpoint leaves new pods NotReady until rendering
+recovers or the newest checkpoint can be verified. Planned and sudden leader changes
+use the same checks.
+
+`RetainedConfigActive` Warning events identify the checksum and render failure.
+The leader reports `haptic_retained_config_active = 1` while using this recovery
+path. `/healthz` includes the last render error under
+`components.reconciliation-coordinator.error`. Its HTTP status still reports
+component availability, so it can return 200 while rendering is blocked. Rendering
+must recover before HAPTIC can apply endpoint, route, certificate, or fetched-list
+changes.
+Retained server addresses can become stale even though HAProxy is Ready. The first
+successful render resumes normal per-pod updates and clears the gauge after the
+fleet converges.
+
+A checkpoint is available after a controller supporting retention has observed
+a successful deployment and published its acknowledgement. First installs and
+upgrades blocked before that first deployment have no checkpoint. Recovery also
+requires a running controller: if every replica fails the startup load gate,
+existing HAProxy pods keep serving, but replacement pods can't obtain retained
+configuration. Repair the startup error. Agents don't read Kubernetes or need
+permission to read Secrets for recovery.
+
 ## Configuration
 
 Add settings to your [complete Helm values file](../deploying-with-helm.md#change-settings)

@@ -17,6 +17,7 @@ package controller
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -415,4 +416,13 @@ func (sc *StateCache) handleInstanceDeploymentFailed(e *events.InstanceDeploymen
 		URL:   endpointURL,
 		Error: e.Error,
 	})
+}
+
+func (sc *StateCache) renderFailure() string {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	if sc.renderError == "" && sc.validationPlanID == sc.lastRenderedPlanID {
+		return strings.Join(sc.validationErrors, "; ")
+	}
+	return sc.renderError
 }

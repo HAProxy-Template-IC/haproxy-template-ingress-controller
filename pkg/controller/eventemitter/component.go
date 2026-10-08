@@ -87,6 +87,7 @@ func New(cfg *Config) *Component {
 		EventTypes: []string{
 			events.EventTypeReconciliationCompleted,
 			events.EventTypeWatchedInputsRejected,
+			events.EventTypeRetainedConfig,
 			events.EventTypeInstanceDeploymentFailed,
 			events.EventTypeBecameLeader,
 			events.EventTypeLostLeadership,
@@ -128,6 +129,10 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	switch e := event.(type) {
 	case *events.WatchedInputsRejectedEvent:
 		c.handleWatchedInputsRejected(e)
+	case *events.RetainedConfigEvent:
+		if c.leader() && c.recorder != nil {
+			c.recorder.Event(&corev1.ObjectReference{APIVersion: "haproxy-haptic.org/v1alpha1", Kind: "HAProxyTemplateConfig", Namespace: e.Namespace, Name: e.Name, UID: types.UID(e.UID)}, corev1.EventTypeWarning, e.Reason, e.Message)
+		}
 	case *events.ReconciliationCompletedEvent:
 		c.handleReconciliationCompleted(e)
 	case *events.InstanceDeploymentFailedEvent:

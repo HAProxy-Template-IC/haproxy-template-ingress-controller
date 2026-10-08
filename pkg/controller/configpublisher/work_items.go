@@ -27,6 +27,7 @@ import (
 
 func cloneRenderedConfigEntry(entry *renderedConfigEntry) *renderedConfigEntry {
 	clone := *entry
+	clone.confirmedPod = entry.confirmedPod.DeepCopy()
 	clone.auxFiles = cloneAuxiliaryFiles(entry.auxFiles)
 	return &clone
 }

@@ -93,6 +93,8 @@ type Server struct {
 
 	// apply serialises the state machine: at most one apply is ever in flight.
 	apply sync.Mutex
+	// A verified read must not adopt the worker an owned reload is still adopting.
+	workerObservation sync.Mutex
 	// mu guards the fields below, which /v1/state reads while an apply runs.
 	mu         sync.Mutex
 	state      *persistentState

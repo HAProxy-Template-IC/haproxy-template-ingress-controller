@@ -20,6 +20,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	v1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -143,6 +145,14 @@ func (c *Component) handleEndpointSuccess(
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	if outcome.converged && result.RunningPlanID != "" && result.RunningPlanProof != "" &&
+		(result.RunningPlanID == planID || result.WorkerOpsPlanID == planID) {
+		state.confirmedPod = &v1.PodDeploymentStatus{
+			PodName: endpoint.PodName, PodUID: endpoint.PodUID, PodRuntimeID: endpoint.PodRuntimeID,
+			Checksum: deploymentRequestChecksum(event, requests), AppliedPlanID: planID,
+			RunningPlanID: result.RunningPlanID, WorkerOpsPlanID: result.WorkerOpsPlanID, Mode: result.Mode,
+		}
+	}
 	state.totalOperations += len(outcome.sent)
 	for i := range outcome.sent {
 		state.operationBreakdown[outcome.sent[i].Kind]++
@@ -208,7 +218,7 @@ func (c *Component) publishPodStatus(
 	metadata *events.SyncMetadata,
 	contentChecksums ...string,
 ) {
-	if event.RuntimeConfigName == "" || event.RuntimeConfigNamespace == "" {
+	if event.Reason == retainedDeploymentReason || event.RuntimeConfigName == "" || event.RuntimeConfigNamespace == "" {
 		return
 	}
 	contentChecksum := deploymentContentChecksum(event)
@@ -284,17 +294,22 @@ func (c *Component) publishDeployedConfig(
 	event *events.DeploymentScheduledEvent,
 	occurrence *rendercycle.Occurrence,
 	acked int,
+	confirmed ...*v1.PodDeploymentStatus,
 ) {
 	identity, err := inspectOccurrence(occurrence)
 	if err != nil {
 		return
 	}
-	if acked == 0 || event.RuntimeConfigName == "" || identity.checksum == "" ||
+	if event.Reason == retainedDeploymentReason || acked == 0 || event.RuntimeConfigName == "" || identity.checksum == "" ||
 		event.Reason == events.TriggerReasonDriftPrevention {
 		return
 	}
+	var receipts []v1.PodDeploymentStatus
+	if len(confirmed) == 1 && confirmed[0] != nil {
+		receipts = append(receipts, *confirmed[0])
+	}
 	request, err := events.NewDeployedConfigPublishRequestWithCycle(
-		event.RuntimeConfigName, event.RuntimeConfigNamespace, occurrence,
+		event.RuntimeConfigName, event.RuntimeConfigNamespace, occurrence, receipts...,
 	)
 	if err != nil {
 		c.Logger().Error("Refusing to publish unauthenticated deployed config", "error", err)

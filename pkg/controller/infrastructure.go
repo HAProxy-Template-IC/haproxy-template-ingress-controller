@@ -24,6 +24,7 @@ import (
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -333,7 +334,7 @@ func setupInfrastructureServers(
 	// This replaces the initial simple health checker set in
 	// startEarlyInfrastructureServers. See buildFullHealthChecker for
 	// the readiness contract.
-	checker := buildFullHealthChecker(setup.Registry, state, infra, pluggableMgr)
+	checker := withRenderFailureDetails(buildFullHealthChecker(setup.Registry, state, infra, pluggableMgr), stateCache)
 	if setup.IntrospectionServer != nil {
 		setup.IntrospectionServer.SetHealthChecker(checker)
 	}
@@ -462,4 +463,26 @@ func mergePluggableValidatorHealth(
 		entry.Error = strings.Join(failures, "; ")
 	}
 	result["pluggable-validators"] = entry
+}
+
+func withRenderFailureDetails(checker introspection.HealthCheckFunc, state *StateCache) introspection.HealthCheckFunc {
+	return func() map[string]introspection.ComponentHealth {
+		result := checker()
+		if state == nil {
+			return result
+		}
+		failure := state.renderFailure()
+		component, present := result[reconciler.CoordinatorComponentName]
+		if failure == "" || !present {
+			return result
+		}
+		note := "Last render failed: " + failure
+		if component.Error == "" {
+			component.Error = note
+		} else {
+			component.Error += "; " + note
+		}
+		result[reconciler.CoordinatorComponentName] = component
+		return result
+	}
 }

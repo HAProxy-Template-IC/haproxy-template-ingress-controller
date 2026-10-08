@@ -611,7 +611,8 @@ Pod-level scheduling fields (`nodeSelector`, `tolerations`, `affinity`, etc.) li
 | `controller.monitoring.prometheusRule.enabled` | bool | `false` | Create PrometheusRule with alerting rules |
 | `controller.monitoring.prometheusRule.labels` | map | `{}` | PrometheusRule labels |
 | `controller.monitoring.prometheusRule.rules` | list | `[]` | Custom alerting rules; overrides the default rule set when non-empty |
-| `controller.monitoring.prometheusRule.defaultRules.enabled` | bool | `true` | Emit the chart's default rule set — fifteen alerts, each individually toggleable below; only consulted when `rules` is empty |
+| `controller.monitoring.prometheusRule.defaultRules.enabled` | bool | `true` | Emit the chart's default rule set, with individual switches below; only consulted when `rules` is empty |
+| `controller.monitoring.prometheusRule.defaultRules.retainedConfiguration` | bool | `true` | Include the `HAProxyRetainedConfigurationActive` warning after a leader uses retained configuration for two minutes |
 | `controller.monitoring.prometheusRule.defaultRules.reconciliationErrors` | bool | `true` | Include the `HAProxyControllerReconciliationErrors` warning rule |
 | `controller.monitoring.prometheusRule.defaultRules.deploymentFailures` | bool | `true` | Include the `HAProxyControllerDeploymentFailures` critical rule |
 | `controller.monitoring.prometheusRule.defaultRules.highQueueDepth` | bool | `true` | Include the `HAProxyControllerHighQueueDepth` warning rule |

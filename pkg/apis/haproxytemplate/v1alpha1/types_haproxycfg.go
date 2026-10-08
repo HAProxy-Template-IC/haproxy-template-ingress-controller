@@ -69,10 +69,18 @@ type HAProxyCfgSpec struct {
 	// When true, consumers must decompress before use.
 	// +optional
 	Compressed bool `json:"compressed,omitempty"`
+
+	// RetainedPlan contains zstd+base64 encoded deployment declarations for a retained snapshot.
+	// +optional
+	RetainedPlan string `json:"retainedPlan,omitempty"`
 }
 
 // HAProxyCfgStatus tracks deployment state and auxiliary files.
 type HAProxyCfgStatus struct {
+	// RetainedConfigs references complete, acknowledged snapshots, newest first.
+	// +optional
+	RetainedConfigs []RetainedConfigReference `json:"retainedConfigs,omitempty"`
+
 	// DeployedToPods tracks which HAProxy pods currently have this configuration.
 	//
 	// Pods are automatically added when configuration is applied and removed when
@@ -117,6 +125,13 @@ type HAProxyCfgStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
+// RetainedConfigReference binds a recovery checkpoint to one object incarnation.
+type RetainedConfigReference struct {
+	Name     string `json:"name"`
+	UID      string `json:"uid"`
+	Checksum string `json:"checksum"`
+}
+
 // PodDeploymentStatus tracks deployment to a specific pod.
 type PodDeploymentStatus struct {
 	// PodName is the name of the HAProxy pod.
@@ -143,6 +158,10 @@ type PodDeploymentStatus struct {
 	// RunningPlanID is the render plan this pod's running HAProxy serves.
 	// +optional
 	RunningPlanID string `json:"runningPlanID,omitempty"`
+
+	// WorkerOpsPlanID identifies the configuration after accepted runtime operations.
+	// +optional
+	WorkerOpsPlanID string `json:"workerOpsPlanID,omitempty"`
 
 	// Mode is how the plan was applied to this pod.
 	// +optional

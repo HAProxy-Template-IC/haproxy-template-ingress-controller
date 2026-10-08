@@ -32,6 +32,9 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 		return "Fetched content failed validation; previously accepted content is unchanged. Fix the fetched content or its template.",
 			append(attrs, "url", e.URL)
 
+	case *events.RetainedConfigEvent:
+		return e.Message, append(attrs, "reason", e.Reason, "namespace", e.Namespace, "name", e.Name)
+
 	case *events.ConfigParsedEvent:
 		return fmt.Sprintf("Configuration parsed successfully (version %s)", e.Version),
 			append(attrs, "version", e.Version, "secret_version", e.SecretVersion)

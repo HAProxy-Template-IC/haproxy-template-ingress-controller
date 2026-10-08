@@ -246,6 +246,10 @@ spec:
                       description: RunningPlanID is the render plan this pod's running
                         HAProxy serves.
                       type: string
+                    workerOpsPlanID:
+                      description: WorkerOpsPlanID identifies the configuration after
+                        accepted runtime operations.
+                      type: string
                   required:
                   - podName
                   type: object
