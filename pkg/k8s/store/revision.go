@@ -25,7 +25,6 @@ type revisionState struct {
 	identityKeys      map[resourceIdentity][]string
 	journal           []stores.RevisionChange
 	journalStart      int
-	journalLen        int
 	journalCapacity   int
 	incompleteThrough uint64
 	exactUnsupported  bool
@@ -38,7 +37,6 @@ func newRevisionState(journalCapacity int) revisionState {
 		keyCounts:        make(map[string]uint64),
 		identityVersions: make(map[resourceIdentity]uint64),
 		identityKeys:     make(map[resourceIdentity][]string),
-		journal:          make([]stores.RevisionChange, max(journalCapacity, 0)),
 		journalCapacity:  max(journalCapacity, 0),
 	}
 }
@@ -193,10 +191,14 @@ func (r *revisionState) appendChange(change *stores.RevisionChange) {
 	entry := *change
 	entry.OldKeys = cloneStrings(entry.OldKeys)
 	entry.NewKeys = cloneStrings(entry.NewKeys)
-	if r.journalLen < r.journalCapacity {
-		index := (r.journalStart + r.journalLen) % r.journalCapacity
-		r.journal[index] = entry
-		r.journalLen++
+	if len(r.journal) < r.journalCapacity {
+		if len(r.journal) == cap(r.journal) {
+			capacity := min(max(1, 2*len(r.journal)), r.journalCapacity)
+			journal := make([]stores.RevisionChange, len(r.journal), capacity)
+			copy(journal, r.journal)
+			r.journal = journal
+		}
+		r.journal = append(r.journal, entry)
 		return
 	}
 	r.journal[r.journalStart] = entry
@@ -211,7 +213,7 @@ func (r *revisionState) changesSince(sequence uint64) (uint64, []stores.Revision
 	if sequence == current {
 		return current, nil, true
 	}
-	if r.journalLen == 0 {
+	if len(r.journal) == 0 {
 		return current, nil, false
 	}
 	oldest := r.journal[r.journalStart].Sequence
@@ -224,12 +226,12 @@ func (r *revisionState) changesSince(sequence uint64) (uint64, []stores.Revision
 		return current, nil, false
 	}
 	start := int(span)
-	if start >= r.journalLen {
+	if start >= len(r.journal) {
 		return current, nil, false
 	}
-	changes := make([]stores.RevisionChange, 0, r.journalLen-start)
+	changes := make([]stores.RevisionChange, 0, len(r.journal)-start)
 	expected := sequence + 1
-	for offset := start; offset < r.journalLen; offset++ {
+	for offset := start; offset < len(r.journal); offset++ {
 		change := r.journal[(r.journalStart+offset)%r.journalCapacity]
 		if change.Sequence != expected {
 			return current, nil, false

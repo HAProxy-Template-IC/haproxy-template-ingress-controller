@@ -28,9 +28,11 @@ func TestAutomaticWorkers(t *testing.T) {
 		memoryLimit int64
 		want        int
 	}{
-		{"unlimited memory follows CPUs", 32, math.MaxInt64, 32},
+		{"unlimited memory overlaps rendering and checks", 32, math.MaxInt64, 64},
 		{"one GiB cgroup with default Go headroom", 32, 966367641, 7},
-		{"CPU quota bounds a large memory budget", 2, 8 << 30, 2},
+		{"four CPUs overlap within one GiB headroom", 4, 966367641, 7},
+		{"CPU quota bounds a large memory budget", 2, 8 << 30, 4},
+		{"one CPU can render while a check runs", 1, 8 << 30, 2},
 		{"small budget retains one worker", 32, 64 << 20, 1},
 		{"exact worker allowance", 32, 256 << 20, 2},
 		{"partial allowance does not start another worker", 32, (256 << 20) - 1, 1},
