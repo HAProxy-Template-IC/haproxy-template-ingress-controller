@@ -117,7 +117,7 @@ else
 endif
 	@echo "Running golangci-lint over the playground-tagged files..."
 	$(GOLANGCI_LINT) run --build-tags=playground ./pkg/dataplane/... ./pkg/generated/validators/...
-	@$(MAKE) lint-e2e lint-integration
+	@$(MAKE) lint-e2e lint-integration lint-testinfra
 	@echo "Checking no production binary links a HAProxy config parser..."
 	./scripts/check-client-native-free.sh
 	@echo "Running arch-go..."
@@ -134,6 +134,10 @@ lint-fix: ## Run golangci-lint with auto-fix
 	$(GOLANGCI_LINT) run --fix ./cmd/... ./examples/... ./pkg/... ./tests/... ./tools/...
 
 .PHONY: lint-e2e lint-e2e-fix
+.PHONY: lint-testinfra
+lint-testinfra: ## Lint shared test infrastructure and its process integration tests
+	$(GOLANGCI_LINT) run --build-tags=testinfra ./tests/process/... ./tests/kubeexec/... ./tests/admission/... ./tests/testutil/... ./tests/tunnel/... ./tests/kindutil/... ./tests/scenarios/... ./tests/runner/... ./tests/httpclient/... ./tests/traffic/... ./tests/publication/... ./tests/fixtures/...
+
 lint-e2e: ## Lint the full-stack e2e suite without creating a cluster
 	$(GOLANGCI_LINT) run --build-tags=e2e ./tests/e2e/...
 
@@ -329,19 +333,15 @@ check-no-lua: ## Reject Lua scripts and runtime hooks in HAPTIC
 	python3 scripts/check-no-lua.py
 
 test-admission-readiness: ## Verify admission readiness polling fails closed
-	python3 -m unittest scripts/tests/test_admission_readiness.py
+	$(GO) tool gotestsum --format testname -- -race ./tests/admission/...
 
 test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
 	@echo "Running tests..."
 	$(MAKE) test-admission-readiness
 	$(MAKE) test-playground-web
 	bash scripts/tests/test_check_test_inventory.sh
-	bash scripts/tests/test_cluster_node_image.sh
 	python3 -m unittest \
 		scripts/tests/test_check_no_lua.py \
-		scripts/tests/test_gitops_lifecycle.py \
-		scripts/tests/test_upgrade_traffic.py \
-		scripts/tests/test_chart_upgrade_baselines.py \
 		scripts/tests/test_shard_go_tests.py \
 		scripts/tests/test_go_test_weights.py \
 		scripts/tests/test_scale_trend.py \
@@ -362,8 +362,13 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
 	@$(MAKE) test-unit
+	@$(MAKE) test-process
 	@$(MAKE) test-playground
 	@$(MAKE) test-e2e-helpers
+
+.PHONY: test-process
+test-process: ## Verify process supervision with real child processes, without a cluster
+	$(GO) tool gotestsum --junitfile report-process.xml --format testname -- -race -count=1 -tags=testinfra ./tests/process/...
 
 test-unit: ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 	@# No coverage flags here: instrumenting the module for coverage costs a
@@ -377,7 +382,7 @@ test-unit: ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 .PHONY: test-e2e-helpers
 test-e2e-helpers: ## Test e2e client and cluster helpers without creating a cluster
 	$(GO) tool gotestsum --junitfile report-e2e-helpers.xml --format testname -- \
-		-tags=e2e -race ./tests/e2e/e2ecluster/... ./tests/e2e/grpcclient/... ./tests/e2e/httpclient/... ./tests/e2e/tunnel/...
+		-tags=e2e -race ./tests/e2e/e2ecluster/... ./tests/e2e/grpcclient/... ./tests/httpclient/... ./tests/tunnel/...
 
 .PHONY: test-playground-web
 test-playground-web: ## Test playground asset loading and generated scripts
@@ -761,7 +766,7 @@ GITOPS_PROVIDER ?= argo
 GITOPS_CERTIFICATES ?= external
 test-gitops-lifecycle: $(if $(GITOPS_IMAGE),,docker-build-test) ## Verify Argo CD or Flux installs, syncs, upgrades, rejection, and recovery
 	gitops_run_id="$${CI_JOB_ID:-$$(date +%s%N)}"; \
-	python3 scripts/test-gitops-lifecycle.py --provider "$(GITOPS_PROVIDER)" \
+	bash scripts/test-gitops-lifecycle.sh --provider "$(GITOPS_PROVIDER)" \
 		--certificates "$(GITOPS_CERTIFICATES)" \
 		--image "$(or $(GITOPS_IMAGE),haptic:test)" \
 		--cluster "$(or $(GITOPS_CLUSTER_NAME),haptic-gitops-$(GITOPS_PROVIDER)-$$gitops_run_id)" \

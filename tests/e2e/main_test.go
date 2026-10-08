@@ -44,13 +44,12 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/gateway-api/pkg/consts"
-	kindcluster "sigs.k8s.io/kind/pkg/cluster"
-	kindcmd "sigs.k8s.io/kind/pkg/cmd"
 
 	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	devassets "gitlab.com/haproxy-haptic/haptic/scripts/dev-env-assets"
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/process"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
@@ -65,7 +64,7 @@ var ClusterName = e2eCluster.ClusterName
 
 var kubeconfigPath = e2eCluster.KubeconfigPath
 
-var clusterCreated bool
+var ownedE2ECluster *kindutil.Cluster
 
 func init() {
 	// Register the HAProxyTemplateConfig CRD types with the global scheme so
@@ -141,10 +140,6 @@ func TestMain(m *testing.M) {
 	// for the per-test throttle.
 	InstallFailureSnapshotter()
 
-	provider := kindcluster.NewProvider(
-		kindcluster.ProviderWithLogger(kindcmd.NewLogger()),
-	)
-
 	// Heartbeat: emit current setup phase + elapsed every 5s so the GitLab
 	// job trace shows progress instead of looking frozen for the ~4-minute
 	// window between `go: downloading` and the first test PASS line.
@@ -155,9 +150,7 @@ func TestMain(m *testing.M) {
 	startSetupHeartbeat(heartbeatCtx)
 
 	testEnv.Setup(
-		phase("cluster-create", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			return setupCluster(ctx, cfg, provider)
-		}),
+		phase("cluster-create", setupCluster),
 		phase("load-controller-image", func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 			return loadControllerImage(ctx)
 		}),
@@ -226,7 +219,7 @@ func TestMain(m *testing.M) {
 
 	testEnv.Finish(
 		func(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
-			return teardownCluster(ctx, provider)
+			return teardownCluster(ctx)
 		},
 	)
 
@@ -313,21 +306,14 @@ func startSetupHeartbeat(ctx context.Context) {
 // setupCluster creates the kind cluster if it doesn't already exist,
 // patches the kubeconfig for DinD if applicable, and writes it to the
 // suite's isolated kubeconfig path.
-func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluster.Provider) (context.Context, error) {
+func setupCluster(ctx context.Context, cfg *envconf.Config) (context.Context, error) {
 	if os.Getenv("SKIP_CLUSTER_CREATE") == "true" {
 		return ctx, configurePrecreatedCluster(cfg)
 	}
 
-	clusters, err := provider.List()
+	clusterExists, err := kindutil.ClusterExists(ctx, process.Executor{}, ClusterName, kindutil.DockerEnvironment(os.Getenv))
 	if err != nil {
-		return ctx, fmt.Errorf("list kind clusters: %w", err)
-	}
-	clusterExists := false
-	for _, c := range clusters {
-		if c == ClusterName {
-			clusterExists = true
-			break
-		}
+		return ctx, err
 	}
 	if clusterExists && e2eCluster.RequireNew {
 		return ctx, fmt.Errorf("isolated kind cluster %q already exists; choose a unique cluster name", ClusterName)
@@ -341,23 +327,22 @@ func setupCluster(ctx context.Context, cfg *envconf.Config, provider *kindcluste
 	}
 
 	if !clusterExists {
-		if err := createE2ECluster(provider); err != nil {
-			return ctx, err
-		}
-		if err := kindutil.BlackholeSyntheticBackends(ClusterName); err != nil {
+		if err := createE2ECluster(ctx); err != nil {
 			return ctx, err
 		}
 		// Best-effort metrics-server so the rolling-restart failure snapshot's
 		// `kubectl top` capture has real utilization data. Non-fatal.
 		installMetricsServerBestEffort(ctx)
+	} else {
+		ownedE2ECluster, _, err = kindutil.ResumeCluster(ctx, process.Executor{}, ClusterName, kindutil.DockerEnvironment(os.Getenv))
+		if err != nil {
+			return ctx, err
+		}
 	}
 
-	kubeconfig, err := provider.KubeConfig(ClusterName, false)
+	kubeconfig, err := kindutil.ClusterKubeconfig(ctx, process.Executor{}, ClusterName, kindutil.DockerEnvironment(os.Getenv))
 	if err != nil {
 		return ctx, fmt.Errorf("get kubeconfig for %q: %w", ClusterName, err)
-	}
-	if kindutil.IsDockerInDocker() {
-		kubeconfig = kindutil.PatchKubeconfigForDind(kubeconfig)
 	}
 	if err := e2eCluster.WriteKubeconfig([]byte(kubeconfig)); err != nil {
 		return ctx, fmt.Errorf("write kubeconfig: %w", err)
@@ -378,36 +363,24 @@ func configurePrecreatedCluster(cfg *envconf.Config) error {
 	return nil
 }
 
-func createE2ECluster(provider *kindcluster.Provider) error {
-	opts := []kindcluster.CreateOption{
-		kindcluster.CreateWithWaitForReady(DefaultClusterCreateTimeout),
-		kindcluster.CreateWithRawConfig([]byte(e2eCluster.KindConfig())),
+func createE2ECluster(ctx context.Context) error {
+	artifacts, err := os.MkdirTemp("", "haptic-e2e-")
+	if err != nil {
+		return err
 	}
-	if nodeImage := os.Getenv("KIND_NODE_IMAGE"); nodeImage != "" {
-		opts = append(opts, kindcluster.CreateWithNodeImage(nodeImage))
+	ownedE2ECluster, err = kindutil.NewCluster(process.Executor{}, &kindutil.ClusterOptions{
+		Name: ClusterName, Kubeconfig: filepath.Join(artifacts, "kubeconfig"), Artifacts: artifacts,
+		Config: []byte(e2eCluster.KindConfig()), Environment: kindutil.DockerEnvironment(os.Getenv), ReadyTimeout: DefaultClusterCreateTimeout,
+	})
+	if err != nil {
+		return err
 	}
-	var stagingDir string
-	if e2eCluster.RequireNew {
-		var err error
-		stagingDir, err = os.MkdirTemp("", "haptic-e2e-kind-kubeconfig-")
-		if err != nil {
-			return fmt.Errorf("create kind kubeconfig staging directory: %w", err)
-		}
-		opts = append(opts, kindcluster.CreateWithKubeconfigPath(filepath.Join(stagingDir, "config")))
+	if err := ownedE2ECluster.Create(ctx, os.Getenv("KIND_NODE_IMAGE")); err != nil {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		return errors.Join(err, ownedE2ECluster.Close(cleanup))
 	}
-	createErr := provider.Create(ClusterName, opts...)
-	if createErr == nil {
-		clusterCreated = true
-	} else {
-		createErr = fmt.Errorf("create kind cluster %q: %w", ClusterName, createErr)
-	}
-	var cleanupErr error
-	if stagingDir != "" {
-		if err := os.RemoveAll(stagingDir); err != nil {
-			cleanupErr = fmt.Errorf("remove kind kubeconfig staging directory: %w", err)
-		}
-	}
-	return errors.Join(createErr, cleanupErr)
+	return nil
 }
 
 // installMetricsServerBestEffort applies metrics-server to the freshly-created
@@ -1008,21 +981,13 @@ func applyBackendFixtures(ctx context.Context) (context.Context, error) {
 
 // teardownCluster destroys the kind cluster unless KEEP_CLUSTER is true
 // (default). In CI we also keep so after_script can collect logs.
-func teardownCluster(ctx context.Context, provider *kindcluster.Provider) (context.Context, error) {
-	if os.Getenv("SKIP_CLUSTER_CREATE") == "true" {
-		// CI mode: leave cluster lifecycle to the runner.
+func teardownCluster(ctx context.Context) (context.Context, error) {
+	if os.Getenv("SKIP_CLUSTER_CREATE") == "true" || os.Getenv("KEEP_CLUSTER") != "false" || ownedE2ECluster == nil {
 		return ctx, nil
 	}
-	if os.Getenv("KEEP_CLUSTER") != "false" {
-		return ctx, nil
-	}
-	if e2eCluster.RequireNew && !clusterCreated {
-		return ctx, nil
-	}
-	if err := provider.Delete(ClusterName, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "e2e: delete kind cluster: %v\n", err)
-	}
-	return ctx, nil
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	return ctx, ownedE2ECluster.Close(cleanup)
 }
 
 // kubectlApplyStdin pipes a YAML manifest through `kubectl apply -f -`.

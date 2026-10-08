@@ -78,6 +78,13 @@ agents before the asynchronous HAProxy verdict arrived. The accepted-input bound
 requires synchronous success from every output validator before that input can
 advance. No validator, admission rule, assertion, or agent check is removed.
 
+Input acceptance and admission use separate validation services, each allowing
+one HAProxy check at a time. An admission proposal cannot hold up an endpoint
+update's check, and reconciliation cannot consume admission's request budget.
+Each path retains its complete synchronous check, binary flags, and auxiliary
+files. Admission retains strict DNS checking; input acceptance retains `-dr`.
+This changes scheduling only; it does not reuse or bypass a validation verdict.
+
 The previous accepted behavior can remain active while a replacement or deletion
 is rejected. This includes credentials and access policies. Rejection is not a
 successful rollout of the intended change. Operators can inspect the rejected

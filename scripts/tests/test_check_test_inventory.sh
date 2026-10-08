@@ -31,4 +31,12 @@ printf '//go:build e2e\n\npackage e2e\n' > "$fixture/tests/e2e/new_test.go"
 printf 'tests/e2e/ignored_test.go\n' > "$fixture/.gitignore"
 printf 'package e2e\n' > "$fixture/tests/e2e/ignored_test.go"
 check_inventory
+mkdir -p "$fixture/tests/process"
+printf '//go:build testinfra && unix\n\npackage process\n' > "$fixture/tests/process/process_integration_test.go"
+check_inventory
+printf '//go:build never_runs\n\npackage process\n' > "$fixture/tests/process/process_integration_test.go"
+if check_inventory; then
+    echo 'Inventory accepted an unwired process integration test' >&2
+    exit 1
+fi
 printf 'Test inventory regression checks passed\n'

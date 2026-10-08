@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Endpoint updates and admission requests no longer wait for each other's HAProxy validation checks.
+- Prevent repeated status writes across reconciliation phases from making valid Kubernetes updates time out.
 - Verified agent-state reads no longer race HAProxy reloads and invalidate the confirmed worker configuration.
 
 ### Helm chart

@@ -17,14 +17,12 @@
 package acceptance
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
-	"fmt"
 	"math/big"
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,11 +46,6 @@ func newTLSSecret(namespace, name string, certPEM, keyPEM []byte) *corev1.Secret
 // given serial number and DNS SAN. Distinct serials let the test detect a
 // rotation purely from the served certificate.
 func genSelfSignedServerCert(serial int64, dnsName string) (certPEM, keyPEM []byte, err error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, fmt.Errorf("generating key: %w", err)
-	}
-
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(serial),
 		Subject:      pkix.Name{CommonName: dnsName},
@@ -63,12 +56,9 @@ func genSelfSignedServerCert(serial int64, dnsName string) (certPEM, keyPEM []by
 		DNSNames:     []string{dnsName},
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	cert, err := fixtures.NewCertificate(tmpl, fixtures.RSA2048, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating certificate: %w", err)
+		return nil, nil, err
 	}
-
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	return certPEM, keyPEM, nil
+	return cert.PEM, cert.KeyPEM, nil
 }

@@ -203,9 +203,9 @@ func (f *agentTLSRotation) oldControllerClient(ctx context.Context, t *testing.T
 	t.Cleanup(func() {
 		require.NoError(t, f.clientset.CoreV1().Services(ControllerNamespace).Delete(context.WithoutCancel(ctx), service.Name, metav1.DeleteOptions{}))
 	})
-	command, ports, err := startForwardTunnel(ctx, "service/"+service.Name, []string{":5555"}, 1)
+	command, ports, err := startForwardTunnel(ctx, ctx, "service/"+service.Name, []string{":5555"}, 1)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
+	t.Cleanup(func() { _ = command.Stop() })
 	directory := filepath.Join(t.TempDir(), "active")
 	tlstest.Publish(t, directory, tlstest.Identity{Certificate: f.controller.Data["tls.crt"], Key: f.controller.Data["tls.key"]}, f.ca.PEM, nil, time.Time{})
 	source, err := transportsecurity.NewSource(directory, f.serverName)

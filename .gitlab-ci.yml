@@ -161,6 +161,7 @@ variables:
 # exercise the tests that read them.
 .rules-go:
   rules:
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         - "**/*.go"
         - "**/*.pgo"
@@ -174,6 +175,24 @@ variables:
         - scripts/**/*
         - .gitlab-ci.yml
         - .golangci.yml
+
+.rules-test-infrastructure:
+  rules:
+    - changes:
+        - Makefile
+        - tests/admission/**/*
+        - tests/fixtures/**/*
+        - tests/httpclient/**/*
+        - tests/kindutil/**/*
+        - tests/kubeexec/**/*
+        - tests/process/**/*
+        - tests/publication/**/*
+        - tests/runner/**/*
+        - tests/scenarios/**/*
+        - tests/testutil/**/*
+        - tests/traffic/**/*
+        - tests/tunnel/**/*
+        - scripts/test-infra.sh
 
 # Skip only known prose paths; arbitrary chart inputs still select validation.
 .rules-chart-inputs:
@@ -642,9 +661,10 @@ test:
     - |
       go tool gotestsum --junitfile report.xml --format testname -- \
         -race -count=1 -timeout 45m ./...
+    - make test-process
   artifacts:
     reports:
-      junit: report.xml
+      junit: [report.xml, report-process.xml]
     expire_in: 1 week
     when: always
 
@@ -939,6 +959,7 @@ build-snapshot:
     - !reference [.rules-go, rules]
     - !reference [.rules-helm, rules]
     - !reference [.rules-spoa-chart, rules]
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         - Dockerfile.ingress-conformance-test
         - tests/conformance/patches/**
@@ -986,6 +1007,7 @@ build-ingress-conformance-image:
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         # Narrow chart-side trigger to chart-impl files only (mirrors
         # .rules-spoa-chart). Doc-only chart changes (CLAUDE.md,
@@ -1149,6 +1171,7 @@ build-playground-wasm:
 
 .rules-spoa:
   rules:
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         # SPOA hub image build inputs.
         - versions-spoa.env
@@ -1843,6 +1866,7 @@ test-acceptance:
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
+    - !reference [.rules-test-infrastructure, rules]
     - changes: *chart-inputs
     - !reference [.rules-go, rules]
   timeout: 30 minutes
@@ -1857,6 +1881,7 @@ test-acceptance:
   variables:
     HAPROXY_VERSION: "3.4"
     KIND_NODE_IMAGE: kindest/node:${KIND_NODE_VERSION}
+    HAPTIC_ACCEPTANCE_KUBECONFIG: "$CI_PROJECT_DIR/debug-logs/acceptance.kubeconfig"
     KEEP_NAMESPACE: "true"  # Preserve namespaces so after_script can collect logs on failure
   before_script:
     # Pull test image from registry and tag it for the acceptance tests
@@ -1876,7 +1901,7 @@ test-acceptance:
         mkdir -p debug-logs
 
         # Use the kubeconfig created by the acceptance tests
-        export KUBECONFIG=/tmp/haproxy-test-kubeconfig
+        export KUBECONFIG="$HAPTIC_ACCEPTANCE_KUBECONFIG"
 
         # List all test namespaces (they have pattern test-*)
         for ns in $(kubectl get ns -o name 2>/dev/null | grep '^namespace/test-' | cut -d/ -f2); do
@@ -1971,6 +1996,7 @@ test-acceptance:
     - !reference [.not-mirror-refresh, rules]
     - if: $CI_COMMIT_TAG
       when: never
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         - "**/*.go"
         - "**/*.pgo"
@@ -2324,6 +2350,7 @@ test-chart-upgrade:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $SCHEDULE_KIND == "nightly"
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         - charts/haptic/templates/**/*
         - charts/haptic/crds/**/*
@@ -2335,9 +2362,6 @@ test-chart-upgrade:
         - pkg/controller/webhook/**/*
         - scripts/test-chart-upgrade.sh
         - scripts/check-chart-upgrade-baselines.sh
-        - scripts/lib/admission.sh
-        - scripts/lib/upgrade-traffic.sh
-        - scripts/testdata/chart-upgrade/**/*
         - .gitlab-ci.yml
   before_script:
     - |
@@ -2382,6 +2406,7 @@ test-install-without-gateway-api:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $SCHEDULE_KIND == "nightly"
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         - charts/haptic/templates/**/*
         - charts/haptic/crds/**/*
@@ -2452,14 +2477,12 @@ test-gitops-lifecycle:
     - if: $CI_COMMIT_TAG
       when: never
     - if: $SCHEDULE_KIND == "nightly"
+    - !reference [.rules-test-infrastructure, rules]
     - changes: *chart-inputs
     - changes:
         - cmd/haptic/**/*
         - pkg/controller/webhook/**/*
-        - scripts/test-gitops-lifecycle.py
-        - scripts/lib/cluster.sh
-        - scripts/lib/upgrade-traffic.sh
-        - scripts/testdata/chart-upgrade/**/*
+        - scripts/test-gitops-lifecycle.sh
         - .gitlab-ci.yml
   before_script:
     - |
@@ -2623,6 +2646,7 @@ test-gateway-conformance:
     - if: $SCHEDULE_KIND == "nightly"
     - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         - "**/*.go"
         - "**/*.pgo"
@@ -3499,6 +3523,7 @@ test-ingress-conformance:
     - if: $SCHEDULE_KIND == "nightly"
     - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         # Keep in lockstep with build-ingress-conformance-image's
         # `changes:` list — test depends on build, so test's trigger
@@ -3748,8 +3773,10 @@ test-helm-defaults:
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-spoa-chart, rules]
+    - !reference [.rules-test-infrastructure, rules]
     - changes:
         - .gitlab-ci.yml
+        - scripts/test-helm-defaults.sh
   timeout: 15 minutes
   interruptible: true
   needs:
@@ -3770,47 +3797,9 @@ test-helm-defaults:
       TEST_IMAGE="${CI_REGISTRY_IMAGE}:ci-${CI_PIPELINE_ID}-haproxy${HAPROXY_VERSION}"
       docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
       docker pull ${TEST_IMAGE}
-    - |
-      # Pre-create kind cluster with DinD-compatible networking
-      kind create cluster --name ${CLUSTER_NAME} --config .gitlab/ci/kind-config-dind.yaml --wait 120s
-      source scripts/lib/cluster.sh
-      kind_blackhole_synthetic_backends ${CLUSTER_NAME}
-    - |
-      # Fix kubeconfig to use "docker" hostname instead of 0.0.0.0
-      mkdir -p ~/.kube
-      kind get kubeconfig --name ${CLUSTER_NAME} > ~/.kube/config
-      sed -i 's|https://0\.0\.0\.0:|https://docker:|g' ~/.kube/config
-    - |
-      # Wait for API server to be ready
-      for i in $(seq 1 30); do
-        if kubectl get nodes &>/dev/null; then
-          echo "API server is ready"
-          break
-        fi
-        echo "Waiting for API server... (attempt $i/30)"
-        sleep 2
-      done
-    - |
-      # Load test image into kind cluster
-      kind load docker-image ${TEST_IMAGE} --name ${CLUSTER_NAME}
     - !reference [.stamp-source-chart, script]
   script:
     - make test-helm-defaults HELM_DEFAULTS_IMAGE="${TEST_IMAGE}"
-  after_script:
-    # No kubectl here. scripts/test-helm-defaults.sh deletes the kind cluster
-    # in its EXIT trap, so by this point there is no apiserver to query and
-    # every call returned "localhost:8080 refused" into an artifact that looked
-    # collected but held nothing. The script dumps the same diagnostics to
-    # debug-logs/diagnostics.log while the cluster is alive; just report them.
-    - |
-      if [ "$CI_JOB_STATUS" = "failed" ]; then
-        if [ -s debug-logs/diagnostics.log ]; then
-          echo "Cluster diagnostics captured pre-teardown: $(wc -l < debug-logs/diagnostics.log) lines"
-          ls -la debug-logs/
-        else
-          echo "No diagnostics captured — the job failed before the script's cleanup trap ran."
-        fi
-      fi
   artifacts:
     paths:
       - debug-logs/

@@ -214,12 +214,13 @@ func createReconciliationComponents(
 	})
 
 	// Input acceptance requires complete validation before publication (ADR-0032).
-	proposalValidation := newProposalValidator(cfg, logger)
+	inputValidation := newFullValidator(cfg, logger)
+	proposalValidation := newFullValidator(cfg, logger)
 	inputSelector := newInputSelector(setup, cfg, pipeline.New(&pipeline.PipelineConfig{
 		Renderer:        renderService,
-		Validator:       proposalValidation,
+		Validator:       inputValidation,
 		OutputValidator: outputValidator,
-		CommitValidator: proposalValidation,
+		CommitValidator: inputValidation,
 		Logger:          logger,
 	}), logger)
 	proposalPipeline := pipeline.New(&pipeline.PipelineConfig{
@@ -408,12 +409,8 @@ func newRenderGateValidator(cfg *coreconfig.Config, logger *slog.Logger) *valida
 	})
 }
 
-// newProposalValidator creates the full-validation service that answers for
-// operator input: admission proposals, HTTP content promotion, and the commit
-// of external content a reconcile render accepted for the first time. DNS
-// lookup remains flaky and recovers at runtime (HAProxy starts the server DOWN
-// and brings it up when the next health check resolves).
-func newProposalValidator(
+// Independent gates keep input acceptance from queuing behind admission (ADR-0032).
+func newFullValidator(
 	cfg *coreconfig.Config,
 	logger *slog.Logger,
 ) *validation.ValidationService {
@@ -421,6 +418,7 @@ func newProposalValidator(
 	return validation.NewValidationService(&validation.ValidationServiceConfig{
 		Logger:            logger.With("validation", "full"),
 		SkipDNSValidation: true,
+		CheckGate:         dataplane.NewCheckGate(0),
 		BaseDir:           dirConfig.BaseDir,
 		MapsDir:           dirConfig.MapsDir,
 		SSLCertsDir:       dirConfig.SSLCertsDir,

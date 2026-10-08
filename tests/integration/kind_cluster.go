@@ -4,10 +4,10 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"slices"
+	"path/filepath"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -16,10 +16,10 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/flowcontrol"
-	"sigs.k8s.io/kind/pkg/cluster"
-	"sigs.k8s.io/kind/pkg/cmd"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // KindClusterConfig holds configuration for creating a Kind cluster.
@@ -34,39 +34,32 @@ type KindClusterConfig struct {
 type KindCluster struct {
 	Name       string
 	Kubeconfig string
-	provider   *cluster.Provider
+	owned      *kindutil.Cluster
 	clientset  *kubernetes.Clientset
 }
 
 // SetupKindCluster creates or reuses a Kind cluster for integration testing.
 func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
-	provider := cluster.NewProvider(
-		cluster.ProviderWithLogger(cmd.NewLogger()),
-	)
-
-	// Check if cluster already exists
-	clusters, err := provider.List()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	exists, err := kindutil.ClusterExists(ctx, process.Executor{}, cfg.Name, kindutil.DockerEnvironment(os.Getenv))
 	if err != nil {
-		return nil, fmt.Errorf("failed to list clusters: %w", err)
+		return nil, err
 	}
-
-	if slices.Contains(clusters, cfg.Name) {
-		fmt.Printf("♻️  Reusing existing Kind cluster '%s'\n", cfg.Name)
-	} else if err := createKindCluster(provider, cfg); err != nil {
+	var owned *kindutil.Cluster
+	if exists {
+		owned, _, err = kindutil.ResumeCluster(ctx, process.Executor{}, cfg.Name, kindutil.DockerEnvironment(os.Getenv))
+	} else {
+		owned, err = createKindCluster(ctx, cfg)
+	}
+	if err != nil {
 		return nil, err
 	}
 
 	// Get kubeconfig
-	kubeconfig, err := provider.KubeConfig(cfg.Name, false)
+	kubeconfig, err := kindutil.ClusterKubeconfig(ctx, process.Executor{}, cfg.Name, kindutil.DockerEnvironment(os.Getenv))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
-	}
-
-	// If running in Docker-in-Docker, patch the kubeconfig to use the dind hostname
-	// instead of localhost/0.0.0.0 (which are not accessible from the CI job container)
-	if kindutil.IsDockerInDocker() {
-		kubeconfig = kindutil.PatchKubeconfigForDind(kubeconfig)
-		fmt.Printf("📦 Patched kubeconfig for Docker-in-Docker (server: https://%s:...)\n", kindutil.GetDindHostname())
 	}
 
 	// Create Kubernetes client
@@ -89,14 +82,14 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 	kindCluster := &KindCluster{
 		Name:       cfg.Name,
 		Kubeconfig: kubeconfig,
-		provider:   provider,
+		owned:      owned,
 		clientset:  clientset,
 	}
 
 	// Wait for API server to be fully ready
 	// This ensures the API server is accepting connections before tests proceed
 	fmt.Printf("⏳ Waiting for API server to become ready...\n")
-	if err := waitForAPIServer(clientset, 2*time.Minute); err != nil {
+	if err := waitForAPIServer(ctx, clientset, 2*time.Minute); err != nil {
 		return nil, fmt.Errorf("API server failed to become ready: %w", err)
 	}
 	fmt.Printf("✓ API server is ready\n")
@@ -108,75 +101,38 @@ func SetupKindCluster(cfg *KindClusterConfig) (*KindCluster, error) {
 	return kindCluster, nil
 }
 
-func createKindCluster(provider *cluster.Provider, cfg *KindClusterConfig) error {
-	fmt.Printf("🆕 Creating new Kind cluster '%s'\n", cfg.Name)
-
-	// Determine node image to use
-	nodeImage := cfg.Image
-	if nodeImage == "" {
-		// Check environment variable (full image path like "kindest/node:v1.32.0")
-		nodeImage = os.Getenv("KIND_NODE_IMAGE")
-		// If env var is not set, use default known-working version
-		if nodeImage == "" {
-			nodeImage = "kindest/node:v1.32.0"
-		}
+func createKindCluster(ctx context.Context, cfg *KindClusterConfig) (*kindutil.Cluster, error) {
+	artifacts, err := os.MkdirTemp("", "haptic-integration-")
+	if err != nil {
+		return nil, err
 	}
-
-	// Prepare cluster creation options
-	createOpts := []cluster.CreateOption{
-		cluster.CreateWithWaitForReady(5 * time.Minute),
+	owned, err := kindutil.NewCluster(process.Executor{}, &kindutil.ClusterOptions{Name: cfg.Name, Kubeconfig: filepath.Join(artifacts, "kubeconfig"), Artifacts: artifacts, Environment: kindutil.DockerEnvironment(os.Getenv), ReadyTimeout: 5 * time.Minute})
+	if err != nil {
+		return nil, err
 	}
-
-	// Add node image if specified
-	if nodeImage != "" {
-		createOpts = append(createOpts, cluster.CreateWithNodeImage(nodeImage))
+	image := cfg.Image
+	if image == "" {
+		image = os.Getenv("KIND_NODE_IMAGE")
 	}
-
-	// Use custom config for increased pod limits (500 vs default 110)
-	// This is required for parallel integration tests that create many namespaces
-	if kindutil.IsDockerInDocker() {
-		fmt.Printf("📦 Detected Docker-in-Docker environment, using dind-compatible config\n")
-		createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.DindKindConfig)))
-	} else {
-		fmt.Printf("📦 Using base config with increased pod limits\n")
-		createOpts = append(createOpts, cluster.CreateWithRawConfig([]byte(kindutil.BaseKindConfig)))
+	if image == "" {
+		image = "kindest/node:v1.32.0"
 	}
-
-	// Create the cluster
-	if err := provider.Create(cfg.Name, createOpts...); err != nil {
-		return fmt.Errorf("failed to create kind cluster: %w", err)
+	if err := owned.Create(ctx, image); err != nil {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		return nil, errors.Join(err, owned.Close(cleanup))
 	}
-	if err := kindutil.BlackholeSyntheticBackends(cfg.Name); err != nil {
-		return err
-	}
-	return nil
+	return owned, nil
 }
 
-// waitForAPIServer polls the API server until it responds successfully or timeout occurs.
-// This is necessary because cluster creation may complete before the API server is fully ready
-// to accept connections, leading to "connection refused" errors in tests.
-func waitForAPIServer(clientset *kubernetes.Clientset, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for API server to become ready")
-		case <-ticker.C:
-			// Try to get server version - this is a lightweight API call
-			// that confirms the API server is responding
-			_, err := clientset.Discovery().ServerVersion()
-			if err == nil {
-				return nil // API server is ready
-			}
-			// Continue waiting on connection errors
-			fmt.Printf("  API server not ready yet (will retry): %v\n", err)
+func waitForAPIServer(ctx context.Context, clientset *kubernetes.Clientset, timeout time.Duration) error {
+	return testutil.Poll(ctx, testutil.WaitConfig{Timeout: timeout, InitialInterval: 2 * time.Second, MaxInterval: 2 * time.Second, Multiplier: 1}, "API server readiness", func(ctx context.Context) (testutil.PollResult, error) {
+		_, err := clientset.Discovery().RESTClient().Get().AbsPath("/version").DoRaw(ctx)
+		if err != nil {
+			return testutil.PollPending, err
 		}
-	}
+		return testutil.PollSucceeded, nil
+	})
 }
 
 // CreateNamespace creates a new namespace in the cluster.
@@ -217,17 +173,13 @@ func (k *KindCluster) CreateNamespace(name string) (*Namespace, error) {
 // leader-election lease under load), after which the SA controller needs to
 // re-sync every namespace.
 func (k *KindCluster) waitForDefaultServiceAccount(ctx context.Context, namespace string) error {
-	deadline := time.Now().Add(60 * time.Second)
-	for {
+	return testutil.Poll(ctx, testutil.WaitConfig{Timeout: 60 * time.Second, InitialInterval: 250 * time.Millisecond, MaxInterval: 250 * time.Millisecond, Multiplier: 1}, "default service account", func(ctx context.Context) (testutil.PollResult, error) {
 		_, err := k.clientset.CoreV1().ServiceAccounts(namespace).Get(ctx, "default", metav1.GetOptions{})
-		if err == nil {
-			return nil
+		if err != nil {
+			return testutil.PollPending, err
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("default service account not created within 60s: %w", err)
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
+		return testutil.PollSucceeded, nil
+	})
 }
 
 // CleanupOldTestNamespacesAsync triggers asynchronous cleanup of old test namespaces.
@@ -282,10 +234,12 @@ func (k *KindCluster) CleanupOldTestNamespacesAsync() {
 
 // Teardown destroys the Kind cluster.
 func (k *KindCluster) Teardown() error {
-	if err := k.provider.Delete(k.Name, ""); err != nil {
-		return fmt.Errorf("failed to delete kind cluster: %w", err)
+	if k.owned == nil {
+		return nil
 	}
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return k.owned.Close(ctx)
 }
 
 // Namespace represents a Kubernetes namespace for test isolation.
@@ -337,10 +291,12 @@ func (k *KindCluster) LoadDockerImage(image string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	load := exec.CommandContext(ctx, "kind", "load", "docker-image", image, "--name", k.Name)
-	output, err := load.CombinedOutput()
+	if k.owned != nil {
+		return k.owned.LoadImages(ctx, image)
+	}
+	result, err := (process.Executor{}).Run(ctx, &process.Command{Name: "kind", Args: []string{"load", "docker-image", image, "--name", k.Name}, Env: kindutil.DockerEnvironment(os.Getenv)})
 	if err != nil {
-		return fmt.Errorf("failed to load image: %w\nOutput: %s", err, output)
+		return fmt.Errorf("failed to load image: %w\nOutput: %s", err, result.Combined)
 	}
 
 	return nil

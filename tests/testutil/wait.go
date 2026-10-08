@@ -17,6 +17,7 @@ package testutil
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -84,13 +85,13 @@ func WaitForCondition(ctx context.Context, cfg WaitConfig, condition func(contex
 func waitTimeoutError(description string, attempt int, elapsed time.Duration, lastErr, ctxErr error) error {
 	if description == "" {
 		if lastErr != nil {
-			return fmt.Errorf("timeout waiting for condition (last error: %w)", lastErr)
+			return fmt.Errorf("timeout waiting for condition (last error: %w)", errors.Join(lastErr, ctxErr))
 		}
 		return fmt.Errorf("timeout waiting for condition: %w", ctxErr)
 	}
 	if lastErr != nil {
 		return fmt.Errorf("timeout waiting for %s after %d attempts in %v (last error: %w)",
-			description, attempt, elapsed, lastErr)
+			description, attempt, elapsed, errors.Join(lastErr, ctxErr))
 	}
 	return fmt.Errorf("timeout waiting for %s after %d attempts in %v: %w",
 		description, attempt, elapsed, ctxErr)
@@ -104,41 +105,11 @@ func WaitForConditionWithDescription(
 	description string,
 	condition func(context.Context) (bool, error),
 ) error {
-	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
-
-	interval := cfg.InitialInterval
-	var lastErr error
-	attempt := 0
-	start := time.Now()
-
-	// Check immediately before first wait
-	attempt++
-	done, err := condition(ctx)
-	if done {
-		return nil
-	}
-	if err != nil {
-		lastErr = err
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return waitTimeoutError(description, attempt, time.Since(start), lastErr, ctx.Err())
-
-		case <-time.After(interval):
-			attempt++
-			done, err := condition(ctx)
-			if done {
-				return nil
-			}
-			if err != nil {
-				lastErr = err
-			}
-
-			// Exponential backoff
-			interval = min(time.Duration(float64(interval)*cfg.Multiplier), cfg.MaxInterval)
+	return Poll(ctx, cfg, description, func(ctx context.Context) (PollResult, error) {
+		done, err := condition(ctx)
+		if done {
+			return PollSucceeded, nil
 		}
-	}
+		return PollPending, err
+	})
 }

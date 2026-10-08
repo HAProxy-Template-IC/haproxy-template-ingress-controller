@@ -1,6 +1,6 @@
 # tests/
 
-Everything that isn't a unit test. Unit tests live beside their code under `pkg/**`; this directory holds architecture validation, integration tests against a real Kubernetes + HAProxy, and end-to-end acceptance tests.
+This directory holds architecture checks, integration and acceptance suites, and shared test infrastructure. Infrastructure unit tests live beside their helpers; controller unit tests live under `pkg/`.
 
 ## Layout
 
@@ -19,6 +19,34 @@ tests/
 │   └── CLAUDE.md
 └── conformance/           # Gateway API upstream conformance suite (//go:build gateway_conformance)
 ```
+
+## Shared infrastructure
+
+Write new orchestration and reusable helpers in Go. Use `tests/process` for
+external commands, `tests/kindutil` for owned Kind clusters, `tests/testutil` for
+bounded polling, and `tests/tunnel` and `tests/httpclient` for traffic transport.
+Pass contexts, cluster identities, namespaces, and artifact paths explicitly.
+Keep scenario assertions independent of production functions.
+
+`tests/scenarios` implements chart upgrades, default installs, and real Argo CD
+and Flux lifecycle tests. The existing Make targets call `tests/runner` through
+thin Bash wrappers. Shared YAML assets and certificate factories live in
+`tests/fixtures`; each caller receives fresh data.
+
+Run `make test-process` for subprocess lifecycle tests. These require Unix and
+use the `testinfra` build tag; ordinary unit tests inject a runner. `make test`
+and the CI unit job also run this target. Cluster scenarios require Docker,
+Kind, kubectl, and Helm.
+
+Cluster cleanup checks ownership before deleting nodes or networks. Kept
+clusters can be resumed from their ownership record. Existing clusters without
+that record may be borrowed by the integration/e2e suites but are never deleted
+by them. Scenarios require a fresh cluster name. Private kubeconfigs and command
+logs remain in the printed artifact directory after cleanup. Local API and
+forwarding listeners use loopback; remote Docker requires reachable API bindings.
+
+See [Test infrastructure contracts](INFRASTRUCTURE.md) for entry points,
+regression coverage, diagnostics, and the retained native-language exceptions.
 
 ## Running
 
@@ -39,17 +67,21 @@ All other upstream parallel tests retain their parallel execution.
 
 From the root of the repo:
 
-| Command | What it runs | Typical duration |
-|---------|--------------|------------------|
-| `make test` | Unit tests + `TestArchitecture` | seconds |
-| `make test-integration` | Integration suite (creates/uses a persistent Kind cluster) | ~2min cold, ~30s warm |
-| `make test-acceptance` | Acceptance suite (builds controller image, creates Kind cluster, runs tests sequentially) | 3–5min |
-| `make test-acceptance-parallel` | Same as above but shares one cluster across test cases | ~half the above |
-| `make test-e2e` | Full-stack e2e suite (self-contained — kind + helm install + fixtures + real HTTP routing) | ~5–10min |
-| `make test-coverage` / `test-integration-coverage` / `test-coverage-combined` | Same suites with coverage output | as above + small overhead |
-| `make check-all` | `make lint` + `make audit` + `make test` (the CI baseline) | under a minute |
+| Command | What it runs |
+| --- | --- |
+| `make test` | Unit tests, shared helpers, process lifecycle tests, and tooling regressions |
+| `make test-process` | Real subprocess cleanup and cancellation checks, without a cluster |
+| `make test-integration` | Integration suite against Kind and HAProxy |
+| `make test-acceptance` | Controller acceptance tests on Kind |
+| `make test-acceptance-parallel` | Acceptance tests sharing one cluster with isolated namespaces |
+| `make test-e2e` | Chart installation and full-stack routing tests |
+| `make test-chart-upgrade` | Released-chart upgrades, rejection, and repair |
+| `make test-helm-defaults` | Default chart admission, certificates, HAProxy syntax, and traffic |
+| `make test-gitops-lifecycle` | Real Argo CD or Flux installation, sync, upgrade, rejection, and recovery |
+| `make test-coverage` / `test-integration-coverage` / `test-coverage-combined` | Unit/integration coverage |
+| `make check-all` | Lint, security checks, and `make test` |
 
-There is no `test-all` target — run the four top-level ones in sequence if you need them all.
+Run the cluster suites separately after `make check-all`; it does not create clusters.
 
 Environment knobs used by the integration suite:
 
@@ -79,7 +111,7 @@ See `tests/integration/README.md` for per-test organisation and `CLAUDE.md` for 
 
 ## Acceptance Tests
 
-Live under `tests/acceptance/`. Use [`kubernetes-sigs/e2e-framework`](https://github.com/kubernetes-sigs/e2e-framework) and a locally built controller image. Each test exercises user-facing behaviour end-to-end (config reloads, metrics endpoint shape, debug endpoint content, etc.) and talks to the controller via the Kubernetes API-server proxy (see `tests/acceptance/README.md` for rationale).
+Live under `tests/acceptance/`. Use [`kubernetes-sigs/e2e-framework`](https://github.com/kubernetes-sigs/e2e-framework) and a locally built controller image. Each test exercises user-facing behaviour end-to-end (config reloads, metrics endpoint shape, debug endpoint content, etc.) and reaches controller debug endpoints through the shared `pkg/k8s/podclient` port-forward client.
 
 See `tests/acceptance/README.md` for the test inventory and `CLAUDE.md` for the env helpers.
 

@@ -160,11 +160,9 @@ func TestKindConfigHostPortPolicy(t *testing.T) {
 		t.Fatal("portless kind config still contains host-port mappings")
 	}
 	for _, retained := range []string{
-		`apiServerAddress: "0.0.0.0"`,
 		`node-labels: "ingress-ready=true"`,
 		"enable-admission-plugins: NodeRestriction,MutatingAdmissionWebhook,ValidatingAdmissionWebhook",
 		"containerLogMaxSize: 200Mi",
-		"value: docker",
 	} {
 		if !strings.Contains(withoutPorts, retained) {
 			t.Fatalf("portless kind config lost %q", retained)

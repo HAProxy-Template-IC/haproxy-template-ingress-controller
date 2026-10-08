@@ -29,40 +29,6 @@ nodes:
 kubeadmConfigPatchesJSON6902:
 ` + etcdNoFsyncPatches
 
-// DindKindConfig is the kind cluster configuration for Docker-in-Docker environments.
-// It binds the API server to 0.0.0.0, adds "docker" as a certificate SAN, and increases
-// the pod limit for parallel test execution.
-const DindKindConfig = `kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-networking:
-  apiServerAddress: "0.0.0.0"
-nodes:
-- role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: KubeletConfiguration
-    maxPods: 500
-kubeadmConfigPatchesJSON6902:
-  # Both kubeadm config versions: kind applies the one matching the node's
-  # k8s version (v1beta3 for <= 1.35, v1beta4 for >= 1.36) and skips the other.
-  # Integration/acceptance pin k8s 1.32 (v1beta3); keep both so the SAN lands
-  # regardless of node version. Do not collapse to a single version.
-  - group: kubeadm.k8s.io
-    version: v1beta3
-    kind: ClusterConfiguration
-    patch: |
-      - op: add
-        path: /apiServer/certSANs/-
-        value: docker
-  - group: kubeadm.k8s.io
-    version: v1beta4
-    kind: ClusterConfiguration
-    patch: |
-      - op: add
-        path: /apiServer/certSANs/-
-        value: docker
-` + etcdNoFsyncPatches
-
 // etcdNoFsyncPatches makes etcd skip fsync — appended to the
 // kubeadmConfigPatchesJSON6902 list of both cluster configs (see the
 // BaseKindConfig comment for the why). Dual kubeadm versions for the same
@@ -107,17 +73,11 @@ func IsDockerInDocker() bool {
 // GetDindHostname extracts the hostname from DOCKER_HOST.
 // For "tcp://docker:2376" it returns "docker".
 func GetDindHostname() string {
-	dockerHost := os.Getenv("DOCKER_HOST")
-	// Remove tcp:// prefix
-	if after, ok := strings.CutPrefix(dockerHost, "tcp://"); ok {
-		hostPort := after
-		// Remove port suffix
-		if idx := strings.LastIndex(hostPort, ":"); idx != -1 {
-			return hostPort[:idx]
-		}
-		return hostPort
+	host, err := remoteDockerHost(os.Getenv("DOCKER_HOST"))
+	if err == nil && host != "" {
+		return host
 	}
-	return "docker" // fallback
+	return "docker"
 }
 
 // GetNodePortHost returns the hostname for accessing NodePort services.
@@ -127,16 +87,4 @@ func GetNodePortHost() string {
 		return GetDindHostname()
 	}
 	return "localhost"
-}
-
-// PatchKubeconfigForDind replaces localhost/0.0.0.0 with the dind hostname
-// in the kubeconfig server URL.
-func PatchKubeconfigForDind(kubeconfig string) string {
-	hostname := GetDindHostname()
-	// Replace 0.0.0.0 (used when apiServerAddress is set to 0.0.0.0)
-	kubeconfig = strings.ReplaceAll(kubeconfig, "https://0.0.0.0:", "https://"+hostname+":")
-	// Replace 127.0.0.1 (default)
-	kubeconfig = strings.ReplaceAll(kubeconfig, "https://127.0.0.1:", "https://"+hostname+":")
-	kubeconfig = strings.ReplaceAll(kubeconfig, "https://localhost:", "https://"+hostname+":")
-	return kubeconfig
 }

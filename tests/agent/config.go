@@ -17,15 +17,13 @@
 package agent
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"math/big"
 	"testing"
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
 )
 
 // Paths inside the pod. Under `default-path origin`, HAProxy names a map, a
@@ -185,10 +183,6 @@ type certificate struct {
 // handle a rotation test uses: the same name served by a different certificate.
 func makeCertificate(t *testing.T, commonName string, serial int64) certificate {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key for %s: %v", commonName, err)
-	}
 	template := &x509.Certificate{
 		SerialNumber:          big.NewInt(serial),
 		Subject:               pkix.Name{CommonName: commonName},
@@ -200,19 +194,12 @@ func makeCertificate(t *testing.T, commonName string, serial int64) certificate 
 		BasicConstraintsValid: true,
 		IsCA:                  true,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	cert, err := fixtures.NewCertificate(template, fixtures.ECDSAP256, nil)
 	if err != nil {
 		t.Fatalf("create certificate for %s: %v", commonName, err)
 	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal key for %s: %v", commonName, err)
-	}
-	// The blank line between the two blocks is what a Secret whose tls.crt
-	// ends in a newline produces, and it is what ends HAProxy's default
-	// payload block — so every certificate op here carries that hazard.
-	bundle := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	bundle = append(bundle, '\n')
-	bundle = append(bundle, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})...)
+	// Keep the blank PEM separator: runtime certificate updates must preserve it.
+	bundle := append(cert.PEM, '\n')
+	bundle = append(bundle, cert.KeyPEM...)
 	return certificate{pem: string(bundle), serial: big.NewInt(serial), common: commonName}
 }
