@@ -2348,7 +2348,7 @@ test-chart-upgrade:
   # published release is missing here.
   parallel:
     matrix:
-      - BASELINE_CHART_VERSION: ["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0", "0.4.0", "0.4.1", "0.2.0-alpha.3"]
+      - BASELINE_CHART_VERSION: ["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0", "0.4.0", "0.4.1", "0.5.0", "0.2.0-alpha.3"]
   needs:
     - job: prepare-spoa-release
       optional: true
@@ -3980,7 +3980,7 @@ trigger-docs-release:
     HAPTIC_RELEASE_COMMIT_SHA: ${CI_COMMIT_SHA}
     HAPTIC_RELEASE_PIPELINE_ID: ${CI_PIPELINE_ID}
     HAPTIC_RELEASE_PLAYGROUND_JOB_NAME: build-playground-wasm
-    PAGES_ARTIFACT_FALLBACK_REF: &pages-publisher-tag pages-publisher-dcaf1333e06f043d51ce422b72e9139d6fccfa8f
+    PAGES_ARTIFACT_FALLBACK_REF: &pages-publisher-tag pages-publisher-453b2e7f7bad492c3f3bf08c10014b8cb1edf43f
   trigger:
     project: haproxy-haptic/haproxy-haptic.gitlab.io
     # A TAG, not a branch: restore-pages-artifact.sh only trusts an artifact
