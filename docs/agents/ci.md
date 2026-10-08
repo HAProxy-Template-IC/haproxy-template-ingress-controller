@@ -87,6 +87,37 @@ pipeline. Then set the protected project CI variable `REUSE_TRAIN_VERIFICATION`
 to `true` and read the setting back.
 
 Ordinary pushes to `main` and `maint/*` then verify the train receipt and build
-publication artifacts. Nightly, explicit verification, and release-tag pipelines
-keep their existing checks. Every code train still runs the full matrix. A missing
+publication artifacts. Weekly, explicit verification, and release-tag pipelines
+retain full verification. Every code train still runs the full matrix. A missing
 or mismatched receipt stops publication even when reuse is enabled.
+
+## Scheduled verification
+
+The nightly schedule uses `SCHEDULE_KIND=nightly` at 02:30 UTC Monday through
+Saturday on `main`. It runs `nightly-dispatch`, which compares the current `main`
+SHA with the most recent
+`Nightly checks` pipeline. If they match, no build or test pipeline starts.
+Canceled and skipped pipelines do not count. A failed nightly remains failed and
+reported; an unchanged commit is not automatically retried. Explicit API or web
+runs with `SCHEDULE_KIND=nightly` remain available for an investigated retry.
+
+When the SHA changes, the dispatcher uses its temporary `CI_JOB_TOKEN` to start
+`Nightly checks` on `main`. That downstream pipeline runs the old Gateway API
+release matrix, churn, scale, and upstream canary jobs, plus their image builds.
+Its result and failure report belong to the downstream pipeline linked from the
+dispatcher; a successful dispatch does not mean the tests passed.
+Dispatcher failures use the existing issue reporter through a small failure-only
+job, without building CI images.
+
+A separate Sunday schedule uses `SCHEDULE_KIND=weekly` at 03:30 UTC on `main`.
+It runs the complete verification matrix and the focused nightly checks even
+without new commits, to detect changes in runners, registries, upstream Gateway
+API, and other external dependencies. Both verification schedules exclude
+publication and release creation.
+
+Feature E2E jobs use `make test-e2e-profile` and the exact-name lists in
+`tests/e2e/profiles/`. Each feature runs once, including its authentication, WAF,
+and ordinary-routing interaction checks. Core HAProxy and Kubernetes matrices
+still enumerate and shard the complete test inventory. `make test-ci-rules`
+checks schedule dependencies, merge-train coverage, and inclusion of profile-gated
+tests. The feature runner also rejects names absent from the compiled inventory.

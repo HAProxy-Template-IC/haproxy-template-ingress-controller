@@ -319,8 +319,8 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 ## Testing
 
 .PHONY: test-ci-rules
-test-ci-rules: ## Check that CI selects chart inputs and excludes chart prose
-	python3 -m unittest scripts/tests/test_ci_chart_rules.py scripts/tests/test_ci_verification.py scripts/tests/test_ci_budget.py
+test-ci-rules: ## Check CI selection, schedules, feature coverage, and merge verification
+	python3 -m unittest scripts/tests/test_ci_chart_rules.py scripts/tests/test_ci_verification.py scripts/tests/test_ci_budget.py scripts/tests/test_ci_schedules.py scripts/tests/test_e2e_profiles.py scripts/tests/test_shard_go_tests.py scripts/tests/test_ci_nightly.py
 
 .PHONY: ci-budget
 ci-budget: ## Check live CI headroom (CI_CANDIDATE_MINUTES is required)
@@ -695,6 +695,20 @@ docker-build-varnish: ## Build the bundled non-root Varnish image
 		--label "org.opencontainers.image.source=https://gitlab.com/haproxy-haptic/haptic" \
 		--label "org.opencontainers.image.revision=$$(git rev-parse HEAD)" \
 		--provenance=false --tag "$$image" $(VARNISH_OUTPUT) -f Dockerfile.varnish .
+
+.PHONY: test-e2e-profile
+test-e2e-profile: ## Run the feature and interaction tests for HAPTIC_E2E_PROFILE
+	@set -eu; \
+	case "$${HAPTIC_E2E_PROFILE:-}" in \
+		cache|rate-limit) ;; \
+		api-gateway) test "$${HAPTIC_E2E_GWAPI_CHANNEL:-}" = experimental || { echo "api-gateway requires HAPTIC_E2E_GWAPI_CHANNEL=experimental" >&2; exit 1; } ;; \
+		*) echo "Set HAPTIC_E2E_PROFILE to cache, rate-limit, or api-gateway" >&2; exit 1 ;; \
+	esac; \
+	mkdir -p debug-logs; \
+	$(GO) test -mod=readonly -tags=e2e -list '^Test' ./tests/e2e/... > debug-logs/e2e-test-inventory.txt; \
+	TEST_RUN_PATTERN="$$(python3 scripts/shard-go-tests.py --include "tests/e2e/profiles/$${HAPTIC_E2E_PROFILE}.txt" 1 1 < debug-logs/e2e-test-inventory.txt)"; \
+	printf '%s\n' "$$TEST_RUN_PATTERN" > debug-logs/e2e-test-selection.txt; \
+	TEST_RUN_PATTERN="$$TEST_RUN_PATTERN" $(MAKE) test-e2e
 
 test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test docker-build-varnish) ## Run full-stack e2e tests (self-contained — kind + helm install + fixtures)
 	@echo "Running e2e tests..."

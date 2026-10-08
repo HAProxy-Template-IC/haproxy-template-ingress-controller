@@ -58,6 +58,15 @@ class ShardTest(unittest.TestCase):
         self.assertEqual(SHARD.partition("\n".join(weights), 3, weights),
                          SHARD.partition(reordered, 3, dict(reversed(weights.items()))))
 
+    def test_explicit_selection_retains_exact_names(self):
+        shards = SHARD.partition("TestOne\nTestTwo\nTestThree", 1, include="TestOne\nTestThree\n")
+        self.assertEqual(shards, [["TestOne", "TestThree"]])
+
+    def test_explicit_selection_rejects_missing_duplicate_empty_or_pattern_names(self):
+        for selection in ("TestMissing", "TestOne\nTestOne", "", "Test.*", "TestOne\n\n"):
+            with self.subTest(selection=selection), self.assertRaises(ValueError):
+                SHARD.partition("TestOne\nTestTwo", 1, include=selection)
+
     def test_rejects_empty_shards_and_invalid_totals(self):
         for inventory, total in [("ok example/pkg 0.01s", 1), ("TestOne", 2), ("TestOne", 0)]:
             with self.subTest(inventory=inventory, total=total):

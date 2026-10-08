@@ -1,0 +1,9 @@
+TestGatewayRoutePolicySharedRateLimit
+TestHapticAPIKey
+TestHapticBasicAuth
+TestHapticExternalAuth
+TestHapticRateLimit
+TestHapticSharedRateLimit
+TestHapticWAFPolicies
+TestIngressBasic
+TestIngressRateLimit
