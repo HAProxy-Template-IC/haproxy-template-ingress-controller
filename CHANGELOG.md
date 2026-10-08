@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The bundled PrometheusRule alerts when a controller uses retained configuration while rendering is blocked.
 
+#### Fixed
+
+- Gateway API: catch-all GRPCRoutes select the most specific hostname even when a broader route is older or its name sorts first.
+
 ## [0.4.1] - 2026-10-07
 
 ### Fixed

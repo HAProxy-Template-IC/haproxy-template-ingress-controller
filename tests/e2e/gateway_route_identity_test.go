@@ -113,6 +113,56 @@ func assertGatewayGRPCResponseHeader(ctx context.Context, t *testing.T, connecti
 	require.Equal(t, []string{want}, headers.Get("x-route-kind"))
 }
 
+func TestGRPCRouteHostnamePrecedence(t *testing.T) {
+	t.Parallel()
+	feature := features.New("Catch-all GRPCRoutes prefer the most specific hostname").
+		Assess("hostname specificity overrides route age and name", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			t.Helper()
+			client, err := cfg.NewClient()
+			require.NoError(t, err)
+			ns := NamespaceForTest(ctx, t, client)
+			DumpLogsOnFailure(t, ns)
+			const host = "grpc-precedence.example.com"
+			backend := NewGRPCEchoBackend(ctx, t, client, ns)
+			NewTLSSecret(ctx, t, client, ns, "hostname-cert", []string{host})
+			NewHTTPSGateway(ctx, t, ns, "identity", "hostname-cert")
+			gateway := &unstructured.Unstructured{Object: map[string]any{
+				"apiVersion": "gateway.networking.k8s.io/v1", "kind": "Gateway",
+			}}
+			require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				if err := client.Resources().Get(ctx, "identity", ns, gateway); err != nil {
+					return err
+				}
+				listeners, found, err := unstructured.NestedSlice(gateway.Object, "spec", "listeners")
+				require.NoError(t, err)
+				require.True(t, found)
+				listeners[0].(map[string]any)["hostname"] = "*.example.com"
+				require.NoError(t, unstructured.SetNestedSlice(gateway.Object, listeners, "spec", "listeners"))
+				return client.Resources().Update(ctx, gateway)
+			}))
+			forward := ForwardGateway(ctx, t, ns, "identity", 443)
+
+			for _, candidate := range []struct{ name, host string }{
+				{"a-broad", "*.com"},
+				{"z-specific", "*.example.com"},
+				{"b-exact", host},
+			} {
+				route := gatewayIdentityRoute("GRPCRoute", ns, candidate.host, candidate.name, backend)
+				route.SetName(candidate.name)
+				require.NoError(t, client.Resources().Create(ctx, route))
+				waitForRouteDeployed(ctx, t, client, grpcRouteGVR, ns, candidate.name)
+				dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				connection, err := grpcclient.ForForwarded(t, forward.HTTPSPort).Dial(dialCtx, host)
+				cancel()
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = connection.Close() })
+				assertGatewayGRPCResponseHeader(ctx, t, connection, candidate.name)
+			}
+			return ctx
+		}).Feature()
+	testEnv.Test(t, feature)
+}
+
 func TestGatewayBackendNamespaceIsolation(t *testing.T) {
 	t.Parallel()
 	feature := features.New("Same-name Services in different namespaces remain independent").
