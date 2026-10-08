@@ -118,6 +118,7 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 	// Cache the rendered config indexed by correlation ID
 	c.mu.Lock()
 	c.renderedConfigs[correlationID] = entry
+	c.publicationBlocked = false
 	c.lastRender = entry
 	c.lastRenderCorrelationID = correlationID
 	templateConfig := c.templateConfig
@@ -159,6 +160,7 @@ func (c *Component) handleTemplateRendered(event *events.TemplateRenderedEvent) 
 	// - If channel has pending work, replace it with newer work (coalescing)
 	// This ensures we always publish the latest config, not stale intermediate ones.
 	c.queuePublish(templateConfig, entry, correlationID)
+	c.resumeAcknowledgedPublication()
 }
 
 func renderedConfigEntryFromEvent(event *events.TemplateRenderedEvent) (*renderedConfigEntry, error) {
@@ -236,6 +238,9 @@ func (c *Component) handleRenderGateCompleted(event *events.RenderGateCompletedE
 	templateConfig := c.templateConfig
 	hasTemplateConfig := c.hasTemplateConfig
 	c.gatePinned = !event.OK
+	if !event.OK && c.activePublicationCancel != nil {
+		c.activePublicationCancel()
+	}
 	released := c.releaseHeldRenderLocked(event.OK, planID)
 	describesPublished := planID != "" && planID == c.publishedPlanID
 	c.mu.Unlock()
@@ -246,6 +251,7 @@ func (c *Component) handleRenderGateCompleted(event *events.RenderGateCompletedE
 	if released != nil {
 		c.queuePublish(templateConfig, released.entry, released.correlationID)
 	}
+	c.resumeAcknowledgedPublication()
 	if !describesPublished {
 		c.logger.Debug("Render gate verdict does not describe the published config",
 			"plan", planID)
@@ -342,6 +348,9 @@ func (c *Component) handleDeployedConfigPublishRequest(event *events.DeployedCon
 		return
 	}
 
+	if event.ConfirmedPod != nil {
+		entry.confirmedPod = event.ConfirmedPod.DeepCopy()
+	}
 	c.mu.RLock()
 	templateConfig := c.templateConfig
 	hasTemplateConfig := c.hasTemplateConfig
@@ -711,6 +720,11 @@ func (c *Component) handleLostLeadership(_ *events.LostLeadershipEvent) {
 	c.lastRender = nil
 	c.lastRenderCorrelationID = ""
 	c.lastPublishedChecksum = ""
+	c.publicationBlocked = false
+	if c.activePublicationCancel != nil {
+		c.activePublicationCancel()
+		c.activePublicationCancel = nil
+	}
 	c.lastPublishedOutputSnapshot = nil
 	c.lastPublishedEntry = nil
 	c.publicationTerm++

@@ -276,9 +276,6 @@ func createReconciliationComponents(
 		setup.MetricsComponent.Metrics(),
 		renderInputs{AckedPlanSink: renderService, FleetCapabilitiesSink: capabilities},
 		leadershipFence(setup, cfg, k8sClient, logger), setup.AgentTLS)
-	deployerComponent := deployStack.Deployer
-	deploymentSchedulerComponent := deployStack.Scheduler
-	driftMonitorComponent := deployStack.DriftMonitor
 
 	// Create Discovery component and set pod store
 	discoveryComponent := discovery.New(setup.Bus, logger, discovery.WithTLS(setup.AgentTLS))
@@ -302,6 +299,8 @@ func createReconciliationComponents(
 		return nil, err
 	}
 	setup.AddCleanup(stopPublisherInformers)
+	deployStack.EnableRetainedRecovery(purePublisher,
+		rendergate.ServiceChecker{Service: newRenderGateValidator(cfg, logger)}, crd, setup.MetricsComponent.Metrics(), cfg.Controller.LeaderElection.LeaseName)
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, setup.Bus, logger,
 		ctrlconfigpublisher.WithPublishInterval(cfg.Dataplane.GetConfigPublishInterval()),
 		ctrlconfigpublisher.WithTemplateConfig(crd),
@@ -361,9 +360,9 @@ func createReconciliationComponents(
 		[]lifecycle.Component{
 			coordinatorComponent,
 			renderGateComponent,
-			driftMonitorComponent,
-			deployerComponent,
-			deploymentSchedulerComponent,
+			deployStack.DriftMonitor,
+			deployStack.Deployer,
+			deployStack.Scheduler,
 			configPublisherComponent,
 			statusUpdaterComponent,
 		},

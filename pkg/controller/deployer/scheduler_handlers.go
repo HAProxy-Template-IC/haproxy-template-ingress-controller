@@ -45,10 +45,8 @@ const (
 
 // handleTemplateRendered arms deployment for a completed render.
 //
-// The render itself is the trigger now: HAProxy's verdict runs asynchronously in
-// the render gate (ADR-0022), so waiting for it here would put the check back on
-// the wall clock. While the gate holds renders — it refused the previous one —
-// the render is only cached, and the gate's pass for this plan releases it.
+// Cold terms wait for their first accepted render (ADR-0033). Subsequent renders
+// use the asynchronous gate unless a refusal has pinned it (ADR-0022).
 func (s *DeploymentScheduler) handleTemplateRendered(ctx context.Context, event *events.TemplateRenderedEvent) {
 	occurrence, err := templateEventOccurrence(event)
 	if err != nil {
@@ -60,9 +58,11 @@ func (s *DeploymentScheduler) handleTemplateRendered(ctx context.Context, event 
 		s.logger.Error("Ignoring a render without exact deployment identity", "error", err)
 		return
 	}
+	s.cancelRetainedRecovery()
+	s.retainedRenderError = ""
 	s.mu.Lock()
 	s.lastRenderedOccurrence = occurrence
-	pinned := s.gatePinned
+	pinned := s.gatePinned || s.awaitingFirstAcceptedRenderLocked()
 	s.mu.Unlock()
 
 	if pinned {
@@ -100,7 +100,7 @@ func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, eve
 	}
 
 	s.mu.Lock()
-	wasPinned := s.gatePinned
+	wasPinned := s.gatePinned || s.awaitingFirstAcceptedRenderLocked()
 	// Newest is the gate's snapshot; a newer render can reach us before its verdict.
 	namesHeldRender := samePlan(s.lastRenderedOccurrence, occurrence)
 	alreadyDispatched := samePlan(s.lastValidatedOccurrence, occurrence)
@@ -112,6 +112,11 @@ func (s *DeploymentScheduler) handleRenderGateCompleted(ctx context.Context, eve
 	if !event.OK {
 		s.mu.Unlock()
 		s.holdAfterRefusal(event, occurrence, identity.planID)
+		s.renderFailedForRetention(ctx, event.Message)
+		return
+	}
+	if s.retainedRenderError != "" && !alreadyDispatched {
+		s.mu.Unlock()
 		return
 	}
 	if alreadyDispatched {
@@ -441,6 +446,8 @@ func (s *DeploymentScheduler) performPodsDiscovered(ctx context.Context, event *
 		"count", endpointCount)
 
 	if occurrence == nil {
+		s.retainedRetryAt = time.Time{}
+		s.maybeRecoverRetained(ctx)
 		s.logger.Debug("No validated config available yet, skipping deployment")
 		return
 	}
@@ -535,6 +542,12 @@ func (s *DeploymentScheduler) handleDeploymentCompleted(event *events.Deployment
 	}
 
 	s.cacheDeploymentCompletion(event, retired.occurrence)
+	s.mu.RLock()
+	currentValidated := sameOccurrence(retired.occurrence, s.lastValidatedOccurrence)
+	s.mu.RUnlock()
+	if currentValidated && s.retainedRenderError == "" && event.Total > 0 && event.Failed == 0 && event.PendingReloads == 0 {
+		s.setRetainedActive(false)
+	}
 
 	// Fast self-reschedule: a retryable per-pod failure (e.g. a transient DPA
 	// transaction-version conflict) is otherwise only re-driven by the 60s drift
@@ -901,6 +914,10 @@ func (s *DeploymentScheduler) handleConfigPublished(event *events.ConfigPublishe
 //   - deployInFlight is stuck true, blocking future deployments
 //   - pending contains stale deployments that shouldn't execute
 func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent) {
+	s.resetDeploymentTerm()
+}
+
+func (s *DeploymentScheduler) resetDeploymentTerm() {
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
 
@@ -928,10 +945,13 @@ func (s *DeploymentScheduler) handleLostLeadership(_ *events.LostLeadershipEvent
 
 	s.lastPodSetHash = ""
 
-	// Clear deployment cache - new leader should verify config state.
-	// The render gate's latch is per leadership term: a new leader starts
-	// optimistic because the agents' own last-known-good set protects the fleet.
+	// No in-memory render proves what the fleet ran during another leader's term.
 	s.mu.Lock()
+	s.lastRenderedOccurrence = nil
+	s.lastValidatedOccurrence = nil
+	s.lastCorrelationID = ""
+	s.lastCoalescible = false
+	s.currentEndpoints = nil
 	s.lastDeployedOccurrence = nil
 	s.lastDispatchedOccurrence = nil
 	s.lastDeployedPodSetHash = ""

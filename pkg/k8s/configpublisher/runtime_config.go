@@ -53,6 +53,9 @@ func (p *Publisher) createOrUpdateRuntimeConfig(ctx context.Context, req *Publis
 			return nil
 		}
 
+		if req.RetainedPlan != "" && !ownedByTemplate(existing, req.TemplateConfigName, req.TemplateConfigUID) {
+			return errors.New("retained configuration name belongs to a foreign object")
+		}
 		// Update the existing resource
 		updated, updateErr := p.updateRuntimeConfig(ctx, req, existing, runtimeConfig)
 		if updateErr != nil {
@@ -123,7 +126,7 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion:         apiVersionV1Alpha1,
-					Kind:               "HAProxyTemplateConfig",
+					Kind:               kindTemplateConfig,
 					Name:               req.TemplateConfigName,
 					UID:                req.TemplateConfigUID,
 					Controller:         new(true),
@@ -132,13 +135,17 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 			},
 		},
 		Spec: haproxyv1alpha1.HAProxyCfgSpec{
-			Path:       req.ConfigPath,
-			Content:    result.content,
-			Checksum:   req.Checksum, // Checksum is of original content
-			Compressed: result.compressed,
+			Path:         req.ConfigPath,
+			Content:      result.content,
+			Checksum:     req.Checksum, // Checksum is of original content
+			Compressed:   result.compressed,
+			RetainedPlan: req.RetainedPlan,
 		},
 	}
 
+	if req.RetainedPlan != "" {
+		runtimeConfig.Labels[retainedLabel] = string(req.TemplateConfigUID)
+	}
 	return runtimeConfig
 }
 

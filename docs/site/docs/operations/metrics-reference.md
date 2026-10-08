@@ -39,6 +39,7 @@ rate(haptic_reconciliation_duration_seconds_count[5m])
 | `haptic_deployment_total` | Counter | Total deployment attempts |
 | `haptic_deployment_duration_seconds` | Histogram | Time spent deploying to HAProxy |
 | `haptic_deployment_errors_total` | Counter | Failed deployments |
+| `haptic_retained_config_active` | Gauge | `1` after the leader validates a retained checkpoint and schedules recovery for new HAProxy pods while rendering is blocked. Returns to `0` after a successful current render converges across the fleet, or when leadership ends. Followers report `0`. This gauge doesn't mean that every replacement pod has become Ready |
 | `haptic_haproxy_reloads_total` | Counter | HAProxy reloads triggered by deployments; compare with runtime apply counts when investigating reload frequency |
 | `haptic_deploy_apply_total` | Counter | Applies an agent accepted, by `pod` and by the `mode` it reported: `runtime`, `file_only`, `reload`, `scheduled` or `noop`. The reload-free share of a rollout is the `runtime`+`file_only`+`noop` fraction |
 | `haptic_apply_rejected_total` | Counter | Applies an agent refused or rolled back, by `pod`. Every increment carries HAProxy's own message in a Warning event and the pod's status condition |

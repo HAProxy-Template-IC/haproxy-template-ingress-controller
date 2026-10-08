@@ -259,6 +259,8 @@ func withPath(list []string, path string, changed bool) ([]string, bool) {
 // it recorded. A foreign worker means the HAProxy container restarted, so the
 // runtime state the agent believes in is gone.
 func (s *Server) checkWorker() error {
+	s.workerObservation.Lock()
+	defer s.workerObservation.Unlock()
 	info, err := s.runtime.Info()
 	if err != nil {
 		return err

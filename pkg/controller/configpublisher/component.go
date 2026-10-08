@@ -56,6 +56,7 @@ const (
 // renderedConfigEntry holds one render's bytes on their way to the publish
 // worker, keyed by the correlation ID of the reconcile that produced them.
 type renderedConfigEntry struct {
+	confirmedPod     *v1alpha1.PodDeploymentStatus
 	config           string
 	auxFiles         *dataplane.AuxiliaryFiles
 	artifactSnapshot *renderartifact.Snapshot
@@ -158,7 +159,9 @@ type Component struct {
 	// gatePinned mirrors the render gate's latch. While it is set the fleet is
 	// not being given new renders, so publishing one would advertise a config
 	// no pod has — the object is the fleet's, not the renderer's.
-	gatePinned bool
+	gatePinned              bool
+	publicationBlocked      bool
+	activePublicationCancel context.CancelFunc
 	// heldRender is the render withheld while pinned, published by the verdict
 	// that releases it.
 	heldRender        *renderedConfigEntry
@@ -365,6 +368,7 @@ func (c *Component) Start(ctx context.Context) error {
 	c.eventChan = c.eventBus.SubscribeTypesLeaderOnly(ComponentName, EventBufferSize,
 		events.EventTypeConfigValidated,
 		events.EventTypeTemplateRendered,
+		events.EventTypeReconciliationFailed,
 		events.EventTypeRenderGateCompleted,
 		events.EventTypeValidationFailed,
 		events.EventTypeConfigAppliedToPod,
@@ -421,6 +425,11 @@ func (c *Component) preparePublicationTerm() {
 
 	c.mu.Lock()
 	c.publicationTerm++
+	c.publicationBlocked = false
+	if c.activePublicationCancel != nil {
+		c.activePublicationCancel()
+		c.activePublicationCancel = nil
+	}
 	c.templateConfig = c.seedTemplateConfig
 	c.hasTemplateConfig = c.seedTemplateConfig != nil
 	c.renderedConfigs = make(map[string]*renderedConfigEntry)
@@ -476,6 +485,14 @@ func (c *Component) handleEvent(ctx context.Context, event busevents.Event) {
 
 	case *events.TemplateRenderedEvent:
 		c.handleTemplateRendered(e)
+
+	case *events.ReconciliationFailedEvent:
+		c.mu.Lock()
+		c.publicationBlocked = true
+		if c.activePublicationCancel != nil {
+			c.activePublicationCancel()
+		}
+		c.mu.Unlock()
 
 	case *events.RenderGateCompletedEvent:
 		c.handleRenderGateCompleted(e)

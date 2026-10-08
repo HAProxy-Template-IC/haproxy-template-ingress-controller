@@ -1150,6 +1150,9 @@
                     },
                     "recoveryReloadFailed": {
                       "type": "boolean"
+                    },
+                    "retainedConfiguration": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false

@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"time"
 
+	v1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
@@ -163,6 +165,7 @@ type DeployedConfigPublishRequest struct {
 	Config                 string
 	AuxiliaryFiles         *dataplane.AuxiliaryFiles
 	ContentChecksum        string
+	ConfirmedPod           *v1.PodDeploymentStatus
 
 	timestamped
 }
@@ -171,6 +174,7 @@ type DeployedConfigPublishRequest struct {
 func NewDeployedConfigPublishRequestWithCycle(
 	runtimeConfigName, runtimeConfigNamespace string,
 	occurrence *rendercycle.Occurrence,
+	confirmed ...v1.PodDeploymentStatus,
 ) (*DeployedConfigPublishRequest, error) {
 	carrier, identity, err := inspectRenderOccurrence(occurrence)
 	if err != nil {
@@ -183,6 +187,9 @@ func NewDeployedConfigPublishRequestWithCycle(
 		timestamped:             newTimestamped(),
 	}
 	owned := withDeployedConfigPublishIdentity(event, identity)
+	if len(confirmed) == 1 {
+		owned.ConfirmedPod = confirmed[0].DeepCopy()
+	}
 	return &owned, nil
 }
 
@@ -196,6 +203,9 @@ func (e *DeployedConfigPublishRequest) CloneForSubscriber() busevents.Event {
 		panic("cannot clone nil deployed config publish request")
 	}
 	clone := *e
+	if e.ConfirmedPod != nil {
+		clone.ConfirmedPod = e.ConfirmedPod.DeepCopy()
+	}
 	clone.AuxiliaryFiles = dataplane.CloneAuxiliaryFiles(e.AuxiliaryFiles)
 	if e.occurrence != nil {
 		clone = withDeployedConfigPublishIdentity(&clone, mustInspectRenderOccurrence(e.renderOccurrenceCarrier))

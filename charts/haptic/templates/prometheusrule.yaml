@@ -22,6 +22,16 @@ spec:
         {{- if $pr.rules }}
         {{- toYaml $pr.rules | nindent 8 }}
         {{- else if $defaults.enabled }}
+        {{- if $defaults.retainedConfiguration }}
+        - alert: HAProxyRetainedConfigurationActive
+          expr: haptic_retained_config_active == 1
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "New HAProxy pods use retained configuration"
+            description: "Controller {{ `{{ $labels.pod }}` }} cannot render. New HAProxy pods use a previously loaded configuration with stale endpoint and route data. Inspect the HAProxyTemplateConfig Warning events and repair the render error."
+        {{- end }}
         {{- if $defaults.reconciliationErrors }}
         - alert: HAProxyControllerReconciliationErrors
           expr: rate(haptic_reconciliation_errors_total[5m]) > 0

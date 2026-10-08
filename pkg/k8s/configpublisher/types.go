@@ -15,6 +15,7 @@
 package configpublisher
 
 import (
+	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
@@ -100,6 +101,12 @@ type PublishRequest struct {
 	// Set to 0 or negative to disable compression.
 	// Set to a positive value (e.g., 1048576 for 1 MiB) to enable compression.
 	CompressionThreshold int64
+
+	// RetainedPlan is present only on a recovery snapshot.
+	RetainedPlan string
+
+	// ConfirmedPod proves that a worker loaded OutputSnapshot.
+	ConfirmedPod *haproxyv1alpha1.PodDeploymentStatus
 
 	auxiliarySetID string
 	auxiliaryClaim string

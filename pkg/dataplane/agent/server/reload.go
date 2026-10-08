@@ -72,6 +72,8 @@ func (r *applyRun) schedule(due time.Time) error {
 // names the file set the new worker starts from, which is not always the plan
 // this apply carried: a rollback reloads the last known good one.
 func (r *applyRun) performReload(planID, planProof string) error {
+	r.server.workerObservation.Lock()
+	defer r.server.workerObservation.Unlock()
 	// A reload consumes the scheduled one: it re-executes from the tree as it
 	// is now, which after a rollback is no longer the scheduled plan's.
 	r.server.clearPendingReload()

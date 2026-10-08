@@ -299,6 +299,7 @@ controller:
         highQueueDepth: true
         leaderElectionLost: true
         fleetDiverged: true
+        retainedConfiguration: true
         configRejected: true
         configPinned: true
         haproxyPodsRejected: true

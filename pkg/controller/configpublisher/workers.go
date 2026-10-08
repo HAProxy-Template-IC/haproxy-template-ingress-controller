@@ -39,6 +39,7 @@ func (c *Component) buildPublishRequest(identity publishConfigIdentity, entry *r
 		TemplateConfigUID:       identity.uid,
 		ConfigPath:              haproxyConfigPath,
 		CompressionThreshold:    identity.compressionThreshold,
+		ConfirmedPod:            entry.confirmedPod.DeepCopy(),
 	}
 	if entry.outputSnapshot != nil {
 		request.OutputSnapshot = entry.outputSnapshot
@@ -98,12 +99,13 @@ func (c *Component) publishWorker(ctx context.Context) {
 		// signals deployedTrigger, so without it a queued item under a closed
 		// gate would have nothing left to wake it and would stall until an
 		// unrelated event arrived.
-		if c.publishThrottle.Available() {
+		allowed := c.publicationAllowed()
+		if allowed && c.publishThrottle.Available() {
 			if work := c.takeDeployed(); work != nil {
 				c.processPublishWork(ctx, work)
 				continue
 			}
-		} else if c.deployedQueueDepth() > 0 {
+		} else if allowed && c.deployedQueueDepth() > 0 {
 			c.publishThrottle.ScheduleFlush()
 		}
 
@@ -129,7 +131,7 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 		return
 	}
 	if !c.publishWorkCurrent(work) {
-		c.discardCachedConfig(work.correlationID)
+		c.deferOrDiscardPublication(ctx, work)
 		return
 	}
 
@@ -192,7 +194,7 @@ func (c *Component) processPublishWork(ctx context.Context, work *publishWorkIte
 
 // flushPendingPublish publishes one buffered work item when the throttle timer expires.
 func (c *Component) flushPendingPublish(ctx context.Context) {
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || !c.publicationAllowed() {
 		return
 	}
 
@@ -220,7 +222,7 @@ func (c *Component) flushPendingPublish(ctx context.Context) {
 	}
 
 	if !c.publishWorkCurrent(work) {
-		c.discardCachedConfig(work.correlationID)
+		c.deferOrDiscardPublication(ctx, work)
 		return
 	}
 	// Re-check content deduplication (content may have been published by another path).
@@ -237,6 +239,9 @@ func (c *Component) flushPendingPublish(ctx context.Context) {
 // skipIfAlreadyPublished uses exact root identity for authenticated outputs and
 // exact content comparison for legacy callers. A match drops the cached entry.
 func (c *Component) skipIfAlreadyPublished(work *publishWorkItem, msg string) bool {
+	if work.entry.confirmedPod != nil {
+		return false
+	}
 	c.mu.RLock()
 	lastOutput := c.lastPublishedOutputSnapshot
 	lastEntry := c.lastPublishedEntry
@@ -273,10 +278,11 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 		return c.publishWorkCurrent(work)
 	})
 	if !complete {
-		c.discardCachedConfig(work.correlationID)
+		c.deferOrDiscardPublication(ctx, work)
 		return
 	}
 	if !c.commitPublish(ctx, work, result) {
+		c.deferOrDiscardPublication(ctx, work)
 		return
 	}
 
@@ -399,15 +405,7 @@ func (c *Component) publishUntilComplete(
 			return nil, false
 		}
 
-		c.publicationCallMu.Lock()
-		if ctx.Err() != nil || !current() {
-			c.publicationCallMu.Unlock()
-			return nil, false
-		}
-		publishCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
-		result, err := c.publisher.PublishConfig(publishCtx, request)
-		cancel()
-		c.publicationCallMu.Unlock()
+		result, err := c.attemptPublication(ctx, request, current)
 		if err == nil {
 			return result, true
 		}
@@ -438,6 +436,34 @@ func (c *Component) publishUntilComplete(
 			return nil, false
 		}
 	}
+}
+
+func (c *Component) attemptPublication(ctx context.Context, request *configpublisher.PublishRequest, current func() bool) (*configpublisher.PublishResult, error) {
+	c.publicationCallMu.Lock()
+	defer c.publicationCallMu.Unlock()
+	if ctx.Err() != nil || !current() {
+		return nil, context.Canceled
+	}
+	publishCtx, cancel := context.WithTimeout(ctx, timeouts.KubernetesAPILongTimeout)
+	defer cancel()
+	c.mu.Lock()
+	if request.NameSuffix == "" {
+		c.activePublicationCancel = cancel
+		if c.publicationBlocked || c.gatePinned {
+			cancel()
+		}
+	}
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.activePublicationCancel = nil
+		c.mu.Unlock()
+	}()
+	result, err := c.publisher.PublishConfig(publishCtx, request)
+	if err == nil {
+		err = c.publisher.PublishRetained(publishCtx, request)
+	}
+	return result, err
 }
 
 // statusWorker processes pod status update work items asynchronously with coalescing.

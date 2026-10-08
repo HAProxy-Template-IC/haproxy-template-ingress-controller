@@ -87,10 +87,11 @@ type Component struct {
 	// loop goroutine and use it for agent calls, so applies abort on shutdown.
 	ctx context.Context
 
-	clients *agentClients
-	plans   *planCache
-	keeper  *planKeeper
-	fence   LeadershipFence
+	clients  *agentClients
+	plans    *planCache
+	keeper   *planKeeper
+	fence    LeadershipFence
+	retained *retainedRecovery
 
 	contentProofMu sync.Mutex
 	contentProofs  map[string]map[string]contentProof
@@ -188,6 +189,9 @@ const agentStateTimeout = 10 * time.Second
 func (c *Component) Start(ctx context.Context) error {
 	defer c.Rearm()
 	defer c.acceptingEvents.Store(false)
+	if err := c.claimRetainedAuthority(ctx); err != nil {
+		return fmt.Errorf("claiming deployment authority: %w", err)
+	}
 	// Discard events buffered before this leadership term. The construction-
 	// time subscription persists across terms, so DeploymentScheduledEvents
 	// queued when leadership was lost would otherwise replay a stale deployment

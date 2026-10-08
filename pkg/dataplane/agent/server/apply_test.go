@@ -502,22 +502,18 @@ func TestACreatedCertificateEntersTheInventory(t *testing.T) {
 	assert.Contains(t, h.state(false).Inventory.Certs, "ssl/new.pem")
 }
 
-// The drift poll runs while an apply does, and it is what notices a restarted
-// HAProxy container. An apply that finishes afterwards must not stamp its plan
-// id over that: the worker it talked to is not the one the pod now has.
-func TestAnInvalidationDuringAnApplyOutranksIt(t *testing.T) {
+func TestVerifiedStateDuringReloadPreservesConfirmedBaseline(t *testing.T) {
 	h := newHarness(t)
 	first := firstApply(t, h)
 
-	// The poll runs while the apply waits for the master to re-exec, which is
-	// the one point in an apply that holds no worker connection.
 	var once sync.Once
+	verified := make(chan api.State, 1)
 	h.model.With(func(m *haproxytest.Model) {
 		m.Reject = func(command string) (string, bool) {
 			if command == "reload" {
 				once.Do(func() {
 					h.model.With(func(inner *haproxytest.Model) { inner.Pid += 5 })
-					h.state(true)
+					go func() { verified <- h.state(true) }()
 				})
 			}
 			return "", false
@@ -533,8 +529,14 @@ func TestAnInvalidationDuringAnApplyOutranksIt(t *testing.T) {
 
 	require.True(t, result.OK, "%+v", result.Error)
 	assert.Equal(t, "plan-2", result.RunningPlanID, "the reload did happen")
-	assert.Empty(t, result.AppliedPlanID, "the worker changed under the apply, so the pod claims no baseline")
-	assert.Empty(t, h.state(false).AppliedPlanID)
+	assert.Equal(t, "plan-2", result.AppliedPlanID)
+	select {
+	case state := <-verified:
+		assert.Equal(t, result.HAProxy, state.HAProxy)
+	case <-time.After(time.Second):
+		t.Fatal("verified state did not resume after reload")
+	}
+	assert.Equal(t, "plan-2", h.state(true).AppliedPlanID)
 }
 
 func TestFailedApplyDoesNotPublishDeferredDeletes(t *testing.T) {

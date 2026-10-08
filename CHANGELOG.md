@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New HAProxy pods can load an acknowledged configuration retained in Kubernetes when a fresh leader cannot render, with current-binary validation, Warning events, and `haptic_retained_config_active`.
+- `/healthz` includes the last render failure without changing startup, readiness, or liveness decisions.
+
+### Fixed
+
+- Verified agent-state reads no longer race HAProxy reloads and invalidate the confirmed worker configuration.
+
+### Helm chart
+
+#### Added
+
+- The bundled PrometheusRule alerts when a controller uses retained configuration while rendering is blocked.
+
 ## [0.4.1] - 2026-10-07
 
 ### Fixed

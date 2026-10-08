@@ -197,6 +197,16 @@ type DeploymentScheduler struct {
 	pendingSignal chan struct{}
 	completed     chan struct{}
 	loopDone      chan struct{}
+
+	retained            *retainedRecovery
+	retainedResults     chan retainedResult
+	retainedWorkers     sync.WaitGroup
+	retainedCancel      context.CancelFunc
+	retainedEpoch       uint64
+	retainedRecovering  bool
+	retainedRetryAt     time.Time
+	retainedRenderError string
+	retainedNotice      string
 }
 
 // computePodSetHash computes an order-independent hash of endpoint authorities.
@@ -278,6 +288,8 @@ func (s *DeploymentScheduler) Name() string {
 //   - Error only in exceptional circumstances
 func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	defer s.Rearm()
+	s.beginRetainedTerm()
+	defer s.stopRetainedTerm()
 	s.ctx = ctx // Save context for scheduling operations
 	s.schedulerMutex.Lock()
 	s.retryStopped = false
@@ -297,6 +309,7 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 		events.EventTypeConfigValidated,
 		events.EventTypeRenderGateCompleted,
 		events.EventTypeValidationFailed,
+		events.EventTypeReconciliationFailed,
 		events.EventTypeHAProxyPodsDiscovered,
 		events.EventTypeDeploymentCompleted,
 		events.EventTypeConfigPublished,
@@ -330,6 +343,10 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 
 		case <-ticker.C:
 			s.checkDeploymentTimeout(ctx)
+			s.maybeRecoverRetained(ctx)
+
+		case result := <-s.retainedResults:
+			s.handleRetainedResult(ctx, result)
 
 		case <-ctx.Done():
 			s.logger.Info("DeploymentScheduler shutting down", "reason", ctx.Err())
@@ -358,6 +375,9 @@ func (s *DeploymentScheduler) handleEvent(ctx context.Context, event busevents.E
 
 	case *events.ValidationFailedEvent:
 		s.handleValidationFailed(ctx, e)
+
+	case *events.ReconciliationFailedEvent:
+		s.renderFailedForRetention(ctx, e.Error)
 
 	case *events.HAProxyPodsDiscoveredEvent:
 		s.handlePodsDiscovered(ctx, e)

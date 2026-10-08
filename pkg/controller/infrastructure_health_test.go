@@ -9,6 +9,7 @@
 package controller
 
 import (
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -17,8 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
 	pvtestutil "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
 	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
 )
@@ -509,4 +512,36 @@ func TestApplyReinitGrace(t *testing.T) {
 		assert.False(t, got["initialized"].Healthy,
 			"a stale initialization opened grace for a failed cold startup")
 	})
+}
+
+func TestRenderFailureDetailsPreserveProbeVerdict(t *testing.T) {
+	for _, healthy := range []bool{true, false} {
+		t.Run(fmt.Sprint(healthy), func(t *testing.T) {
+			state := &StateCache{}
+			base := introspection.ComponentHealth{Healthy: healthy, Error: "component detail"}
+			checker := withRenderFailureDetails(func() map[string]introspection.ComponentHealth {
+				return map[string]introspection.ComponentHealth{reconciler.CoordinatorComponentName: base}
+			}, state)
+			require.Equal(t, base, checker()[reconciler.CoordinatorComponentName])
+			state.handleTemplateRenderFailed(&events.TemplateRenderFailedEvent{Error: "critical fetch failed"})
+			failed := checker()[reconciler.CoordinatorComponentName]
+			require.Equal(t, healthy, failed.Healthy)
+			require.Contains(t, failed.Error, "component detail")
+			require.Contains(t, failed.Error, "Last render failed: critical fetch failed")
+			state.handleReconciliationTriggered(&events.ReconciliationTriggeredEvent{})
+			require.Equal(t, failed, checker()[reconciler.CoordinatorComponentName], "a retry must not hide the error")
+			rendered := newStateCacheRenderedEvent(t, "global\n", nil)
+			state.handleTemplateRendered(rendered)
+			require.Equal(t, base, checker()[reconciler.CoordinatorComponentName])
+			gate := newStateCacheGateEvent(t, rendered, true, 0)
+			gate.OK, gate.Message = false, "HAProxy rejects directive"
+			state.handleRenderGateCompleted(gate)
+			require.Contains(t, checker()[reconciler.CoordinatorComponentName].Error, "HAProxy rejects directive")
+			require.Equal(t, healthy, checker()[reconciler.CoordinatorComponentName].Healthy)
+			state.handleReconciliationTriggered(&events.ReconciliationTriggeredEvent{})
+			require.Contains(t, checker()[reconciler.CoordinatorComponentName].Error, "HAProxy rejects directive")
+			state.handleRenderGateCompleted(newStateCacheGateEvent(t, rendered, true, 0))
+			require.Equal(t, base, checker()[reconciler.CoordinatorComponentName])
+		})
+	}
 }

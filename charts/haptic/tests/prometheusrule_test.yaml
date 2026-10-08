@@ -6,6 +6,25 @@ set:
   # Default: PrometheusRule enabled. Tests that need it off override per-case.
   controller.monitoring.prometheusRule.enabled: true
 tests:
+  - it: alerts when the controller uses retained configuration
+    asserts:
+      - contains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyRetainedConfigurationActive
+            expr: haptic_retained_config_active == 1
+            for: 2m
+          any: true
+
+  - it: can disable the retained configuration alert
+    set:
+      controller.monitoring.prometheusRule.defaultRules.retainedConfiguration: false
+    asserts:
+      - notContains:
+          path: spec.groups[0].rules
+          content:
+            alert: HAProxyRetainedConfigurationActive
+          any: true
   - it: should not render when prometheusRule is disabled
     set:
       controller.monitoring.prometheusRule.enabled: false

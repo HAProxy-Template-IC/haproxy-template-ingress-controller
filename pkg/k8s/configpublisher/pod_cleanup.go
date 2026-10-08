@@ -109,6 +109,9 @@ func (p *Publisher) reconcileSingleRuntimeConfigStatus(
 		}
 		return fmt.Errorf("getting runtime config: %w", err)
 	}
+	if cfg.Spec.RetainedPlan != "" {
+		return nil // Historical worker receipts survive pod retirement (ADR-0033).
+	}
 
 	// A previous partial cleanup may have left stale children behind a current parent.
 	if err := p.reconcileAuxiliaryFilePods(ctx, cfg.Status.AuxiliaryFiles, runningSet); err != nil {
@@ -173,6 +176,9 @@ func (p *Publisher) cleanupRuntimeConfigPodReference(ctx context.Context, runtim
 				return nil
 			}
 			return fmt.Errorf("getting runtime config: %w", err)
+		}
+		if current.Spec.RetainedPlan != "" {
+			return nil // Historical worker receipts survive pod retirement (ADR-0033).
 		}
 		if err := p.cleanupAuxiliaryFilePodReferences(ctx, current.Status.AuxiliaryFiles, cleanup); err != nil {
 			return err

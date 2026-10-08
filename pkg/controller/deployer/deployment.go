@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	v1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
@@ -53,9 +55,12 @@ type deployRequest struct {
 	validatedPlanFor func(authority string, state *api.State) planReference
 	// verify makes each pod re-hash its tree before it reports: the drift pass
 	// asks what is on disk, not what the agent last wrote.
-	verify        bool
-	observeReload bool
-	diffs         *diffMemo
+	verify           bool
+	observeReload    bool
+	bootstrapOnly    bool
+	preparationError error
+	retainedGuard    func(context.Context) error
+	diffs            *diffMemo
 }
 
 // performDeployment executes a single deployment.
@@ -154,7 +159,7 @@ func (c *Component) deployToEndpoints(
 		c.reportUndeployable(event, deploymentID, occurrence)
 		return
 	}
-	request.observeReload = event.Reason == pendingReloadFollowUpReason
+	c.prepareRetainedDeployment(ctx, event, request)
 	c.recordFleet(event.Endpoints)
 
 	c.EventBus().Publish(events.NewDeploymentStartedEvent(
@@ -192,7 +197,7 @@ func (c *Component) deployToEndpoints(
 
 	state.noteDeploymentPhases(prepared.Sub(startTime), time.Since(settling))
 	c.publishCompleted(event, deploymentID, podSetHash, state, time.Since(startTime).Milliseconds(), occurrence)
-	c.publishDeployedConfig(event, occurrence, int(atomic.LoadInt32(&state.ackCount)))
+	c.publishDeployedConfig(event, occurrence, int(atomic.LoadInt32(&state.ackCount)), state.confirmedPod)
 	c.observeConvergence(event, podSetHash, state, occurrence)
 }
 
@@ -343,6 +348,7 @@ type deploymentState struct {
 	pendingReloads   int32 // pods holding the render behind a paced reload
 
 	mu                 sync.Mutex
+	confirmedPod       *v1.PodDeploymentStatus
 	totalOperations    int
 	operationBreakdown map[string]int
 	stoodDown          bool
@@ -450,6 +456,8 @@ func (c *Component) deployToPod(
 	durationMs := time.Since(start).Milliseconds()
 
 	switch {
+	case errors.Is(err, errRetainedPodConfigured):
+		atomic.AddInt32(&state.convergedCount, 1)
 	case errors.Is(err, errStaleEpoch):
 		c.standDown(state, endpoint, err)
 	case err != nil:
