@@ -100,6 +100,8 @@ class SelectionTests(unittest.TestCase):
             condition = rule.get("if", "")
             if condition == '$MIRROR_IMAGES == "true" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"':
                 continue
+            if condition == '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_KIND == "nightly"':
+                continue
             if condition != '$CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"':
                 raise AssertionError(f"{name} reached non-train rule {rule}")
             if "changes" in rule:

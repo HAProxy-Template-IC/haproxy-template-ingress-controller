@@ -1,0 +1,9 @@
+TestGatewayExternalAuth
+TestGatewayRoutePolicyAuthentication
+TestGatewaySessionPersistence
+TestHapticAPIKey
+TestHapticBasicAuth
+TestHapticExternalAuth
+TestHapticRequestValidation
+TestHapticWAFPolicies
+TestIngressBasic

@@ -191,6 +191,8 @@ class ChartRulesTests(unittest.TestCase):
                 if job == "mirror-ingress-conformance-image":
                     self.assertEqual(first, {"if": '$MIRROR_IMAGES == "true"'})
                     self.assertEqual(self.config[job]["needs"], [])
+                elif job in {"nightly-dispatch", "report-nightly-dispatch-failure"}:
+                    self.assertEqual(first, {"if": '$MIRROR_IMAGES == "true"', "when": "never"})
                 else:
                     self.assertEqual(first, mirror_only)
 

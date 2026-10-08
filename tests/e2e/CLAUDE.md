@@ -105,7 +105,23 @@ replace an existing cluster. Omit it to use Kind's bundled default.
 ## CI
 
 CI enumerates the compiled tests with `go test -list` before creating clusters.
-Each complete-suite profile runs three disjoint shards through `make test-e2e`;
-their union covers every listed test. The inventory and selection are retained
-in `debug-logs/`, along with diagnostics on failure. Focused nightly jobs keep
-their existing selections. Local `make test-e2e` runs the complete suite.
+Core HAProxy and minimum-Kubernetes profiles each run three disjoint shards
+through `make test-e2e`; their union covers every listed test. Cache, rate-limit,
+and API-gateway each run one focused job through `make test-e2e-profile`, using
+`tests/e2e/profiles/<profile>.txt`. Keep every profile-gated test in its list,
+including experimental Gateway API tests in the API-gateway profile. Preserve
+the listed ordinary-routing, authentication, and WAF interaction checks.
+`make test-ci-rules` checks the lists; the runner rejects stale names against the
+compiled inventory before creating a cluster. Inventory and selection artifacts
+are retained in `debug-logs/`, along with diagnostics on failure.
+
+Local `make test-e2e` still runs the complete suite. To reproduce a focused job:
+
+```bash
+HAPTIC_E2E_PROFILE=cache make test-e2e-profile
+HAPTIC_E2E_PROFILE=rate-limit make test-e2e-profile
+HAPTIC_E2E_PROFILE=api-gateway HAPTIC_E2E_GWAPI_CHANNEL=experimental make test-e2e-profile
+```
+
+See [scheduled verification](../../docs/agents/ci.md#scheduled-verification) for
+the focused nightly and complete weekly schedules.

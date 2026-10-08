@@ -14,15 +14,20 @@ default:
 
 # Prevent duplicate pipelines for MR and branch pushes
 workflow:
+  name: $HAPTIC_PIPELINE_NAME
   auto_cancel:
     on_new_commit: interruptible
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    # Manually/API-triggered nightly test runs (SCHEDULE_KIND=nightly) may
-    # target a branch that has an open MR — exempt them from the
-    # duplicate-pipeline suppression below so the nightly jobs can be
-    # exercised before the schedule fires.
-    - if: $SCHEDULE_KIND == "nightly"
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_KIND == "nightly"'
+      variables:
+        HAPTIC_PIPELINE_NAME: "Nightly dispatch"
+    - if: '$SCHEDULE_KIND == "nightly"'
+      variables:
+        HAPTIC_PIPELINE_NAME: "Nightly checks"
+    - if: '$SCHEDULE_KIND == "weekly"'
+      variables:
+        HAPTIC_PIPELINE_NAME: "Weekly heartbeat"
     # Same exemption for standalone scale-tier runs (SCALE_RUN=1 triggers
     # only the nightly-scale job on top of the ordinary pipeline).
     - if: $SCALE_RUN == "1"
@@ -86,11 +91,23 @@ variables:
 # Touching `.gitlab-ci.yml` in a docs MR only wastes minutes: it matches the
 # entry below AND `.rules-go`, pulling in the entire heavy suite for nothing.
 
-# The weekly mirror-refresh schedule (MIRROR_IMAGES=true) runs only
-# mirror-ingress-conformance-image; every other job's rules start with this.
-.not-mirror-refresh:
+# Dispatch schedules do not start the ordinary jobs.
+.rules-pipeline-exclusions:
   rules:
     - if: '$MIRROR_IMAGES == "true" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_KIND == "nightly"'
+      when: never
+
+.rules-full-schedule:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE != "merge_request_event" && $SCHEDULE_KIND == "nightly"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE != "merge_request_event" && $SCHEDULE_KIND == "weekly"'
+
+.rules-verification-only:
+  rules:
+    - if: '$SCHEDULE_KIND == "nightly" || $SCHEDULE_KIND == "weekly"'
       when: never
 
 .rules-train-common:
@@ -123,6 +140,13 @@ variables:
 .rules-train-full:
   rules:
     - !reference [.rules-train-artifact, rules]
+    - !reference [.rules-full-schedule, rules]
+    - !reference [.rules-post-merge-reuse, rules]
+
+.rules-train-build:
+  rules:
+    - !reference [.rules-train-artifact, rules]
+    - if: '$SCHEDULE_KIND == "nightly" || $SCHEDULE_KIND == "weekly"'
     - !reference [.rules-post-merge-reuse, rules]
 
 .rules-code:
@@ -310,7 +334,7 @@ compute-ci-image-tag:
   tags:
     - saas-linux-small-amd64
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-common, rules]
     - when: on_success
   variables:
@@ -359,7 +383,7 @@ compute-ci-image-tag:
   # guaranteed present. --import-cache + inline cache export in the script
   # below keeps unchanged rebuilds fast (cache hit on every layer, no-op push).
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - when: on_success
   before_script:
     - mkdir -p ~/.docker
@@ -367,7 +391,7 @@ compute-ci-image-tag:
 
 build-ci:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-common, rules]
     - !reference [.build-ci-image, rules]
   extends:
@@ -439,8 +463,9 @@ build-python-docs:
   # Nothing on a tag pipeline consumes the docs-builder image, so keep the
   # tag exclusion that used to live in .build-ci-image here.
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-common, rules]
+    - !reference [.rules-full-schedule, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - when: on_success
@@ -497,8 +522,9 @@ lint:
   stage: lint
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-common, rules]
+    - !reference [.rules-full-schedule, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
@@ -524,8 +550,9 @@ audit:
   stage: lint
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-tests, rules]
+    - !reference [.rules-full-schedule, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
     - if: $CI_COMMIT_TAG
@@ -550,7 +577,7 @@ chart-test:
   stage: lint
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
@@ -573,7 +600,7 @@ chart-test:
 
 chart-test-minimum-kubernetes:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [chart-test, rules]
   extends: chart-test
@@ -586,7 +613,7 @@ chart-schema-check:
   stage: lint
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_BRANCH =~ /^maint\//
       when: never
@@ -614,8 +641,9 @@ test:
   extends: .go-cache
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-tests, rules]
+    - !reference [.rules-full-schedule, rules]
     - !reference [.rules-post-merge-reuse, rules]
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       changes:
@@ -632,8 +660,7 @@ test:
     # Unit tests only depend on Go sources + testdata fixtures — on main as much
     # as on an MR. `.rules-go` therefore governs both: on a main push `changes:`
     # evaluates the merge commit's diff, so a merge that touched no Go file is
-    # byte-identical in Go terms to the main commit already tested. Scheduled
-    # pipelines evaluate `changes:` as always-true, so nightly still runs this.
+    # byte-identical in Go terms to the main commit already tested.
     - !reference [.rules-go, rules]
   tags:
     - saas-linux-large-amd64
@@ -673,7 +700,7 @@ test-coverage-unit:
   extends: .go-cache
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
@@ -718,7 +745,7 @@ test-coverage-unit:
     - compute-ci-image-tag
     - job: build-ci
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-chart-inputs, rules]
@@ -744,7 +771,7 @@ test-coverage-unit:
 
 validate-helm-libraries:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [.validate-helm-libraries-base, rules]
   extends:
@@ -780,6 +807,7 @@ validate-helm-libraries:
 
 .rules-main-snapshot-publish:
   rules:
+    - !reference [.rules-verification-only, rules]
     - if: >-
         $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH &&
         $PUBLISH_MAIN_SNAPSHOT == "true" &&
@@ -948,12 +976,9 @@ build-snapshot:
   #
   # Anchors are referenced rather than copied so a path added to one of them
   # propagates here automatically — the lockstep drift the file warns about.
-  # `changes:` is always true on scheduled pipelines, so the nightly heartbeat
-  # (test-gateway-conformance / test-ingress-conformance run on `SCHEDULE_KIND`)
-  # still gets its image.
   rules:
-    - !reference [.not-mirror-refresh, rules]
-    - !reference [.rules-train-full, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
+    - !reference [.rules-train-build, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-go, rules]
@@ -1003,7 +1028,7 @@ build-ingress-conformance-image:
     - compute-ci-image-tag
     - job: build-ci
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
@@ -1037,7 +1062,7 @@ build-ingress-conformance-image:
 publish-main-snapshot:
   extends: .snapshot-build-base
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-main-snapshot-publish, rules]
   interruptible: false
   variables:
@@ -1067,7 +1092,7 @@ publish-chart-snapshot:
     - job: build-spoa-image-main
     - job: publish-main-snapshot
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-main-snapshot-publish, rules]
   interruptible: false
   before_script:
@@ -1102,8 +1127,9 @@ build-playground-wasm:
     - compute-ci-image-tag
     - job: build-ci
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-artifact, rules]
+    - !reference [.rules-full-schedule, rules]
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
     - if: $CI_COMMIT_TAG =~ /^v.*/
@@ -1295,7 +1321,7 @@ docs-spoa-versions:
     - saas-linux-small-amd64
   needs: []
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [.rules-spoa, rules]
   interruptible: true
@@ -1316,8 +1342,8 @@ prep-spoa-plugins:
     - saas-linux-small-amd64
   needs: []
   rules:
-    - !reference [.not-mirror-refresh, rules]
-    - !reference [.rules-train-full, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
+    - !reference [.rules-train-build, rules]
     # The explicit multi-arch publisher always needs the plugin bundle, even
     # when the selected main commit did not change a SPOA input.
     - !reference [.rules-main-snapshot-publish, rules]
@@ -1452,8 +1478,8 @@ mirror-ingress-conformance-image:
 build-spoa-image-snapshot:
   extends: .build-spoa-image-base
   rules:
-    - !reference [.not-mirror-refresh, rules]
-    - !reference [.rules-train-full, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
+    - !reference [.rules-train-build, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-spoa, rules]
@@ -1471,7 +1497,7 @@ build-spoa-image-snapshot:
 build-spoa-image-main:
   extends: .build-spoa-image-base
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-main-snapshot-publish, rules]
   interruptible: false
   variables:
@@ -1486,7 +1512,7 @@ prepare-spoa-release:
   interruptible: false
   resource_group: spoa-release-publish
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: '$CI_MERGE_REQUEST_EVENT_TYPE == "merge_train" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^release\/v/'
       when: manual
       allow_failure: false
@@ -1501,7 +1527,7 @@ build-spoa-image-release:
   extends: .build-spoa-image-base
   interruptible: false
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
   variables:
     PLATFORMS: "linux/amd64,linux/arm64,linux/arm/v7"
@@ -1538,7 +1564,7 @@ sign-spoa-image:
     - job: build-spoa-image-release
       artifacts: true
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
   variables:
     COSIGN_YES: "true"
@@ -1564,7 +1590,7 @@ attest-spoa-sbom:
     - job: build-spoa-image-release
       artifacts: true
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
   variables:
     COSIGN_YES: "true"
@@ -1613,7 +1639,7 @@ smoke-spoa-amd64:
   tags:
     - saas-linux-small-amd64
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
     - if: $CI_COMMIT_TAG
@@ -1646,7 +1672,7 @@ smoke-spoa-arm64:
       alias: docker
       command: ["--mtu=1400"]
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
     - if: $CI_COMMIT_TAG
       when: never
@@ -1667,7 +1693,7 @@ smoke-spoa-arm64:
   extends:
     - .docker-dind
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG
       when: never
     # Integration tests exercise the Go binary against a kind cluster —
@@ -1676,7 +1702,7 @@ smoke-spoa-arm64:
     # `.rules-go` governs main too: the previous bare default-branch rule ran the
     # whole 2xlarge matrix on every main push, including prose-only merges
     # (measured 6.6 min on the bcd25622 docs merge). On main `changes:` evaluates
-    # the merge commit diff, so no-Go-change means nothing to re-test; nightly is
+    # the merge commit diff, so no-Go-change means nothing to re-test; weekly is
     # unaffected because scheduled pipelines treat `changes:` as always true.
     - !reference [.rules-go, rules]
   timeout: 30 minutes
@@ -1704,7 +1730,7 @@ smoke-spoa-arm64:
 
 test-integration:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [.test-integration-base, rules]
   tags:
@@ -1724,16 +1750,10 @@ test-integration-extra-versions:
     matrix:
       - HAPROXY_VERSION: ["3.1", "3.2", "3.3"]
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
-    # Nightly wins on any branch (kept in lockstep with the sibling
-    # test-e2e-extra-versions / full-conformance jobs), then MR/feature
-    # pipelines are excluded outright so the interior versions never run there,
-    # then main is gated on Go inputs like .test-integration-base — a prose-only
-    # merge used to run all three interior versions (10.3 min on bcd25622).
-    - if: $SCHEDULE_KIND == "nightly"
     - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
     - !reference [.rules-go, rules]
@@ -1751,7 +1771,7 @@ test-agent-docker:
   tags:
     - saas-linux-medium-amd64
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
@@ -1777,7 +1797,7 @@ coverage-combined:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
@@ -1802,7 +1822,7 @@ coverage-combined:
     - job: "test-integration: [3.4]"
       artifacts: true
       optional: true
-    # Interior versions live in a separate job (main + nightly only).
+    # Interior versions live in a separate job (merge trains + weekly only).
     - job: "test-integration-extra-versions: [3.1]"
       artifacts: true
       optional: true
@@ -1862,7 +1882,7 @@ test-acceptance:
   extends:
     - .docker-dind
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
@@ -1993,7 +2013,7 @@ test-acceptance:
     # registry image instead.
     SKIP_DOCKER_BUILD: "1"
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - !reference [.rules-test-infrastructure, rules]
@@ -2214,15 +2234,20 @@ test-acceptance:
   artifacts:
     when: always
 
+.test-e2e-focused:
+  extends: .test-e2e-base
+  script:
+    - make test-e2e-profile
+  artifacts:
+    when: always
+
 test-e2e:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [.test-e2e-base, rules]
   extends:
     - .test-e2e-sharded
-  # MRs run only the 3.0/3.4 bracket; interior versions run on main + nightly
-  # (test-e2e-extra-versions). See test-integration for the full rationale.
   parallel:
     matrix:
       - HAPROXY_VERSION: ["3.0", "3.4"]
@@ -2230,7 +2255,7 @@ test-e2e:
 
 test-e2e-minimum-kubernetes:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [.test-e2e-base, rules]
   extends: .test-e2e-sharded
@@ -2238,10 +2263,6 @@ test-e2e-minimum-kubernetes:
     HAPROXY_VERSION: "3.4"
     KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
 
-# Interior HAProxy versions (3.1–3.3) for e2e — main + nightly only. Inherits
-# .test-e2e-base but overrides rules to exclude MR/feature-branch pipelines
-# (the `!= default branch → never` guard), while still matching the base's
-# main-branch (merge-result) and nightly triggers.
 test-e2e-extra-versions:
   extends:
     - .test-e2e-sharded
@@ -2250,13 +2271,10 @@ test-e2e-extra-versions:
       - HAPROXY_VERSION: ["3.1", "3.2", "3.3"]
         E2E_SHARD_INDEX: ["1", "2", "3"]
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
-    # Nightly wins on any branch; then exclude MR/feature-branch pipelines;
-    # then match the base's main-branch (merge-result) triggers.
-    - if: $SCHEDULE_KIND == "nightly"
     - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
     - changes:
@@ -2287,11 +2305,10 @@ test-vector-spans:
     - compute-ci-image-tag
     - job: build-ci
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $SCHEDULE_KIND == "nightly"
     - changes:
         - charts/haptic/charts/vector/library.yaml
         - charts/haptic/charts/base/library.yaml
@@ -2317,7 +2334,7 @@ test-vector-spans:
 #
 # Not on every MR: it costs a kind cluster and ~20 minutes, and a Go change that
 # touches no chart template, CRD, or admission path cannot break an upgrade. It
-# runs on main (merge result) and nightly regardless.
+# Full train and weekly verification also exercise every baseline.
 test-chart-upgrade:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
@@ -2345,11 +2362,10 @@ test-chart-upgrade:
     HAPROXY_VERSION: "3.4"
     SKIP_DOCKER_BUILD: "1"
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $SCHEDULE_KIND == "nightly"
     - !reference [.rules-test-infrastructure, rules]
     - changes:
         - charts/haptic/templates/**/*
@@ -2401,11 +2417,10 @@ test-install-without-gateway-api:
     HAPROXY_VERSION: "3.4"
     SKIP_DOCKER_BUILD: "1"
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $SCHEDULE_KIND == "nightly"
     - !reference [.rules-test-infrastructure, rules]
     - changes:
         - charts/haptic/templates/**/*
@@ -2430,7 +2445,7 @@ test-install-without-gateway-api:
 
 test-chart-upgrade-minimum-kubernetes:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [test-chart-upgrade, rules]
   extends: test-chart-upgrade
@@ -2472,11 +2487,10 @@ test-gitops-lifecycle:
     KIND_NODE_IMAGE: ${MINIMUM_KIND_NODE_IMAGE}
     GITOPS_IMAGE: haptic:test
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
-    - if: $SCHEDULE_KIND == "nightly"
     - !reference [.rules-test-infrastructure, rules]
     - changes: *chart-inputs
     - changes:
@@ -2501,7 +2515,7 @@ test-gitops-lifecycle:
 
 test-install-without-gateway-api-minimum-kubernetes:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [test-install-without-gateway-api, rules]
   extends: test-install-without-gateway-api
@@ -2527,10 +2541,10 @@ test-install-without-gateway-api-minimum-kubernetes:
 # loadControllerImage) so the StatefulSet needn't reach Docker Hub.
 test-e2e-cache:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [.test-e2e-base, rules]
-  extends: .test-e2e-sharded
+  extends: .test-e2e-focused
   variables:
     HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "cache"
@@ -2543,10 +2557,10 @@ test-e2e-cache:
 # loadControllerImage) so the Deployment needn't reach Docker Hub.
 test-e2e-rate-limit:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [.test-e2e-base, rules]
-  extends: .test-e2e-sharded
+  extends: .test-e2e-focused
   variables:
     HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "rate-limit"
@@ -2562,10 +2576,10 @@ test-e2e-rate-limit:
 # TestGatewaySessionPersistence skip everywhere else.
 test-e2e-api-gateway:
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - !reference [.test-e2e-base, rules]
-  extends: .test-e2e-sharded
+  extends: .test-e2e-focused
   variables:
     HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: "api-gateway"
@@ -2633,17 +2647,10 @@ test-gateway-conformance:
     - job: build-snapshot
     - job: build-spoa-image-snapshot
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
-    # Full 4-shard suite runs on the default branch (merge-result / heartbeat,
-    # see .test-e2e-base) and nightly — NOT on MRs. MRs get a deterministic
-    # 1-of-4 smoke instead (test-gateway-conformance-smoke) to cut xlarge
-    # minutes; the full suite still gates every merge to main before release.
     - if: $CI_COMMIT_TAG
       when: never
-    # Nightly wins on any branch; then exclude MR/feature pipelines; then
-    # match the main-branch (merge-result) triggers.
-    - if: $SCHEDULE_KIND == "nightly"
     - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
     - !reference [.rules-test-infrastructure, rules]
@@ -2898,7 +2905,7 @@ test-gateway-conformance:
     expire_in: 1 week
 
 # Deterministic 1-of-4 gateway-conformance smoke for MRs. The full 4-shard
-# suite runs on main + nightly (test-gateway-conformance); MRs run just shard
+# suite runs on merge trains + weekly (test-gateway-conformance); MRs run just shard
 # 1/4 of the same CRC32 partition — enough to catch chart-render /
 # cluster-bring-up regressions plus a representative quarter of the upstream
 # suite at ~¼ the xlarge cost. Reuses the full job's setup/teardown verbatim
@@ -2939,7 +2946,7 @@ test-gateway-conformance-smoke:
   after_script: !reference [test-gateway-conformance, after_script]
   artifacts: !reference [test-gateway-conformance, artifacts]
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: never
     - if: $CI_COMMIT_TAG
@@ -2972,38 +2979,41 @@ test-gateway-conformance-smoke:
 # Nightly-schedule jobs (SCHEDULE_KIND == "nightly")
 # =============================================================================
 #
-# The nightly scheduled pipeline (cron on main, sets SCHEDULE_KIND=nightly)
-# serves four purposes:
-#   1. Heartbeat — on scheduled pipelines `rules:changes` is always true, so
-#      the ordinary full stack (unit, integration, e2e matrix, conformance
-#      shards) runs even through merge-quiet weeks and environment bit-rot
-#      (kind/node images, upstream URLs, runner changes) surfaces the day it
-#      happens instead of inside the next feature MR.
-#   2. Live old-release Gateway API matrix (nightly-gwapi-matrix): the
-#      runtime-version-detection contract against REAL old CRD releases —
-#      the live counterpart of the offline schemas-ga-* harness.
-#   3. Churn/soak tier (nightly-gateway-churn): sustained parallel Gateway
-#      create/delete against a live cluster — the only load shape that
-#      reproduced the issue-#58 allocator cross-wiring/oscillation bugs.
-#   4. Upstream canary (nightly-gwapi-canary): conformance from gateway-api's
-#      main branch, so the next release's breakage arrives months before the
-#      Renovate bump MR.
-#
-# Nightly verifies, it never ships: publish/tag/pages jobs carry a
-# schedule-source exclusion. Failures land as `needs-triage` issues via
-# report-pipeline-failure — never as unread red pipelines.
-#
-# To exercise these jobs without waiting for the schedule, trigger a branch
-# pipeline with the variable set:
-#   glab api --method POST projects/:id/pipeline \
-#     -f ref=<branch> -f "variables[][key]=SCHEDULE_KIND" \
-#     -f "variables[][value]=nightly"
+# Nightly runs only the additional compatibility, churn, scale, and canary checks.
+# The complete environment heartbeat runs with SCHEDULE_KIND=weekly.
+nightly-dispatch:
+  stage: .pre
+  image: alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+  tags:
+    - saas-linux-small-amd64
+  resource_group: nightly-dispatch
+  rules:
+    - if: '$MIRROR_IMAGES == "true"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_KIND == "nightly"'
+  script:
+    - apk add --no-cache python3
+    - python3 -m scripts.ci.nightly
+
+report-nightly-dispatch-failure:
+  stage: .post
+  image: alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+  tags:
+    - saas-linux-small-amd64
+  rules:
+    - if: '$MIRROR_IMAGES == "true"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_KIND == "nightly"'
+      when: on_failure
+  script:
+    - apk add --no-cache bash python3
+    - ./scripts/ci-report-failure.sh
 
 nightly-gwapi-matrix:
   extends: .test-e2e-base
   rules:
-    - !reference [.not-mirror-refresh, rules]
-    - if: $SCHEDULE_KIND == "nightly"
+    - !reference [.rules-pipeline-exclusions, rules]
+    - if: '$SCHEDULE_KIND == "nightly" || $SCHEDULE_KIND == "weekly"'
   # One fresh kind cluster per old release. The releases mirror the offline
   # schema bundles (tests/schemas-ga-*); bundle-version annotations there are
   # the source of truth for these tags.
@@ -3035,8 +3045,8 @@ nightly-gateway-churn:
   extends: .test-e2e-base
   timeout: 30 minutes
   rules:
-    - !reference [.not-mirror-refresh, rules]
-    - if: $SCHEDULE_KIND == "nightly"
+    - !reference [.rules-pipeline-exclusions, rules]
+    - if: '$SCHEDULE_KIND == "nightly" || $SCHEDULE_KIND == "weekly"'
   variables:
     HAPROXY_VERSION: "3.4"
     # Opt the tier in: gates the test itself AND makes TestMain's helm
@@ -3079,8 +3089,8 @@ nightly-scale:
   extends: .test-e2e-base
   timeout: 45 minutes
   rules:
-    - !reference [.not-mirror-refresh, rules]
-    - if: $SCHEDULE_KIND == "nightly"
+    - !reference [.rules-pipeline-exclusions, rules]
+    - if: '$SCHEDULE_KIND == "nightly" || $SCHEDULE_KIND == "weekly"'
     # Standalone immediate runs without waiting for the schedule. The
     # variables array needs a JSON body: `-f "variables[][key]=..."` posts
     # a form glab drops, creating a pipeline with NO variables and no
@@ -3120,8 +3130,8 @@ nightly-gwapi-canary:
   # (flagged as canary) via report-pipeline-failure.
   allow_failure: true
   rules:
-    - !reference [.not-mirror-refresh, rules]
-    - if: $SCHEDULE_KIND == "nightly"
+    - !reference [.rules-pipeline-exclusions, rules]
+    - if: '$SCHEDULE_KIND == "nightly" || $SCHEDULE_KIND == "weekly"'
   variables:
     HAPROXY_VERSION: "3.4"
     HAPTIC_E2E_PROFILE: conformance
@@ -3180,7 +3190,7 @@ gateway-conformance-report:
       optional: true
       artifacts: false
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-post-merge-reuse, rules]
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
       when: never
@@ -3208,7 +3218,7 @@ release-gateway-conformance:
     - job: release-chart
       artifacts: false
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
   before_script:
     - export CONFORMANCE_IMPL_VERSION="${CI_COMMIT_TAG#v}"
@@ -3227,7 +3237,7 @@ render-benchmark-comparison:
     - compute-ci-image-tag
     - job: build-ci
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: manual
       allow_failure: true
@@ -3279,7 +3289,7 @@ gateway-api-benchmark-smoke:
     REUSE_CLUSTER: "false"
     BUILD_ONLY: "false"
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - when: manual
       allow_failure: true
   script:
@@ -3512,15 +3522,10 @@ test-ingress-conformance:
     - job: build-spoa-image-snapshot
     - job: build-ingress-conformance-image
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
-    # Full 4-shard suite runs on the default branch (merge-result / heartbeat,
-    # see .test-e2e-base) and nightly — NOT on MRs. MRs get a deterministic
-    # 1-of-4 smoke instead (test-ingress-conformance-smoke).
     - if: $CI_COMMIT_TAG
       when: never
-    # Nightly wins on any branch; then exclude MR/feature pipelines.
-    - if: $SCHEDULE_KIND == "nightly"
     - if: $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH && $CI_COMMIT_BRANCH !~ /^maint\//
       when: never
     - !reference [.rules-test-infrastructure, rules]
@@ -3715,7 +3720,7 @@ test-ingress-conformance:
 # design as test-gateway-conformance-smoke, but on one runner: this one takes
 # about 9 minutes against that one's 23, so it is nowhere near the pipeline's
 # critical path and splitting it would buy nothing for an extra bring-up.
-# The full 4-shard suite runs on main + nightly (test-ingress-conformance).
+# The full 4-shard suite runs on merge trains + weekly (test-ingress-conformance).
 test-ingress-conformance-smoke:
   stage: integration
   image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp${HAPROXY_VERSION}
@@ -3737,7 +3742,7 @@ test-ingress-conformance-smoke:
   after_script: !reference [test-ingress-conformance, after_script]
   artifacts: !reference [test-ingress-conformance, artifacts]
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: never
     - if: $CI_COMMIT_TAG
@@ -3768,7 +3773,7 @@ test-helm-defaults:
     - .docker-dind
     - .snapshot-version
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-full, rules]
     - if: $CI_COMMIT_TAG
       when: never
@@ -3836,7 +3841,7 @@ release-controller:
     GIT_DEPTH: 0
     GITLAB_TOKEN: ${CI_JOB_TOKEN}
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
   before_script:
     - !reference [.goreleaser-base, before_script]
@@ -3915,7 +3920,7 @@ release-chart:
     - smoke-spoa-amd64
     - smoke-spoa-arm64
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
   before_script:
     - helm registry login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
@@ -3959,7 +3964,7 @@ trigger-docs-release:
     - job: build-playground-wasm
       optional: true
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG =~ /^v.*/
   inherit:
     variables: false
@@ -3999,8 +4004,9 @@ test-agent-skill-package:
     - compute-ci-image-tag
     - job: build-python-docs
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-common, rules]
+    - !reference [.rules-full-schedule, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - changes:
@@ -4026,7 +4032,7 @@ pages-preview:
     - compute-ci-image-tag
     - job: build-python-docs
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - !reference [.rules-train-common, rules]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &pages-preview-changes
@@ -4107,7 +4113,7 @@ pages-preview-cleanup:
   tags:
     - saas-linux-small-amd64
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: manual
       allow_failure: true
@@ -4134,7 +4140,8 @@ trigger-pages:
     - job: build-playground-wasm
       optional: true
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
+    - !reference [.rules-verification-only, rules]
     # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
     # publishing, image pushes, pages deploys, or release tagging from cron.
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -4190,7 +4197,8 @@ create-release-tag:
   dependencies:
     - compute-ci-image-tag
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
+    - !reference [.rules-verification-only, rules]
     # Scheduled (nightly) pipelines verify, they don't ship: no snapshot
     # publishing, image pushes, pages deploys, or release tagging from cron.
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -4254,7 +4262,7 @@ report-pipeline-failure:
     - saas-linux-small-amd64
   interruptible: false
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: $CI_COMMIT_TAG
       when: never
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -4270,7 +4278,7 @@ verify-merge-train:
   dependencies:
     - compute-ci-image-tag
   rules:
-    - !reference [.not-mirror-refresh, rules]
+    - !reference [.rules-pipeline-exclusions, rules]
     - if: '$CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"'
   variables:
     GIT_DEPTH: "0"
