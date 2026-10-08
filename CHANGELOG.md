@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-08
+
+HAPTIC 0.5 can restore HAProxy capacity during a controller restart or leader
+change even when rendering is blocked. New pods load a retained, acknowledged
+configuration after ownership, freshness, and current-HAProxy validation checks.
+
+**Before upgrading:** retained recovery needs a successful deployment by a 0.5
+controller before it can protect replacement pods. Read the
+[upgrade notes](./docs/site/docs/upgrade-notes.md#upgrading-to-05) for this requirement
+and the limits of serving retained endpoint lists.
+
 ### Added
 
 - New HAProxy pods can load an acknowledged configuration retained in Kubernetes when a fresh leader cannot render, with current-binary validation, Warning events, and `haptic_retained_config_active`.
@@ -17,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reduce controller startup time and temporary allocations while preserving every validation check and the existing memory budget.
 - Endpoint updates and admission requests no longer wait for each other's HAProxy validation checks.
 - Prevent repeated status writes across reconciliation phases from making valid Kubernetes updates time out.
 - Verified agent-state reads no longer race HAProxy reloads and invalidate the confirmed worker configuration.

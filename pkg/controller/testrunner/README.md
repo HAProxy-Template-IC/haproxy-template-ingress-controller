@@ -103,7 +103,7 @@ See `pkg/controller/testrunner/types.go` for the full schema; `FormatResults` ca
 
 ## Concurrency Model
 
-The automatic worker count is the smaller of `GOMAXPROCS` and one worker per 128 MiB of Go's soft memory limit, with a minimum of one. Explicit `Options.Workers` or `haptic validate --workers` values override this calculation. Every selected test and assertion still runs.
+The automatic worker count is the smaller of twice `GOMAXPROCS` and one worker per 128 MiB of Go's soft memory limit, with a minimum of one. This lets workers render while others wait for HAProxy checks; simultaneous HAProxy processes remain capped at `GOMAXPROCS`. Explicit `Options.Workers` or `haptic validate --workers` values override the worker count. Every selected test and assertion still runs.
 
 `haproxy -c` subprocesses consume container memory outside Go's soft limit. In a 1 GiB container, 32 validation workers reached 29 concurrent HAProxy processes using 415 MiB alongside the Go process and were OOM-killed. Eight workers completed the same suite with a 578 MiB container peak. The 128 MiB allowance bounds both rendering and subprocess concurrency; it is not a hard limit on an individual test. Larger fixtures can still require more memory.
 

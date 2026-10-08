@@ -5,6 +5,41 @@ you plan to deploy. Each section lists configuration changes and the steps neede
 to keep your existing routes working. For routine chart upgrades, see
 [Upgrading with Helm](deploying-with-helm.md#upgrading).
 
+## Upgrading to 0.5
+
+0.5 lets a new HAProxy pod load a previously acknowledged configuration when a
+restarted controller or new leader can't render. During recovery, existing
+configured pods keep serving without a reload. Follow the normal
+[Helm upgrade procedure](deploying-with-helm.md#upgrading); this feature needs no
+new Helm values.
+
+### Establish a recovery checkpoint
+
+Before relying on retained recovery during node maintenance, let a 0.5 controller
+complete a successful configuration deployment and publish its acknowledgement.
+That creates the retained configuration and auxiliary files in Kubernetes.
+An installation upgraded while rendering is already blocked has no checkpoint
+from the older controller. Repair the rendering error first; upgrading alone
+doesn't make replacement HAProxy pods Ready in that case.
+
+The controller uses a checkpoint only when it matches the latest recorded
+deployment and the configured HAProxy pods. A newer deployment without a usable
+checkpoint prevents recovery from an older one. Retained recovery also requires
+at least one controller to pass its startup checks.
+
+### Account for frozen routing inputs
+
+While rendering is blocked, replacement pods receive the retained endpoint lists,
+routes, certificates, and fetched files. They don't receive subsequent input
+changes until rendering recovers. A Ready proxy can therefore still point at a
+backend address that no longer exists.
+
+The bundled `PrometheusRule` alerts when retained recovery is active. `/healthz`
+includes the render error but continues to report controller component health;
+HTTP 200 doesn't prove that current routing inputs have been applied. See
+[controller failure behavior](operations/high-availability.md#what-happens-when-a-controller-fails)
+for recovery checks and monitoring.
+
 ## Upgrading to 0.4
 
 0.4 ships a values schema. Helm checks your values against it on every

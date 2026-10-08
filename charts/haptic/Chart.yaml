@@ -6,8 +6,8 @@ type: application
 # restartPolicy: Always), GA in 1.33: they start before HAProxy and are stopped
 # only after it exited, so the drain socket, SPOE and log shipping outlive it.
 kubeVersion: ">=1.33.0-0"
-version: 0.4.1
-appVersion: "0.4.1"
+version: 0.5.0
+appVersion: "0.5.0"
 # Template libraries are packaged as conditional subcharts so a release only
 # carries the source of the libraries it enables — disabled subcharts are
 # pruned from the Helm release Secret, keeping it under the 1 MiB limit. The
@@ -85,7 +85,7 @@ annotations:
   # Document all component images (Artifact Hub standard)
   artifacthub.io/images: |
     - name: controller
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.4.1-haproxy3.4
+      image: registry.gitlab.com/haproxy-haptic/haptic:0.5.0-haproxy3.4
       platforms:
         - linux/amd64
         - linux/arm64
@@ -96,12 +96,12 @@ annotations:
         - linux/amd64
         - linux/arm64
     - name: spoa-hub
-      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.4.1
+      image: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.5.0
       platforms:
         - linux/amd64
         - linux/arm64
     - name: varnish
-      image: registry.gitlab.com/haproxy-haptic/haptic/varnish:0.4.1
+      image: registry.gitlab.com/haproxy-haptic/haptic/varnish:0.5.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -111,20 +111,24 @@ annotations:
 
   # Release highlights; full notes are in the root CHANGELOG.md.
   artifacthub.io/changes: |
+    - kind: added
+      description: New HAProxy pods can recover an acknowledged configuration when a restarted controller or new leader cannot render
+    - kind: added
+      description: Warning events, a retained-configuration gauge, and a bundled alert report retained recovery
     - kind: fixed
-      description: Valid admission requests no longer conflict with unchanged inputs
+      description: Controllers complete startup validation faster within the existing memory budget
     - kind: fixed
-      description: Repaired fetched HTTP lists can replace previously accepted content
+      description: Endpoint updates and admission requests no longer wait for each other's validation checks
     - kind: fixed
-      description: Rejected watched-resource changes produce Kubernetes Warning events on the affected objects
+      description: Repeated status writes no longer make valid Kubernetes updates time out
     - kind: fixed
-      description: Rejected fetched-list refreshes produce a Warning event and an alertable rejection counter
+      description: Catch-all GRPCRoutes select the most specific hostname regardless of route age or name
   artifacthub.io/containsSecurityUpdates: "false"
 
   # Links
   artifacthub.io/links: |
     - name: Documentation
-      url: https://haproxy-haptic.org/docs/0.4.1/
+      url: https://haproxy-haptic.org/docs/0.5.0/
     - name: Issue Tracker
       url: https://gitlab.com/haproxy-haptic/haptic/-/issues
 

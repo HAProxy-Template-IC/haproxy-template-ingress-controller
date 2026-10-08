@@ -78,7 +78,7 @@ type Options struct {
 	Logger *slog.Logger
 
 	// Workers is the number of parallel workers for test execution.
-	// Default (0): GOMAXPROCS, capped at one worker per 128 MiB of GOMEMLIMIT.
+	// Default (0): twice GOMAXPROCS, capped at one worker per 128 MiB of GOMEMLIMIT.
 	// Set to 1 for sequential execution.
 	Workers int
 

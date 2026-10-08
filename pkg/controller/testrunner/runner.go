@@ -107,7 +107,7 @@ func New(
 func automaticWorkers(parallelism int, memoryLimit int64) int {
 	// HAProxy subprocess memory is outside GOMEMLIMIT; see README.md#concurrency-model.
 	const memoryPerWorker = 128 << 20
-	return max(1, int(min(int64(parallelism), memoryLimit/memoryPerWorker)))
+	return max(1, int(min(2*int64(parallelism), memoryLimit/memoryPerWorker)))
 }
 
 // RunTests executes all validation tests (or a specific test if filtered).
