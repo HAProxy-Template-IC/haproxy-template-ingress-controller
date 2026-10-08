@@ -184,8 +184,6 @@ const hostPortMappings = `    extraPortMappings:
 
 const defaultKindConfig = `kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-networking:
-  apiServerAddress: "0.0.0.0"
 nodes:
   - role: control-plane
     kubeadmConfigPatches:
@@ -230,23 +228,4 @@ kubeadmConfigPatches:
   - |
     kind: KubeletConfiguration
     containerLogMaxSize: 200Mi
-kubeadmConfigPatchesJSON6902:
-  # Both kubeadm config versions: kind applies the one matching the node's
-  # k8s version (v1beta3 for <= 1.35, v1beta4 for >= 1.36) and skips the other.
-  # The e2e suite uses kind's default 1.36 node (v1beta4); keep both so the
-  # SAN lands regardless of node version. Do not collapse to a single version.
-  - group: kubeadm.k8s.io
-    version: v1beta3
-    kind: ClusterConfiguration
-    patch: |
-      - op: add
-        path: /apiServer/certSANs/-
-        value: docker
-  - group: kubeadm.k8s.io
-    version: v1beta4
-    kind: ClusterConfiguration
-    patch: |
-      - op: add
-        path: /apiServer/certSANs/-
-        value: docker
 `

@@ -1,226 +1,47 @@
-// Copyright 2025 Philipp Hossner
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Copyright 2026 Philipp Hossner
+// SPDX-License-Identifier: Apache-2.0
 
 //go:build e2e
 
-// Package httpclient is the fluent HTTP/HTTPS/mTLS client used by the
-// full-stack e2e suite — typed, retrying, and DinD-aware.
-//
-// Design goals:
-//   - Condition-based waits: every assertion polls a real predicate under
-//     exponential backoff. No time.Sleep.
-//   - DinD-aware: routes through the kind NodePort using the docker host
-//     when DOCKER_HOST is set; localhost otherwise.
-//   - SNI-correct: HTTPS requests preserve the user-supplied hostname for
-//     SNI while dialing the kind NodePort IP, equivalent to curl --resolve.
-//   - Typed echo-server response: tests assert on Echo.Headers["x-auth-user"]
-//     instead of grep-matching JSON.
+// Package httpclient selects the E2E suite's endpoint and diagnostic callback.
 package httpclient
 
 import (
-	"context"
 	"crypto/tls"
-	"crypto/x509"
-	"errors"
-	"net"
-	"net/http"
-	"strconv"
-	"strings"
 	"testing"
-	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	shared "gitlab.com/haproxy-haptic/haptic/tests/httpclient"
 )
 
-// Client is a fluent HTTP client targeting the dev-env HAProxy NodePorts.
-// One Client may serve many Requests; concurrent use is safe.
-type Client struct {
-	// nodeIP is the resolved NodePort IP (IPv4-preferred). In DinD this is
-	// the docker hostname's IPv4 address; locally it's 127.0.0.1.
-	nodeIP string
+type Client = shared.Client
+type Request = shared.Request
+type Response = shared.Response
+type EchoBody = shared.EchoBody
+type PollTimeoutSnapshot = shared.PollTimeoutSnapshot
 
-	// httpPort/httpsPort are the wire ports requests dial. New() sets the
-	// shared kind NodePorts; ForForwarded() sets a kubectl port-forward
-	// tunnel's local ports (per-Gateway Services aren't reachable via the
-	// shared NodePorts — see tests/e2e ForwardGateway).
-	httpPort  int
-	httpsPort int
+var defaultSnapshot PollTimeoutSnapshot
 
-	// waitCfg is the retry/backoff policy applied to Expect* sinks.
-	waitCfg testutil.WaitConfig
+func SetDefaultPollTimeoutSnapshot(snapshot PollTimeoutSnapshot) { defaultSnapshot = snapshot }
 
-	// transport is shared across all non-mTLS requests for connection pooling.
-	transport *http.Transport
-
-	// onPollTimeout, if non-nil, is invoked when poll() exhausts its
-	// retry budget — BEFORE the timeout error propagates up to t.Fatalf
-	// and the test's t.Cleanup chain. Used by tests/e2e to snapshot
-	// the chart's rendered HAProxyCfg + the running pod's
-	// /etc/haproxy tree while the test's fixtures are still alive
-	// (the standard DumpLogsOnFailure runs in t.Cleanup after fixture
-	// deletion, so its haproxycfg.yaml capture sees post-cleanup
-	// state instead of the failing-moment state).
-	//
-	// Package-private to httpclient: tests/e2e sets it via
-	// SetDefaultPollTimeoutSnapshot during TestMain init so every
-	// Client returned by New picks it up automatically.
-	onPollTimeout PollTimeoutSnapshot
-}
-
-// PollTimeoutSnapshot is the callback invoked when a poll exhausts
-// its retry budget. Implementations receive the test handle, a
-// human-readable description of what was being polled, the last
-// response observed (may be nil if every attempt errored), and the
-// last error returned by the inner Do (may be nil if responses came
-// back but the predicate never matched).
-//
-// Implementations MUST be best-effort and side-effect-only: they
-// cannot influence the test outcome (the timeout error still
-// propagates) and they must not call t.FailNow / t.Fatalf
-// themselves, which would short-circuit the existing diagnostic
-// chain.
-type PollTimeoutSnapshot func(t *testing.T, description string, lastResp *Response, lastErr error)
-
-// defaultPollTimeoutSnapshot is the package-default callback used
-// when New constructs a Client with no per-instance override. The
-// e2e test harness's TestMain registers a callback that dumps
-// HAProxy state to debug-logs/<test>/; httpclient itself only
-// stores the function pointer.
-var defaultPollTimeoutSnapshot PollTimeoutSnapshot
-
-// SetDefaultPollTimeoutSnapshot registers the callback that
-// newly-constructed Clients pick up by default. Pass nil to
-// disable. Intended to be called once from TestMain in the
-// tests/e2e package; safe to call multiple times (last write wins).
-//
-// Implemented as a package-level setter rather than a Client option
-// so existing tests that call httpclient.New(t) directly get the
-// snapshot behaviour automatically — no per-test wiring change.
-func SetDefaultPollTimeoutSnapshot(fn PollTimeoutSnapshot) {
-	defaultPollTimeoutSnapshot = fn
-}
-
-// New constructs a client targeting the suite's selected cluster.
 func New(t *testing.T) *Client {
 	t.Helper()
 	endpoint, err := e2ecluster.ResolveTrafficEndpoint()
 	if err != nil {
-		t.Fatalf("httpclient: resolve NodePort host: %v", err)
+		t.Fatalf("resolve test traffic endpoint: %v", err)
 	}
-	t.Logf("httpclient: NodePort host = %s, HTTP = %d, HTTPS = %d", endpoint.Host, endpoint.HTTPPort, endpoint.HTTPSPort)
-
-	return newClient(endpoint)
+	t.Logf("httpclient: host=%s HTTP=%d HTTPS=%d", endpoint.Host, endpoint.HTTPPort, endpoint.HTTPSPort)
+	return forEndpoint(endpoint.Host, endpoint.HTTPPort, endpoint.HTTPSPort)
 }
 
-func newClient(endpoint e2ecluster.TrafficEndpoint) *Client {
-	return &Client{
-		nodeIP:    endpoint.Host,
-		httpPort:  endpoint.HTTPPort,
-		httpsPort: endpoint.HTTPSPort,
-		waitCfg: testutil.WaitConfig{
-			InitialInterval: 100 * time.Millisecond,
-			MaxInterval:     2 * time.Second,
-			// 15s cap. haptic must apply a routing change (reconcile -> render
-			// -> validate -> deploy -> reload) and HAProxy must serve it well
-			// within 10s — even under the full parallel suite's churn. Backend
-			// pod readiness is gated separately (waitForServiceEndpointReady,
-			// before any probe runs), so this budget bounds ONLY haptic's own
-			// reaction. A probe that needs >15s is a convergence regression to
-			// surface, not a tail to absorb behind a generous ceiling.
-			Timeout:    15 * time.Second,
-			Multiplier: 2.0,
-		},
-		transport:     newSharedTransport(endpoint.Host, endpoint.HTTPSPort),
-		onPollTimeout: defaultPollTimeoutSnapshot,
-	}
-}
-
-// ForForwarded constructs a Client whose wire target is a local kubectl
-// port-forward tunnel (127.0.0.1:<port>) instead of the shared kind
-// NodePorts. Gateway API listeners are exposed via per-Gateway Services
-// that the shared NodePorts deliberately do NOT serve; tests reach them
-// through tests/e2e.ForwardGateway and hand the returned local ports here.
-// Pass 0 for a port the Gateway has no listener on. Poll budget, transport
-// behavior (SNI-preserving HTTPS dial rewrite) and failure snapshots match
-// New().
 func ForForwarded(t *testing.T, httpPort, httpsPort int) *Client {
 	t.Helper()
-	return newClient(e2ecluster.TrafficEndpoint{
-		Host:      "127.0.0.1",
-		HTTPPort:  httpPort,
-		HTTPSPort: httpsPort,
-	})
+	return forEndpoint("127.0.0.1", httpPort, httpsPort)
 }
 
-// CloseIdleConnections drops the shared transport's pooled keepalive
-// connections so the next request dials a fresh one. Useful when polling for a
-// not-yet-live route across a reload: a request that 404s on the pre-change
-// HAProxy worker pins a keepalive connection to that (draining) worker, which
-// keeps answering with the old config until it closes; forcing a fresh dial lets
-// the retry reach a current worker generation.
-func (c *Client) CloseIdleConnections() { c.transport.CloseIdleConnections() }
-
-// newSharedTransport returns an *http.Transport whose DialContext rewrites
-// any "<host>:443" target to the NodePort. This is the curl --resolve
-// equivalent: the wire connection lands on the kind NodePort, but the TLS
-// handshake's SNI value is the original hostname so HAProxy picks the
-// correct certificate.
-//
-// HTTP requests (port 80) are not rewritten — tests construct those URLs
-// directly against nodeIP:HTTPNodePort with a Host: header.
-func newSharedTransport(nodeIP string, httpsPort int) *http.Transport {
-	dialer := &net.Dialer{
-		Timeout:   5 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
-	target := nodeIP + ":" + strconv.Itoa(httpsPort)
-	return &http.Transport{
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			if strings.HasSuffix(address, ":443") {
-				return dialer.DialContext(ctx, network, target)
-			}
-			return dialer.DialContext(ctx, network, address)
-		},
-		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Second,
-		IdleConnTimeout:       30 * time.Second,
-		MaxIdleConns:          16,
-		// Self-signed certs are the default in dev-env. Requests that pin
-		// a CA via WithClientCert get a per-request transport that
-		// overrides this.
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true, // #nosec G402 — dev-env uses self-signed certs
-			MinVersion:         tls.VersionTLS12,
-		},
-	}
-}
-
-// transportForClientCert returns a transport with the given client cert
-// installed and the CA pinned. Used by Request.Do when WithClientCert was
-// set; it is built per-request rather than shared because each test gets
-// its own cert/CA pair.
-func transportForClientCert(nodeIP string, httpsPort int, clientCert *tls.Certificate, ca []byte) (*http.Transport, error) {
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(ca) {
-		return nil, errors.New("failed to parse CA PEM")
-	}
-	t := newSharedTransport(nodeIP, httpsPort)
-	t.TLSClientConfig = &tls.Config{
-		Certificates: []tls.Certificate{*clientCert},
-		RootCAs:      pool,
-		MinVersion:   tls.VersionTLS12,
-	}
-	return t, nil
+func forEndpoint(host string, httpPort, httpsPort int) *Client {
+	return shared.New(&shared.Config{Host: host, HTTPPort: httpPort, HTTPSPort: httpsPort, OnPollTimeout: defaultSnapshot, TLS: &tls.Config{
+		InsecureSkipVerify: true, // #nosec G402 — E2E fixtures use self-signed certificates; mTLS requests pin their CA.
+		MinVersion:         tls.VersionTLS12,
+	}})
 }

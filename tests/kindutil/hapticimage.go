@@ -28,6 +28,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/process"
 )
 
 // DockerTimeout bounds one docker invocation, including a build.
@@ -41,13 +43,8 @@ var ErrAgentUnavailable = errors.New("no haptic agent to drive")
 func RunDocker(stdin io.Reader, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), DockerTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdin = stdin
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	return out.String(), err
+	result, err := (process.Executor{}).Run(ctx, &process.Command{Name: "docker", Args: args, Stdin: stdin, Env: DockerEnvironment(os.Getenv)})
+	return result.Combined, err
 }
 
 // DockerUsable returns why docker cannot be driven from here, or nil.
@@ -157,11 +154,10 @@ func buildHaptic(root string) (string, error) {
 	target := filepath.Join(os.TempDir(), fmt.Sprintf("haptic-test-binary-%d", os.Getpid()))
 	ctx, cancel := context.WithTimeout(context.Background(), DockerTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", target, "./cmd/haptic")
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("go build ./cmd/haptic: %v\n%s", err, out)
+	command := &process.Command{Name: "go", Args: []string{"build", "-o", target, "./cmd/haptic"}, Dir: root,
+		Env: map[string]string{"CGO_ENABLED": "0", "GOOS": "linux", "GOARCH": runtime.GOARCH}}
+	if out, err := (process.Executor{}).Run(ctx, command); err != nil {
+		return "", fmt.Errorf("go build ./cmd/haptic: %v\n%s", err, out.Combined)
 	}
 	return target, nil
 }

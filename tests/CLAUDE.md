@@ -21,6 +21,15 @@ Work in this directory when:
 - Acceptance tests → Use `tests/acceptance/`
 - Full-stack e2e tests → Use `tests/e2e/`
 
+## Shared infrastructure policy
+
+Use Go for new test orchestration and shared helpers. Reuse the capability
+packages and embedded fixtures listed in [INFRASTRUCTURE.md](INFRASTRUCTURE.md).
+Keep unit tests free of subprocesses; real process tests run through
+`make test-process`. Keep each suite's distinct assertions and framework.
+Acceptance uses `pkg/k8s/podclient` for in-process SPDY forwarding. Upstream
+conformance retains its own transport; CLI tunnels use the shared `tests/tunnel` package.
+
 ## Directory Purpose
 
 This directory serves as the root for all non-unit tests and contains:
@@ -279,10 +288,9 @@ RFC 5737 addresses) matches no cluster route, so every health check is a SYN
 that the node NATs to the host and the host forwards to the LAN's default
 gateway. At 5,000 routes that was 126,000 concurrent connections and took a
 home router down. Every kind cluster creator in the repo therefore blackholes
-`kindutil.SyntheticBackendRanges` (`10.0.0.0/12` and the three RFC 5737 nets)
-on the node right after creation: `kindutil.BlackholeSyntheticBackends` in Go
-(e2e, acceptance, integration), `kind_blackhole_synthetic_backends` in
-`scripts/lib/cluster.sh`. Pick synthetic
+`kindutil.SyntheticBackendRanges()` (`10.0.0.0/12` and the three RFC 5737 nets)
+on every node through `kindutil.Cluster.Create`. The dev-environment wrapper
+`kind_blackhole_synthetic_backends` calls the same Go implementation. Pick synthetic
 addresses inside those ranges, and add any new creator to the list.
 
 ### Measuring controller memory at scale

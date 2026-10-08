@@ -293,6 +293,12 @@ linters:
         linters:
           - gosec
 
+      # The test runner creates the artifact directory explicitly selected by its caller.
+      - path: ^tests/runner/artifacts\.go$
+        linters:
+          - gosec
+        text: "G703:"
+
       # Allow dot imports in test files (for gomega/ginkgo if used)
       - path: _test\.go$
         text: "should not use dot imports"
@@ -380,6 +386,13 @@ linters:
 
       # G101: Kubernetes Secret name constant, not actual credentials
       - path: tests/acceptance/env\.go
+        linters:
+          - gosec
+        text: "G101"
+
+      # These constants name Kubernetes objects; neither contains credential data.
+      - path: ^tests/scenarios/resources\.go$
+        source: '^\s*gitops(Credentials|Webhook)Secret\s*='
         linters:
           - gosec
         text: "G101"

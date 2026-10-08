@@ -650,10 +650,12 @@ const (
 type statusCacheEntry struct {
 	uid                   string
 	baseResourceVersion   string
+	phaseBaseVersions     map[string]string
 	latestResourceVersion string
 	lastPhase             string
 	lastPayload           []byte
 	superseded            []statusWrite
+	ownership             statusOwnership
 }
 
 // applyOnePatch applies one phase variant, using exact lineage to skip when available.
@@ -744,7 +746,7 @@ func (c *Component) applyOnePatch(ctx context.Context, patch *templating.StatusP
 	c.selfWrites.Record(gvr.GroupResource(), patch.Namespace, patch.Name, applied.GetResourceVersion())
 
 	if exactLineage {
-		c.cacheStatusApplySuccess(cacheKey, patch, phaseKey, payloadBytes, applied.GetResourceVersion())
+		c.cacheStatusApplySuccess(cacheKey, patch, phaseKey, payloadBytes, applied)
 	}
 
 	return patchApplied
@@ -845,8 +847,10 @@ func (c *Component) cacheStatusApplySuccess(
 	patch *templating.StatusPatch,
 	phase string,
 	payload []byte,
-	appliedResourceVersion string,
+	applied *unstructured.Unstructured,
 ) {
+	ownership := statusFieldOwnership(applied, patch.APIVersion)
+	appliedResourceVersion := applied.GetResourceVersion()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.statusCache) >= statusCacheMaxEntries {
@@ -855,14 +859,21 @@ func (c *Component) cacheStatusApplySuccess(
 		c.statusCache = make(map[string]statusCacheEntry, statusCacheMaxEntries/4)
 	}
 	previous := c.statusCache[cacheKey]
-	c.statusCache[cacheKey] = statusCacheEntry{
+	if previous.uid != patch.UID {
+		previous.phaseBaseVersions = nil
+	}
+	entry := statusCacheEntry{
 		uid:                   patch.UID,
 		baseResourceVersion:   patch.ResourceVersion,
+		phaseBaseVersions:     previous.phaseBaseVersions,
 		latestResourceVersion: appliedResourceVersion,
 		lastPhase:             phase,
 		lastPayload:           bytes.Clone(payload),
-		superseded:            previous.supersededWrites(patch.UID, appliedResourceVersion),
+		superseded:            previous.supersededWrites(patch.UID, appliedResourceVersion, patch.ResourceVersion, ownership),
+		ownership:             ownership,
 	}
+	entry.rememberPhaseBase(phase, patch.ResourceVersion)
+	c.statusCache[cacheKey] = entry
 }
 
 func (c *Component) statusApplyDecision(
@@ -879,15 +890,19 @@ func (c *Component) statusApplyDecision(
 	switch sourceResourceVersion {
 	case entry.latestResourceVersion:
 		entry.baseResourceVersion = sourceResourceVersion
+		entry.rememberPhaseBase(phase, sourceResourceVersion)
 		c.statusCache[cacheKey] = entry
 		return sourceResourceVersion, entry.lastPhase == phase && bytes.Equal(entry.lastPayload, payload)
 	case entry.baseResourceVersion:
+		if entry.lastPhase != phase && entry.isSupersededEcho(sourceResourceVersion, phase, payload) {
+			return entry.latestResourceVersion, true
+		}
 		// The render has not observed the applied version, which stays so
 		// for good when the write's echo changed nothing it reads. Any
 		// content change re-executes the render with a new source version.
 		return entry.latestResourceVersion, entry.lastPhase == phase && bytes.Equal(entry.lastPayload, payload)
 	default:
-		if entry.lastPhase == phase && entry.isSupersededEcho(sourceResourceVersion, phase, payload) {
+		if entry.isSupersededEcho(sourceResourceVersion, phase, payload) {
 			return entry.latestResourceVersion, true
 		}
 		return sourceResourceVersion, false

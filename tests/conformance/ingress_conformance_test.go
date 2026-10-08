@@ -77,7 +77,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -87,6 +86,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/process"
 )
 
 // ingressClassName is the IngressClass the chart provisions. The chart's
@@ -234,18 +235,15 @@ func TestIngressConformance(t *testing.T) {
 	//   - `-no-colors`                 cleaner CI logs (the cucumber JSON
 	//                                   is what we parse; stdout is for
 	//                                   humans/debug only)
-	cmd := exec.CommandContext(ctx, bin,
+	cmd := &process.Command{Name: bin, Args: []string{
 		"-format=cucumber",
-		"-output-directory="+outDir,
-		"-ingress-class="+ingressClassName,
-		"-wait-time-for-ingress-status="+waitForIngressStatus.String(),
-		"-wait-time-for-ready="+waitForReady.String(),
+		"-output-directory=" + outDir,
+		"-ingress-class=" + ingressClassName,
+		"-wait-time-for-ingress-status=" + waitForIngressStatus.String(),
+		"-wait-time-for-ready=" + waitForReady.String(),
 		"-no-colors",
-	)
+	}}
 	cmd.Dir = workDir
-	// Inherit the parent env so KUBECONFIG (and anything else the
-	// outer harness has set) is visible to the upstream binary. Leaving
-	// cmd.Env nil is the documented way to inherit os/exec's default.
 
 	// Tee the binary's stdout/stderr into t.Log so a binary-level crash
 	// (segfault, kubeconfig error, etc. — anything that prevents the
@@ -262,7 +260,7 @@ func TestIngressConformance(t *testing.T) {
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
 
-	t.Logf("running upstream binary: %s %s", bin, strings.Join(cmd.Args[1:], " "))
+	t.Logf("running upstream binary: %s %s", bin, strings.Join(cmd.Args, " "))
 
 	// Spawn a watcher on the cucumber-report tempdir so the CI log
 	// shows feature-by-feature progress while the upstream binary is
@@ -279,7 +277,7 @@ func TestIngressConformance(t *testing.T) {
 		progress.run(progCtx)
 	}()
 
-	runErr := cmd.Run()
+	_, runErr := (process.Executor{}).Run(ctx, cmd)
 	progCancel()
 	<-progDone
 	progress.scan() // catch any reports written after the last tick

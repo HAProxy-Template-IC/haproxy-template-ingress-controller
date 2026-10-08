@@ -17,6 +17,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
 
 // runDocker runs one docker command with stdin and returns its combined output.
@@ -84,14 +86,13 @@ func publishedPort(t *testing.T, container string, port int) int {
 // failure so a timeout names what never happened.
 func waitFor(t *testing.T, what string, budget time.Duration, probe func() error) {
 	t.Helper()
-	deadline := time.Now().Add(budget)
-	var last error
-	for time.Now().Before(deadline) {
-		last = probe()
-		if last == nil {
-			return
+	err := testutil.Poll(t.Context(), testutil.WaitConfig{Timeout: budget, InitialInterval: 100 * time.Millisecond, MaxInterval: 100 * time.Millisecond, Multiplier: 1}, what, func(context.Context) (testutil.PollResult, error) {
+		if err := probe(); err != nil {
+			return testutil.PollPending, err
 		}
-		time.Sleep(100 * time.Millisecond)
+		return testutil.PollSucceeded, nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("timed out after %s waiting for %s: %v", budget, what, last)
 }

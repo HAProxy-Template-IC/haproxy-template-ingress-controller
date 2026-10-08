@@ -120,7 +120,18 @@ class ChartRulesTests(unittest.TestCase):
     def test_admission_readiness_changes_select_both_upgrade_jobs(self):
         for job in ("test-chart-upgrade", "test-chart-upgrade-minimum-kubernetes"):
             with self.subTest(job=job):
-                self.assertTrue(selects(self.config, job, "scripts/lib/admission.sh"))
+                self.assertTrue(selects(self.config, job, "tests/admission/readiness.go"))
+
+    def test_shared_infrastructure_selects_consumers_and_prerequisites(self):
+        for path in ("Makefile", "tests/process/runner.go", "tests/fixtures/chart-upgrade/routes.yaml", "tests/kindutil/cluster.go", "scripts/test-infra.sh"):
+            for job in ("test-chart-upgrade", "test-chart-upgrade-minimum-kubernetes", "test-install-without-gateway-api", "test-helm-defaults", "test-gitops-lifecycle", "test-acceptance", "test-e2e", "test-integration", "test-agent-docker", "test-gateway-conformance", "test-ingress-conformance", "build-snapshot", "build-spoa-image-snapshot", "build-ingress-conformance-image"):
+                with self.subTest(path=path, job=job):
+                    self.assertTrue(selects(self.config, job, path))
+
+    def test_scenario_wrappers_select_their_jobs(self):
+        for job in ("test-chart-upgrade", "test-install-without-gateway-api", "test-helm-defaults", "test-gitops-lifecycle"):
+            with self.subTest(job=job):
+                self.assertTrue(selects(self.config, job, f"scripts/{job}.sh"))
 
     def test_chart_upgrade_runs_one_job_per_baseline(self):
         # One pass per baseline in parallel: sequential passes outgrow the job

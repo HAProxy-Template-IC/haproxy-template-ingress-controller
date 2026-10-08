@@ -142,8 +142,14 @@ The cache is cleared on `BecameLeaderEvent`; a failed exact-lineage apply never
 advances its entry, so the same source revision retries instead of skipping.
 
 The cache also retains 16 superseded write identities per resource. An incoming
-patch that echoes both the revision and payload of a superseded write is skipped
-only within the latest write's phase and outside the latest/base revisions.
+patch that echoes both the revision and payload of a superseded write can skip.
+The latest applied revision always remains eligible, as does each phase's own
+base revision, retained across writes by other phases. Across phases, the API server's managed fields
+must show that the original phase kept its complete status field set through
+every intervening write. Missing ownership, an ownership change, or an unknown
+source revision invalidates that proof; restoring ownership cannot restore it.
+Within the latest write's phase, the exact revision and payload are sufficient.
+This relies on [SSA transferring field ownership when its value changes](https://kubernetes.io/docs/reference/using-api/server-side-apply/#field-management).
 Otherwise overlapping renders can replay alternating transition timestamps and
 keep the API busy writing unchanged conditions. Phase recovery and changes from
 the current base still apply, as do changed payloads and unknown revisions.

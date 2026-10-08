@@ -18,7 +18,6 @@ package e2e
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -27,6 +26,8 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+
+	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
 )
 
 // webhookSecretName is the Secret the chart mounts into the controller pod.
@@ -176,10 +177,6 @@ data:
 //
 // Idempotent under apply — re-running rotates the cert.
 func setupDefaultSSLCert(ctx context.Context) error {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return fmt.Errorf("generate key: %w", err)
-	}
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(3),
 		Subject:      pkix.Name{CommonName: "*.example.com"},
@@ -189,12 +186,11 @@ func setupDefaultSSLCert(ctx context.Context) error {
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     []string{"*.example.com", "example.com"},
 	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	cert, err := fixtures.NewCertificate(template, fixtures.RSA2048, nil)
 	if err != nil {
-		return fmt.Errorf("create cert: %w", err)
+		return err
 	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: certificatePEMType, Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: rsaPrivateKeyPEMType, Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM, keyPEM := cert.PEM, cert.KeyPEM
 
 	manifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -216,10 +212,6 @@ data:
 // generateCA returns a 2048-bit RSA key + a self-signed CA certificate
 // valid for 1 year. Subject CN matches what the dev shell script uses.
 func generateCA() (*rsa.PrivateKey, []byte, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, err
-	}
 	template := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{CommonName: "Webhook CA"},
@@ -229,11 +221,11 @@ func generateCA() (*rsa.PrivateKey, []byte, error) {
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	cert, err := fixtures.NewCertificate(template, fixtures.RSA2048, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	return key, der, nil
+	return cert.Key.(*rsa.PrivateKey), cert.DER, nil
 }
 
 // mTLSBundle holds everything a client-mTLS test needs: a CA, a server
@@ -298,10 +290,7 @@ func generateClientCert(caCertDER []byte, caKey *rsa.PrivateKey, cn string) (*rs
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse CA cert: %w", err)
 	}
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, err
-	}
+
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: cn},
@@ -310,11 +299,11 @@ func generateClientCert(caCertDER []byte, caKey *rsa.PrivateKey, cn string) (*rs
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
+	cert, err := fixtures.NewCertificate(template, fixtures.RSA2048, &fixtures.Certificate{Parsed: caCert, Key: caKey})
 	if err != nil {
 		return nil, nil, err
 	}
-	return key, der, nil
+	return cert.Key.(*rsa.PrivateKey), cert.DER, nil
 }
 
 // generateServerCert returns a 2048-bit RSA key + a server certificate
@@ -325,10 +314,7 @@ func generateServerCert(caCertDER []byte, caKey *rsa.PrivateKey, dnsNames []stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse CA cert: %w", err)
 	}
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, nil, err
-	}
+
 	cn := webhookServiceName + "." + ControllerNamespace + ".svc"
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
@@ -339,9 +325,9 @@ func generateServerCert(caCertDER []byte, caKey *rsa.PrivateKey, dnsNames []stri
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     dnsNames,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
+	cert, err := fixtures.NewCertificate(template, fixtures.RSA2048, &fixtures.Certificate{Parsed: caCert, Key: caKey})
 	if err != nil {
 		return nil, nil, err
 	}
-	return key, der, nil
+	return cert.Key.(*rsa.PrivateKey), cert.DER, nil
 }

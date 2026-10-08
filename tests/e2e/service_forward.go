@@ -17,19 +17,18 @@
 package e2e
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
-	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/tunnel"
+	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
+	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"gitlab.com/haproxy-haptic/haptic/tests/tunnel"
 )
 
 // ServiceForward owns a supervised loopback tunnel. Ports includes every mapping;
@@ -39,8 +38,6 @@ type ServiceForward struct {
 	HTTPPort  int
 	HTTPSPort int
 }
-
-var forwardLineRe = regexp.MustCompile(`Forwarding from 127\.0\.0\.1:(\d+) -> (\d+)`)
 
 // Recovery budget for a kubectl port-forward that stalls or exits mid-test. The
 // watchdog tears a stalled tunnel down; these bound how long the supervisor
@@ -117,10 +114,10 @@ func forwardTarget(t *testing.T, svc string, servicePorts ...int) ServiceForward
 	}
 	// A stall or a transient apiserver hiccup during setup must recover, not
 	// fail the job: retry the first handshake within a budget before giving up.
-	var cmd *exec.Cmd
+	var cmd process.Running
 	var locals []int
 	if tunnel.Reestablish(fwdCtx, func(ctx context.Context) error {
-		c, l, startErr := startForwardTunnel(ctx, svc, portArgs, len(servicePorts))
+		c, l, startErr := startForwardTunnel(ctx, fwdCtx, svc, portArgs, len(servicePorts))
 		if startErr != nil {
 			return startErr
 		}
@@ -152,7 +149,7 @@ func forwardTarget(t *testing.T, svc string, servicePorts ...int) ServiceForward
 	// establishPinned re-opens the tunnel on the pinned local ports and swaps it
 	// in for the watchdog to probe. Used for every recovery after the first.
 	establishPinned := func(ctx context.Context) error {
-		next, _, err := startForwardTunnel(ctx, svc, pinned, len(servicePorts))
+		next, _, err := startForwardTunnel(ctx, fwdCtx, svc, pinned, len(servicePorts))
 		if err != nil {
 			return err
 		}
@@ -164,7 +161,7 @@ func forwardTarget(t *testing.T, svc string, servicePorts ...int) ServiceForward
 	supervisorDone := make(chan struct{})
 	go func() {
 		defer close(supervisorDone)
-		runForwardSupervisor(fwdCtx, t, svc, pinned, func() *exec.Cmd {
+		runForwardSupervisor(fwdCtx, t, svc, pinned, func() process.Running {
 			mu.Lock()
 			defer mu.Unlock()
 			return current
@@ -186,16 +183,16 @@ func forwardTarget(t *testing.T, svc string, servicePorts ...int) ServiceForward
 			func() any {
 				mu.Lock()
 				defer mu.Unlock()
-				return current.Process
+				return current
 			},
 			func(id any) {
 				// Kill only the process the strikes were counted against —
 				// the supervisor may have already swapped in a fresh tunnel.
 				mu.Lock()
-				p := current.Process
+				p := current
 				mu.Unlock()
 				if p == id {
-					_ = p.Kill()
+					_ = p.Stop()
 				}
 			},
 			func(msg string) {
@@ -222,66 +219,30 @@ func newServiceForward(servicePorts, locals []int) ServiceForward {
 	return fwd
 }
 
-// startForwardTunnel starts one `kubectl port-forward <target>` process
-// and parses the local ports from its "Forwarding from 127.0.0.1:<local> ->
-// <target>" lines. kubectl reports the resolved TARGET port (the pod's
-// per-Gateway bind port, chart-allocated), not the Service port asked for —
-// so local ports are matched to the requested ports by ORDER, which is the
-// order kubectl emits them. The IPv6 twin lines ("[::1]:...") repeat the
-// same local port and are deduplicated. On error the started process is
-// killed; on success the caller owns reaping it via Wait.
-func startForwardTunnel(ctx context.Context, target string, portArgs []string, wantPorts int) (*exec.Cmd, []int, error) {
-	args := make([]string, 0, 6+len(portArgs))
-	args = append(args, kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace, "port-forward", target)
-	args = append(args, portArgs...)
-	cmd := exec.CommandContext(ctx, "kubectl", args...)
-	cmd.Stderr = os.Stderr
-	stdout, err := cmd.StdoutPipe()
+func startForwardTunnel(startup, lifetime context.Context, target string, portArgs []string, wantPorts int) (process.Running, []int, error) {
+	if len(portArgs) != wantPorts {
+		return nil, nil, fmt.Errorf("expected %d mappings, got %d", wantPorts, len(portArgs))
+	}
+	ports := make([]tunnel.Port, len(portArgs))
+	for i, arg := range portArgs {
+		local, remote, ok := strings.Cut(arg, ":")
+		if !ok {
+			return nil, nil, fmt.Errorf("invalid port mapping %q", arg)
+		}
+		if local != "" {
+			parsed, err := strconv.Atoi(local)
+			if err != nil {
+				return nil, nil, err
+			}
+			ports[i].Local = parsed
+		}
+		ports[i].Remote = remote
+	}
+	forward, err := tunnel.Start(startup, lifetime, kubeexec.Client{Runner: process.Executor{}, Kubeconfig: kubeconfigPath, Context: "kind-" + ClusterName, Namespace: ControllerNamespace}, target, ports, 20*time.Second)
 	if err != nil {
-		return nil, nil, fmt.Errorf("stdout pipe: %w", err)
+		return nil, nil, err
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, nil, fmt.Errorf("start: %w", err)
-	}
-	fail := func(cause error) (*exec.Cmd, []int, error) {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		return nil, nil, cause
-	}
-
-	lines := streamForwardLines(ctx, stdout)
-
-	deadline := time.After(20 * time.Second)
-	seen := map[int]bool{}
-	var locals []int
-	for len(locals) < wantPorts {
-		select {
-		case line, ok := <-lines:
-			if !ok {
-				return fail(fmt.Errorf("exited before forwarding (parsed %d/%d ports)", len(locals), wantPorts))
-			}
-			m := forwardLineRe.FindStringSubmatch(line)
-			if m == nil {
-				continue
-			}
-			local, _ := strconv.Atoi(m[1])
-			if seen[local] {
-				continue
-			}
-			seen[local] = true
-			locals = append(locals, local)
-		case <-deadline:
-			return fail(fmt.Errorf("timed out waiting for forwarding lines (parsed %d/%d)", len(locals), wantPorts))
-		}
-	}
-	// Keep draining stdout ("Handling connection for ..." chatter) so the
-	// pipe can never fill up and stall kubectl's forwarding loop.
-	go func() {
-		for range lines {
-			continue // discard until the process exits and the channel closes
-		}
-	}()
-	return cmd, locals, nil
+	return forward.Process, forward.Locals, nil
 }
 
 func waitForGatewayService(ctx context.Context, t *testing.T, namespace, name string) string {
@@ -306,29 +267,13 @@ func waitForGatewayService(ctx context.Context, t *testing.T, namespace, name st
 	}
 }
 
-func streamForwardLines(ctx context.Context, reader io.Reader) <-chan string {
-	lines := make(chan string, 8)
-	go func() {
-		defer close(lines)
-		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			select {
-			case lines <- scanner.Text():
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return lines
-}
-
 func runForwardSupervisor(
 	ctx context.Context, t *testing.T, service string, ports []string,
-	current func() *exec.Cmd, establish func(context.Context) error,
+	current func() process.Running, establish func(context.Context) error,
 ) {
 	t.Helper()
 	for {
-		waitErr := current().Wait()
+		_, waitErr := current().Wait()
 		if ctx.Err() != nil {
 			return
 		}
