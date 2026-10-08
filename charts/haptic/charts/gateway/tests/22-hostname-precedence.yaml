@@ -343,6 +343,47 @@ validationTests:
           - 'set-var\(txn.gw_rule_id\) str\(g_default_newer_0\)'
           - 'set-var\(txn.gw_rule_id\) str\(g_default_older_0\)'
 
+  test-grpcroute-intersection-catch-all-wildcard-precedence:
+    requires: [gatewayclasses, gateways, grpcroutes]
+    fixtures:
+      gatewayclasses: *gatewayClasses
+      services: *services
+      gateways:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata: {name: gateway, namespace: default}
+          spec:
+            gatewayClassName: haptic
+            listeners:
+              - {name: http, port: 80, hostname: '*.example.com', protocol: HTTP}
+      grpcroutes:
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata: {name: a-broad, namespace: default, creationTimestamp: '2024-01-01T00:00:00Z'}
+          spec:
+            parentRefs: [{name: gateway}]
+            hostnames: ['*.com']
+            rules:
+              - backendRefs: [{name: app, port: 80}]
+        - apiVersion: gateway.networking.k8s.io/v1
+          kind: GRPCRoute
+          metadata: {name: z-specific, namespace: default, creationTimestamp: '2024-01-02T00:00:00Z'}
+          spec:
+            parentRefs: [{name: gateway}]
+            hostnames: ['*.example.com']
+            rules:
+              - backendRefs: [{name: app, port: 80}]
+    assertions:
+      - {type: haproxy_valid}
+      - type: contains
+        target: 'map:path-prefix.map'
+        pattern: 'GW_ROUTE_ID:grpc:g_default_a-broad_0__g_default_z-specific_0'
+      - type: match_order
+        target: haproxy.cfg
+        patterns:
+          - 'set-var\(txn.gw_rule_id\) str\(g_default_z-specific_0\).*var\(req.gw_routeId\) -m str "g_default_a-broad_0__g_default_z-specific_0"'
+          - 'set-var\(txn.gw_rule_id\) str\(g_default_a-broad_0\).*var\(req.gw_routeId\) -m str "g_default_a-broad_0__g_default_z-specific_0"'
+
   test-httproute-intersection-isolated-gateways:
     requires: [gatewayclasses, gateways, httproutes]
     fixtures:

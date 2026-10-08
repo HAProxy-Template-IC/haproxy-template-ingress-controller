@@ -255,7 +255,7 @@ templateSnippets:
               _ = WebhookRejectOrWarn(route, "InvalidMatch", routeKind + " " + namespace + "/" + name + " has a match value containing " + matchInjection + ", which would break out of its routing ACL; the route is not applied. Remove double quotes and control characters from the match value.")
             } else {
               var conditions = []string{"!{ var(txn.gw_rule_id) -m found }"}
-              if pathOnly {
+              if pathOnly && routeKind == "HTTPRoute" {
                 conditions = append(conditions, "{ var(req.gw_routeId) -m beg \"" + GatewayRoutePrefix(routeKind, namespace, name) + "_\" }")
                 if pathType == "Exact" {
                   conditions = append(conditions, "{ path \"" + pathValue + "\" }")

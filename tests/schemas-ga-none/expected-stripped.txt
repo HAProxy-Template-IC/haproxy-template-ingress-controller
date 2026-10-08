@@ -132,6 +132,7 @@ test-grpcroute-duplicate-backend-different-ports
 test-grpcroute-h2c-on-port-80
 test-grpcroute-headers
 test-grpcroute-https-listener-alpn-h2
+test-grpcroute-intersection-catch-all-wildcard-precedence
 test-grpcroute-intersection-exact-over-wildcard
 test-grpcroute-method-regex
 test-grpcroute-multi-hostname-map-newlines
