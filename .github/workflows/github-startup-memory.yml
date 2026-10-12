@@ -1,16 +1,16 @@
-name: GitHub simultaneous startup memory tradeoff
+name: GitHub simultaneous startup CPU diagnosis
 'on':
   push:
     branches:
-    - ci/github-startup-gc-off-20261012
+    - ci/github-startup-cpu-20261012
 permissions:
   contents: read
 concurrency:
-  group: startup-memory-${{ github.ref }}
+  group: startup-cpu-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verification:
-    name: startup-memory-${{ matrix.name }}
+    name: startup-cpu-${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
@@ -18,21 +18,32 @@ jobs:
       max-parallel: 20
       matrix:
         include:
-        - name: rate-limit-gcoff
+        - name: rate-limit-profile
           runner: ubuntu-24.04-arm
           profile: rate-limit
           channel: standard
           gogc: 'off'
-        - name: api-gateway-gcoff
+          gomaxprocs: '2'
+          capture: '1'
+        - name: rate-limit-cpu1-gc300
           runner: ubuntu-24.04-arm
-          profile: api-gateway
-          channel: experimental
+          profile: rate-limit
+          channel: standard
+          gogc: '300'
+          gomaxprocs: '1'
+          capture: '0'
+        - name: rate-limit-cpu1-gcoff
+          runner: ubuntu-24.04-arm
+          profile: rate-limit
+          channel: standard
           gogc: 'off'
+          gomaxprocs: '1'
+          capture: '0'
     env:
       PILOT_GOGC: ${{ matrix.gogc }}
-      PILOT_GOMAXPROCS: '2'
+      PILOT_GOMAXPROCS: ${{ matrix.gomaxprocs }}
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
-      PILOT_CAPTURE_PROFILES: '0'
+      PILOT_CAPTURE_PROFILES: ${{ matrix.capture }}
       PILOT_SOURCE_SHA: ${{ github.sha }}
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
@@ -66,7 +77,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
-        name: runner-pilot-startup-memory-${{ matrix.name }}
+        name: runner-pilot-startup-cpu-${{ matrix.name }}
         path: '.pilot/
 
           debug-logs/'
