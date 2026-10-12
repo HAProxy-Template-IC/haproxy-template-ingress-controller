@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM varnish:9.1@sha256:2b2f4efc79f6172af8513e48d8b37bc03bb91b34470122f4e3ccec29aeb0afc9
+FROM varnish:9.1@sha256:842a2874f49d5b9eb7690a8fe0b6d3a66d8045b2d2a96154b4a804e2cbd8ac33
 
 # Non-root exec needs a file capability to retain the Pod's IPC_LOCK grant.
 USER root
