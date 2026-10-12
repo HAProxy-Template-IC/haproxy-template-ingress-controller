@@ -37,11 +37,15 @@ import (
 )
 
 func TestRetainedConfigurationRecovery(t *testing.T) {
-	testEnv.Test(t, buildRetainedConfigurationFeature("Recovery", (*retainedFleet).assessRecovery))
+	testEnv.Test(t, buildRetainedConfigurationFeature("Recovery", 0, (*retainedFleet).assessRecovery))
+}
+
+func TestRetainedConfigurationRecoveryAtScale(t *testing.T) {
+	testEnv.Test(t, buildRetainedConfigurationFeature("Recovery with 3200 watched inputs", 3200, (*retainedFleet).assessRecovery))
 }
 
 func TestRetainedConfigurationSuddenFailover(t *testing.T) {
-	testEnv.Test(t, buildRetainedConfigurationFeature("Sudden leader loss", (*retainedFleet).assessSuddenRecovery))
+	testEnv.Test(t, buildRetainedConfigurationFeature("Sudden leader loss", 0, (*retainedFleet).assessSuddenRecovery))
 }
 
 func (f *retainedFleet) assessSuddenRecovery(ctx context.Context, t *testing.T) {
@@ -51,23 +55,28 @@ func (f *retainedFleet) assessSuddenRecovery(ctx context.Context, t *testing.T) 
 }
 
 func TestRetainedConfigurationTampering(t *testing.T) {
-	testEnv.Test(t, buildRetainedConfigurationFeature("Tampering", (*retainedFleet).assessTampering))
+	testEnv.Test(t, buildRetainedConfigurationFeature("Tampering", 0, (*retainedFleet).assessTampering))
 }
 
 func TestRetainedConfigurationFreshness(t *testing.T) {
-	testEnv.Test(t, buildRetainedConfigurationFeature("Freshness", (*retainedFleet).assessFreshness))
+	testEnv.Test(t, buildRetainedConfigurationFeature("Freshness", 0, (*retainedFleet).assessFreshness))
 }
 
-func buildRetainedConfigurationFeature(name string, assess func(*retainedFleet, context.Context, *testing.T)) types.Feature {
+func buildRetainedConfigurationFeature(name string, watchedObjects int, assess func(*retainedFleet, context.Context, *testing.T)) types.Feature {
 	var fleet *retainedFleet
 	return features.New("Retained configuration: "+name).
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			t.Helper()
-			ctx, fleet = setupRetainedFleet(ctx, t, cfg)
+			ctx, fleet = setupRetainedFleet(ctx, t, cfg, watchedObjects)
 			return ctx
 		}).
 		Assess("a blocked fresh leader safely handles replacement pods", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 			t.Helper()
+			defer func() {
+				if t.Failed() {
+					DumpControllerLogsOnError(ctx, t, fleet.client, fleet.namespace)
+				}
+			}()
 			assess(fleet, ctx, t)
 			return ctx
 		}).

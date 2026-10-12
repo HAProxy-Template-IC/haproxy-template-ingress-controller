@@ -307,6 +307,9 @@ func (w *HTTPStoreWrapper) FetchSnapshot(args ...any) (any, httpstore.ContentSna
 		return nil, httpstore.ContentSnapshot{}, err
 	}
 	content, snapshot, err := w.fetchSnapshot(url, opts, auth)
+	if err != nil && opts.Critical && !errors.Is(err, ErrCandidatePending) && !errors.Is(err, ErrCandidateWithheld) {
+		err = &CriticalFetchError{Cause: err, RetryInterval: opts.Delay}
+	}
 	if err != nil && (opts.Critical || errors.Is(err, ErrCandidatePending)) {
 		w.mu.Lock()
 		if w.renderFailure == nil {
@@ -319,6 +322,21 @@ func (w *HTTPStoreWrapper) FetchSnapshot(args ...any) (any, httpstore.ContentSna
 	}
 	return content, snapshot, err
 }
+
+// ErrCriticalFetchFailed prevents resource isolation from retrying an unavailable HTTP input.
+var ErrCriticalFetchFailed = errors.New("critical http.Fetch failed")
+
+// CriticalFetchError retains the source's retry interval without accepting its content.
+type CriticalFetchError struct {
+	Cause         error
+	RetryInterval time.Duration
+}
+
+func (e *CriticalFetchError) Error() string { return "critical http.Fetch failed: " + e.Cause.Error() }
+
+func (e *CriticalFetchError) Unwrap() error { return e.Cause }
+
+func (e *CriticalFetchError) Is(target error) bool { return target == ErrCriticalFetchFailed }
 
 // RenderFailure preserves required fetch errors even when Scriggo discards a call's error value.
 func (w *HTTPStoreWrapper) RenderFailure() error {

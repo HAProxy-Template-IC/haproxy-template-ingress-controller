@@ -70,24 +70,21 @@ type Config struct {
 	Logger    *slog.Logger
 }
 
-// Component renders on a follower and publishes nothing.
-//
-// BecameLeaderEvent is the first event replayed after the bus pauses for a
-// leadership change, ahead of the trigger the Reconciler derives from it, so
-// the warmer stands down before the Coordinator's first render. A render
-// already in flight at that point holds the lower output generation and its
-// commit is discarded as superseded.
+// Component renders on a follower and cancels its work when leadership changes.
 type Component struct {
 	*component.Base
 
-	pipeline      PipelineExecutor
-	storeProvider stores.StoreProvider
-	currentFiles  func() (rendercontext.CurrentAuxFilesSource, error)
-	graphWarm     func() bool
-	metrics       *metrics.Metrics
-	leader        bool
-	warmed        chan struct{}
-	warmedOnce    sync.Once
+	pipeline       PipelineExecutor
+	storeProvider  stores.StoreProvider
+	currentFiles   func() (rendercontext.CurrentAuxFilesSource, error)
+	graphWarm      func() bool
+	metrics        *metrics.Metrics
+	leader         bool
+	warmed         chan struct{}
+	warmedOnce     sync.Once
+	followerCtx    context.Context
+	cancelFollower context.CancelFunc
+	requests       chan context.Context
 }
 
 // Warmed is closed once a render left a committed graph behind, which is when
@@ -107,6 +104,7 @@ func New(cfg *Config) *Component {
 		graphWarm:     cfg.GraphWarm,
 		metrics:       cfg.Metrics,
 		warmed:        make(chan struct{}),
+		requests:      make(chan context.Context, 1),
 	}
 	c.Base = component.New(&component.Config{
 		EventBus:   cfg.EventBus,
@@ -121,6 +119,36 @@ func New(cfg *Config) *Component {
 		},
 	})
 	return c
+}
+
+// Start drains leadership events independently of the single render worker.
+func (c *Component) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c.followerCtx, c.cancelFollower = context.WithCancel(ctx)
+	defer func() { c.cancelFollower() }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.runRenders(ctx)
+	}()
+	err := c.Base.Start(ctx)
+	cancel()
+	<-done
+	return err
+}
+
+func (c *Component) runRenders(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case renderCtx := <-c.requests:
+			if renderCtx.Err() == nil {
+				component.SafeDispatch(c.Logger(), ComponentName, nil, func() { c.render(renderCtx) })
+			}
+		}
+	}
 }
 
 // CoalescesOn collapses a burst of triggers to the latest one: every render
@@ -138,19 +166,25 @@ func (c *Component) HandleEvent(event busevents.Event) {
 	switch event.(type) {
 	case *events.BecameLeaderEvent:
 		c.leader = true
+		c.cancelFollower()
 		c.Logger().Debug("Follower renders stopped: this replica leads")
 	case *events.LostLeadershipEvent:
 		c.leader = false
+		c.cancelFollower()
+		c.followerCtx, c.cancelFollower = context.WithCancel(c.LifecycleContext())
 		c.Logger().Debug("Follower renders resumed: this replica follows")
 	case *events.ReconciliationTriggeredEvent:
 		if !c.leader {
-			c.render()
+			select {
+			case <-c.requests:
+			default:
+			}
+			c.requests <- c.followerCtx
 		}
 	}
 }
 
-func (c *Component) render() {
-	ctx := c.LifecycleContext()
+func (c *Component) render(ctx context.Context) {
 	source, err := c.currentFiles()
 	if err != nil {
 		c.Logger().Debug("Follower render skipped", "reason", err)
@@ -159,6 +193,9 @@ func (c *Component) render() {
 	result, err := c.pipeline.Execute(
 		ctx, c.storeProvider, rendercontext.RenderModeReconcile, rendercontext.WithCurrentAuxFilesSource(source),
 	)
+	if ctx.Err() != nil {
+		return
+	}
 	if err != nil {
 		if context.Cause(ctx) == nil {
 			c.Logger().Debug("Follower render failed", "error", err)

@@ -65,6 +65,11 @@ type renderedOutput struct {
 
 func newAcceptanceHarness(t *testing.T, pageURL string, critical bool, subscribe ...func(*busevents.EventBus)) *acceptanceHarness {
 	t.Helper()
+	return newAcceptanceHarnessWithTemplate(t, pageURL, routeTemplate(critical), subscribe...)
+}
+
+func newAcceptanceHarnessWithTemplate(t *testing.T, pageURL, template string, subscribe ...func(*busevents.EventBus)) *acceptanceHarness {
+	t.Helper()
 	cfg := &config.Config{
 		Dataplane: config.DataplaneConfig{
 			MapsDir: "/etc/haproxy/maps", SSLCertsDir: "/etc/haproxy/ssl", GeneralStorageDir: "/etc/haproxy/files",
@@ -77,7 +82,7 @@ func newAcceptanceHarness(t *testing.T, pageURL string, critical bool, subscribe
 				Name:        "routes",
 				Requires:    []string{"routes"},
 				Incremental: &config.IncrementalTemplate{Source: "routes"},
-				Template:    routeTemplate(critical),
+				Template:    template,
 			},
 		},
 		HAProxyConfig: config.HAProxyConfig{Template: `{{ render "routes" }}`},
@@ -398,6 +403,71 @@ func TestCriticalContentHoldsTheDeployInsteadOfGoingWithoutIt(t *testing.T) {
 	require.NoError(t, h.routes.Update(h.route(page.URL, "?"), []string{"default", "a"}))
 	h.reconcile("cluster moves on")
 	assert.Equal(t, "a=page?\n", h.deployedFor("http_content_accepted").config)
+}
+
+func TestCriticalFetchFailureReportsBlockedReconciliation(t *testing.T) {
+	var repaired atomic.Bool
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !repaired.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("page"))
+	}))
+	t.Cleanup(page.Close)
+	var failures <-chan busevents.Event
+	template := strings.Replace(routeTemplate(true), `"retries": 1`, `"retries": 1, "interval": "1s"`, 1)
+	h := newAcceptanceHarnessWithTemplate(t, page.URL, template, func(bus *busevents.EventBus) {
+		failures = bus.SubscribeTypes("critical-fetch-failures", 16,
+			events.EventTypeTemplateRenderFailed, events.EventTypeReconciliationFailed)
+	})
+	h.reconcile("critical source unavailable")
+	failure := testutil.WaitForEvent[*events.TemplateRenderFailedEvent](t, failures, 5*time.Second)
+	require.Contains(t, failure.Error, "503")
+	testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, failures, testutil.EventTimeout)
+	require.Eventually(t, func() bool { return h.coordinator.ledger.attempted.Load() >= 2 }, 5*time.Second, 5*time.Millisecond)
+	repaired.Store(true)
+	require.Equal(t, "a=page\n", h.deployedFor("http_content_accepted").config)
+	require.NoError(t, h.coordinator.ledger.criticalContentFailure())
+}
+
+func TestCriticalFetchRetryStopsOnShutdown(t *testing.T) {
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(page.Close)
+	template := strings.Replace(routeTemplate(true), `"retries": 1`, `"retries": 1, "interval": "24h"`, 1)
+	h := newAcceptanceHarnessWithTemplate(t, page.URL, template)
+	h.reconcile("critical source unavailable")
+	require.Eventually(t, func() bool { return h.coordinator.ledger.attempted.Load() >= 2 }, 5*time.Second, 5*time.Millisecond)
+}
+
+func TestCriticalFetchFailureClearsWhenRecoveredContentIsInvalid(t *testing.T) {
+	var repaired atomic.Bool
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if !repaired.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("page"))
+	}))
+	t.Cleanup(page.Close)
+	template := `{% var _, fetchErr = http.Fetch(item | dig_string("", "spec", "url"), map[string]any{"critical": true, "retries": 1, "timeout": "1s"}) %}
+{% if fetchErr == nil %}{{ fail("recovered content is invalid") }}{% end %}`
+	h := newAcceptanceHarnessWithTemplate(t, page.URL, template)
+	h.reconcile("critical source unavailable")
+	h.waitForAttempts(1)
+	require.True(t, pipeline.CriticalContentUnavailable(h.coordinator.ledger.criticalContentFailure()))
+	repaired.Store(true)
+	h.reconcile("critical source repaired")
+	h.waitForAttempts(2)
+	require.NoError(t, h.coordinator.ledger.criticalContentFailure())
+	h.coordinator.ledger.mu.Lock()
+	refusal := h.coordinator.ledger.lastRefusal
+	h.coordinator.ledger.mu.Unlock()
+	require.Contains(t, refusal, "recovered content is invalid")
+	_, accepted := h.component.GetStore().Get(page.URL)
+	require.False(t, accepted, "invalid recovered content must remain unaccepted")
 }
 
 func TestGateVerdictsRetainEachOccurrenceOfTheSameOutput(t *testing.T) {

@@ -16,6 +16,7 @@ package component
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -342,4 +343,36 @@ func TestBase_MailboxStartWaitsForIntake(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Base.Start did not return after its mailbox intake goroutine exited")
 	}
+}
+
+func TestBase_MailboxStopsBeforeDispatch(t *testing.T) {
+	for _, shutdown := range []string{"context", "stop"} {
+		t.Run(shutdown, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			var stop func() = cancel
+			handler := &recordingHandler{}
+			logger := slog.New(slog.NewTextHandler(callbackWriter(func() { stop() }), &slog.HandlerOptions{Level: slog.LevelDebug}))
+			base := New(&Config{
+				EventBus: busevents.NewEventBus(4), Logger: logger,
+				Name: "mailbox-cancel-before-dispatch", BufferSize: 4, Handler: handler,
+			})
+			if shutdown == "stop" {
+				stop = base.Stop
+			}
+			coalesced := map[string]struct{}{events.EventTypeReconciliationTriggered: {}}
+			base.mailboxEnqueue(events.NewReconciliationTriggeredEvent("first", true), coalesced)
+			base.mailboxEnqueue(events.NewReconciliationTriggeredEvent("second", true), coalesced)
+
+			require.True(t, base.mailboxDrain(ctx))
+			require.Zero(t, handler.received.Load(), "shutdown during queue processing must prevent dispatch")
+		})
+	}
+}
+
+type callbackWriter func()
+
+func (w callbackWriter) Write(data []byte) (int, error) {
+	w()
+	return len(data), nil
 }

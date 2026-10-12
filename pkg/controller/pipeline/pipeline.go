@@ -697,6 +697,19 @@ func WaitsForCriticalContent(err error) bool {
 	return errors.Is(err, controllerhttpstore.ErrCandidateWithheld)
 }
 
+// CriticalContentUnavailable reports a failed fetch required by the rendered configuration.
+func CriticalContentUnavailable(err error) bool {
+	return errors.Is(err, controllerhttpstore.ErrCriticalFetchFailed)
+}
+
+// CriticalContentRetryInterval returns the failed source's configured refresh interval.
+func CriticalContentRetryInterval(err error) time.Duration {
+	if failure, ok := errors.AsType[*controllerhttpstore.CriticalFetchError](err); ok {
+		return failure.RetryInterval
+	}
+	return 0
+}
+
 type refusedOutputsKey struct{}
 
 // WithRefusedOutputs gives an acceptance attempt the outputs the render gate

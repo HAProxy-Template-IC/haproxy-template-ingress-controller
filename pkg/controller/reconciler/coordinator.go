@@ -299,6 +299,10 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 		return nil
 	}
 	if pipeline.WaitsForCriticalContent(err) {
+		if failure := c.ledger.criticalContentFailure(); failure != nil {
+			c.handlePipelineFailure(ctx, failure, event, startTime)
+			return nil
+		}
 		c.logger.Info("Deploy waits for critical http.Fetch content to be accepted", "error", err)
 		return nil
 	}

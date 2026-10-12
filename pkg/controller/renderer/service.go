@@ -1083,19 +1083,19 @@ func (s *RenderService) renderDocuments(
 		ctx, bctx, renderContext, forceCold, renderSession, cacheSession, inputTransaction,
 	)
 	if err != nil || restart {
-		return rendercontext.MainDocumentRender{}, nil, restart, err
+		return rendercontext.MainDocumentRender{}, nil, restart, bctx.preserveFetchFailure(err)
 	}
 	staticFiles, restart, err := s.renderAuxiliaryAttempt(
 		ctx, bctx, renderContext, forceCold, renderSession, inputTransaction,
 	)
 	if err != nil || restart {
-		return rendercontext.MainDocumentRender{}, nil, restart, err
+		return rendercontext.MainDocumentRender{}, nil, restart, bctx.preserveFetchFailure(err)
 	}
 	restart, err = s.renderResourcesAttempt(
 		ctx, bctx, renderContext, forceCold, renderSession, inputTransaction,
 	)
 	if err != nil || restart {
-		return rendercontext.MainDocumentRender{}, nil, restart, err
+		return rendercontext.MainDocumentRender{}, nil, restart, bctx.preserveFetchFailure(err)
 	}
 	if err := bctx.httpFetcher.RenderFailure(); err != nil {
 		return rendercontext.MainDocumentRender{}, nil, false, err
@@ -1859,6 +1859,27 @@ type builtRenderingContext struct {
 	*rendercontext.BuildResult
 	inputTransaction RenderInputTransaction
 }
+
+func (b *builtRenderingContext) preserveFetchFailure(err error) error {
+	fetchErr := b.httpFetcher.RenderFailure()
+	if fetchErr == nil || errors.Is(err, fetchErr) {
+		return err
+	}
+	if err == nil {
+		return fetchErr
+	}
+	// A template's fail(string) must retain the original fetch error identity.
+	return &renderFetchError{renderErr: err, fetchErr: fetchErr}
+}
+
+type renderFetchError struct {
+	renderErr error
+	fetchErr  error
+}
+
+func (e *renderFetchError) Error() string { return e.renderErr.Error() }
+
+func (e *renderFetchError) Unwrap() []error { return []error{e.renderErr, e.fetchErr} }
 
 // buildRenderingContext constructs the template rendering context from stores.
 //

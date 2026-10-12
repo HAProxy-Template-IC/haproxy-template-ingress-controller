@@ -28,8 +28,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -84,7 +86,7 @@ type retainedFleet struct {
 	publishedCheckpoints map[string]*v1.HAProxyCfg
 }
 
-func setupRetainedFleet(ctx context.Context, t *testing.T, cfg *envconf.Config) (context.Context, *retainedFleet) {
+func setupRetainedFleet(ctx context.Context, t *testing.T, cfg *envconf.Config, watchedObjects int) (context.Context, *retainedFleet) {
 	t.Helper()
 	namespace := envconf.RandomName("retained", 32)
 	ctx = StoreNamespaceInContext(ctx, namespace)
@@ -103,6 +105,9 @@ func setupRetainedFleet(ctx context.Context, t *testing.T, cfg *envconf.Config) 
 	config.Spec.Dataplane.GeneralStorageDir = "/etc/haproxy/general"
 	config.Spec.Dataplane.ConfigFile = "/etc/haproxy/haproxy.cfg"
 	config.Spec.Controller.ConfigPublishing.CompressionThreshold = 1 << 20
+	if watchedObjects > 0 {
+		addRetainedWatchedInputs(ctx, t, config, watchedObjects)
+	}
 	require.NoError(t, client.Resources().Create(ctx, config))
 	require.NoError(t, client.Resources().Create(ctx, bootstrap))
 	require.NoError(t, client.Resources().Create(ctx, deployment))
@@ -111,8 +116,48 @@ func setupRetainedFleet(ctx context.Context, t *testing.T, cfg *envconf.Config) 
 	require.NoError(t, err)
 	f := &retainedFleet{namespace: namespace, client: client, haptic: haptic, config: config, deployment: deployment, selector: labels.SelectorFromSet(deployment.Spec.Selector.MatchLabels).String()}
 	f.waitReady(ctx, t, 2)
+	if watchedObjects > 0 {
+		for _, pod := range f.pods(ctx, t) {
+			content, err := f.exec(ctx, pod.Name, "haproxy", "cat", "/etc/haproxy/haproxy.cfg")
+			require.NoError(t, err)
+			require.Contains(t, content, fmt.Sprintf("# watched inputs: %d", watchedObjects))
+		}
+	}
 	f.waitCheckpoint(ctx, t)
 	return ctx, f
+}
+
+func addRetainedWatchedInputs(ctx context.Context, t *testing.T, config *v1.HAProxyTemplateConfig, count int) {
+	t.Helper()
+	roleName := NewClusterRole(ControllerClusterRoleName, config.Namespace).Name
+	role, err := Clientset().RbacV1().ClusterRoles().Get(ctx, roleName, metav1.GetOptions{})
+	require.NoError(t, err)
+	role.Rules = append(role.Rules, rbacv1.PolicyRule{
+		APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get", "list", "watch"},
+	})
+	_, err = Clientset().RbacV1().ClusterRoles().Update(ctx, role, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	config.Spec.WatchedResources["scaleinputs"] = v1.WatchedResource{
+		APIVersion: "v1", Resources: "configmaps",
+		IndexBy:       []string{"metadata.namespace", "metadata.name"},
+		LabelSelector: "retained-fixture=" + config.Namespace,
+	}
+	config.Spec.HAProxyConfig.Template += "\n# watched inputs: {{ len(resources.scaleinputs.List()) }}\n"
+	group, ctx := errgroup.WithContext(ctx)
+	group.SetLimit(16)
+	for i := range count {
+		group.Go(func() error {
+			_, err := Clientset().CoreV1().ConfigMaps(config.Namespace).Create(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   fmt.Sprintf("watched-%05d", i),
+					Labels: map[string]string{"retained-fixture": config.Namespace},
+				},
+				Data: map[string]string{"value": "healthy"},
+			}, metav1.CreateOptions{})
+			return err
+		})
+	}
+	require.NoError(t, group.Wait())
 }
 
 func retainedChartFleet(ctx context.Context, t *testing.T, namespace string) (*appsv1.Deployment, *corev1.ConfigMap) {

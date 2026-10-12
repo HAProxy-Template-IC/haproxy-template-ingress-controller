@@ -334,7 +334,7 @@ func stopIsolation(ctx context.Context, err error) bool {
 // A trial can need an unread retained revision that the API no longer serves.
 func stopInputTrial(ctx context.Context, err error) bool {
 	return ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		pipeline.WaitsForCriticalContent(err)
+		pipeline.WaitsForCriticalContent(err) || pipeline.CriticalContentUnavailable(err)
 }
 
 func (s *Service) accept(ctx context.Context, branches map[string]*k8sstore.SnapshotBranch, result *pipeline.PipelineResult, rejected []Rejection) (*pipeline.PipelineResult, error) {
