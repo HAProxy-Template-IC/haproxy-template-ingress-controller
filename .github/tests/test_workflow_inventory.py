@@ -29,13 +29,30 @@ class WorkflowInventoryTests(unittest.TestCase):
 
     def test_coverage_has_every_profile_without_waiting_for_unrelated_suites(self):
         jobs = self.workflow["jobs"]
-        self.assertEqual(jobs["coverage"]["needs"], "coverage-inputs")
-        rows = jobs["coverage-inputs"]["strategy"]["matrix"]["include"]
+        self.assertEqual(set(jobs["coverage"]["needs"]), {"coverage-inputs", "coverage-seed"})
+        rows = [row for group in ("coverage-inputs", "coverage-seed")
+                for row in jobs[group]["strategy"]["matrix"]["include"]]
         self.assertEqual({row["name"] for row in rows}, {
             "coverage-rest", "coverage-renderer",
             "integration-3.0", "integration-3.1", "integration-3.2", "integration-3.3", "integration-3.4",
         })
-        self.assertEqual(set(jobs["verified"]["needs"]), {"verification", "coverage-inputs", "coverage"})
+        self.assertEqual(set(jobs["verified"]["needs"]), {
+            "verification", "verification-short", "coverage-inputs", "coverage-seed", "coverage",
+        })
+
+    def test_long_suites_fit_initial_capacity_before_short_jobs_are_released(self):
+        jobs = self.workflow["jobs"]
+        initial = [row for job in jobs.values() if not job.get("needs")
+                   for row in job.get("strategy", {}).get("matrix", {}).get("include", [])]
+        self.assertLessEqual(len(initial), 60)
+        initial_names = {row["name"] for row in initial}
+        for name in self.manifest["required_jobs"]:
+            if name.startswith(("e2e-", "gateway-", "ingress-", "helm-", "unit-")) or name == "snapshot":
+                self.assertIn(name, initial_names)
+        self.assertEqual(jobs["verification-short"]["needs"], "coverage-seed")
+        self.assertEqual(jobs["verification-short"]["if"], "${{ !cancelled() }}")
+        seed = jobs["coverage-seed"]["strategy"]["matrix"]["include"]
+        self.assertEqual([row["name"] for row in seed], ["coverage-renderer"])
 
     def test_e2e_matrix_has_every_shard_of_every_supported_version(self):
         job = self.workflow["jobs"]["verification"]
