@@ -1,0 +1,102 @@
+name: Free runner pilot
+
+on:
+  push:
+    branches:
+      - ci/github-runner-pilot-20261012
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-pilot-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PILOT_SOURCE_SHA: ${{ github.sha }}
+  PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
+  PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+  HAPROXY_VERSION: '3.4'
+  KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+
+jobs:
+  build:
+    name: build-3.4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PILOT_SUITE: build
+      BASELINE_CHART_VERSION: ''
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build and measure the controller image
+        shell: bash
+        run: bash .github/scripts/run-runner-pilot.sh
+      - name: Transfer the image to test jobs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pilot-controller-image
+          path: pilot-image/
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Retain build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runner-pilot-build-3.4
+          path: .pilot/
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+  pilot:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    needs: build
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: integration-3.4
+            suite: integration
+            baseline: ''
+          - name: e2e-3.4-shard-1
+            suite: e2e
+            baseline: ''
+          - name: upgrade-0.1.0
+            suite: upgrade
+            baseline: '0.1.0'
+          - name: upgrade-0.5.0
+            suite: upgrade
+            baseline: '0.5.0'
+    env:
+      PILOT_SUITE: ${{ matrix.suite }}
+      BASELINE_CHART_VERSION: ${{ matrix.baseline }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: pilot-controller-image
+          path: pilot-image/
+      - name: Run the existing test suite and measure the runner
+        shell: bash
+        run: bash .github/scripts/run-runner-pilot.sh
+      - name: Retain pilot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: runner-pilot-${{ matrix.name }}
+          path: |
+            .pilot/
+            debug-logs/
+            report-integration.xml
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error

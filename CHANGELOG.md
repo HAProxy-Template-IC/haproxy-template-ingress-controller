@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Update `golang.org/x/net` to v0.60.0 to fix five HTTP/2 vulnerabilities.
+
 ## [0.5.0] - 2026-10-08
 
 HAPTIC 0.5 can restore HAProxy capacity during a controller restart or leader
