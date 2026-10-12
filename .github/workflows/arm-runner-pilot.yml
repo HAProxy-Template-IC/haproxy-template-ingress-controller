@@ -1,0 +1,49 @@
+name: Native ARM free runner pilot
+
+on:
+  push:
+    branches:
+      - ci/github-arm-pilot-20261012
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arm-runner-pilot-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e-arm64-3.4-shard-1
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: '3.4'
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      HAPTIC_E2E_EXTRA_SET: controller.resources.limits.cpu=2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Install pinned native tools
+        run: bash .github/scripts/install-arm-pilot-tools.sh
+      - name: Build and test on ARM
+        run: bash .github/scripts/run-arm-pilot.sh
+      - name: Retain pilot evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: runner-pilot-e2e-arm64-3.4-shard-1
+          path: |
+            .pilot/
+            debug-logs/
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: warn
