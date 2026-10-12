@@ -15,6 +15,15 @@ from scripts.ci.verification import completed_train_pipeline, context, profile, 
 SHA = "a" * 40
 
 
+class CoverageScopeTests(unittest.TestCase):
+    def test_native_coverage_targets_include_the_ci_package_scope(self):
+        assignment = re.search(r"^COVERAGE_PACKAGES := (.+)$", Path("Makefile").read_text(), re.MULTILINE)
+        self.assertIsNotNone(assignment)
+        native = set(assignment.group(1).split(","))
+        ci = set(load()["variables"]["COVERAGE_PACKAGES"].split(","))
+        self.assertEqual(native, ci)
+
+
 class ResultTests(unittest.TestCase):
     def setUp(self):
         self.jobs = [{"id": 1, "name": "test", "status": "success", "allow_failure": False,
