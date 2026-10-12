@@ -36,11 +36,12 @@ kind: Deployment
 metadata:
   name: haptic-controller
   namespace: test
-  labels:
-    app.kubernetes.io/component: controller
 spec:
   replicas: %d
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: controller
     spec:
       containers:
         - name: controller
@@ -72,14 +73,15 @@ data:
 }
 
 func TestStageControllerStartupRejectsAmbiguousOrInvalidInput(t *testing.T) {
-	controller := `{"kind":"Deployment","metadata":{"name":"controller","labels":{"app.kubernetes.io/component":"controller"}},"spec":{"replicas":2}}`
+	controller := `{"kind":"Deployment","metadata":{"name":"controller"},"spec":{"replicas":2,"template":{"metadata":{"labels":{"app.kubernetes.io/component":"controller"}}}}}`
 	for name, manifest := range map[string]string{
-		"empty":                "",
-		"invalid YAML":         "kind: [",
-		"no controller":        "kind: Secret",
-		"duplicate controller": controller + "\n---\n" + controller,
-		"zero replicas":        `{"kind":"Deployment","metadata":{"name":"controller","labels":{"app.kubernetes.io/component":"controller"}},"spec":{"replicas":0}}`,
-		"invalid replicas":     `{"kind":"Deployment","metadata":{"name":"controller","labels":{"app.kubernetes.io/component":"controller"}},"spec":{"replicas":"two"}}`,
+		"deployment label alone": `{"kind":"Deployment","metadata":{"name":"controller","labels":{"app.kubernetes.io/component":"controller"}},"spec":{"replicas":2}}`,
+		"empty":                  "",
+		"invalid YAML":           "kind: [",
+		"no controller":          "kind: Secret",
+		"duplicate controller":   controller + "\n---\n" + controller,
+		"zero replicas":          `{"kind":"Deployment","metadata":{"name":"controller"},"spec":{"replicas":0,"template":{"metadata":{"labels":{"app.kubernetes.io/component":"controller"}}}}}`,
+		"invalid replicas":       `{"kind":"Deployment","metadata":{"name":"controller"},"spec":{"replicas":"two","template":{"metadata":{"labels":{"app.kubernetes.io/component":"controller"}}}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			output, _, err := StageControllerStartup([]byte(manifest))
