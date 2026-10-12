@@ -22,6 +22,7 @@ test "$(kind get clusters | wc -l)" -eq 0
 chart_version="0.0.0-github.g${PILOT_SOURCE_SHA:0:8}"
 sed -i "s|^version:.*|version: ${chart_version}|" charts/haptic/Chart.yaml
 yq -i '.cache.varnish.image = strenv(PILOT_VARNISH_IMAGE)' charts/haptic/values.yaml
+yq -i '.controller.extraEnv += [{"name": "GOMAXPROCS", "value": "2"}, {"name": "GOGC", "value": strenv(PILOT_GOGC)}]' scripts/dev-env-assets/e2e-values.yaml
 make docker-build-test 2>&1 | tee .pilot/build.log
 docker image inspect haptic:test > .pilot/controller-image.json
 python3 .github/scripts/profile-startup.py > .pilot/startup-profile.log 2>&1 &

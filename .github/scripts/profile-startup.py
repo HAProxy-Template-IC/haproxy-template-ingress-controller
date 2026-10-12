@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import subprocess
 import time
+from urllib.error import HTTPError, URLError
+from urllib.request import urlopen
 
 
 ROOT = Path('.pilot/startup')
@@ -12,33 +14,43 @@ NODE = ['docker', 'exec', 'haptic-e2e-control-plane']
 KUBECTL = NODE + ['kubectl', '--kubeconfig=/etc/kubernetes/admin.conf', '-n', 'haptic']
 
 
-def capture(pod):
+def capture(pod, index):
     name = pod['metadata']['name']
     target = ROOT / name
     target.mkdir(exist_ok=True)
     (target / 'pod.json').write_text(json.dumps(pod, indent=2))
     with (target / 'controller.log').open('w') as log:
         stream = subprocess.Popen(KUBECTL + ['logs', '-f', name, '-c', 'controller'], stdout=log, stderr=subprocess.STDOUT)
-        try:
-            prefix = f'/api/v1/namespaces/haptic/pods/{name}:8080/proxy/debug/pprof/'
-            with (target / 'capture-errors.log').open('w') as errors:
+        forward_port = 18080 + index
+        node = json.loads(subprocess.check_output(['docker', 'inspect', 'haptic-e2e-control-plane']))[0]
+        node_ip = node['NetworkSettings']['Networks']['kind']['IPAddress']
+        with (target / 'capture-errors.log').open('w') as errors:
+            forward = subprocess.Popen(KUBECTL + ['port-forward', '--address=0.0.0.0', f'pod/{name}', f'{forward_port}:8080'], stdout=errors, stderr=subprocess.STDOUT)
+            try:
+                prefix = f'http://{node_ip}:{forward_port}/debug/pprof/'
                 deadline = time.monotonic() + 60
                 while time.monotonic() < deadline:
-                    probe = subprocess.run(KUBECTL + ['--request-timeout=5s', 'get', '--raw', prefix + 'heap'], stdout=subprocess.DEVNULL, stderr=errors, timeout=10, check=False)
-                    if probe.returncode == 0:
+                    try:
+                        with urlopen(prefix + 'heap', timeout=5) as response:
+                            response.read()
                         break
-                    time.sleep(2)
+                    except (HTTPError, URLError, TimeoutError) as error:
+                        errors.write(str(error) + '\n')
+                        errors.flush()
+                        time.sleep(2)
                 else:
-                    raise RuntimeError(f'{name}: profiling endpoint did not become available')
-                for index in range(3):
-                    with (target / f'containers-{index}.json').open('wb') as output:
+                    raise RuntimeError(f'{name}: profiling port-forward did not become available')
+                for sample in range(3):
+                    with (target / f'containers-{sample}.json').open('wb') as output:
                         subprocess.run(NODE + ['crictl', 'stats', '-o', 'json'], stdout=output, stderr=errors, timeout=15, check=False)
-                    for endpoint, filename in [('profile?seconds=35', f'cpu-{index}.prof'), ('heap', f'heap-{index}.prof')]:
-                        with (target / filename).open('wb') as output:
-                            subprocess.run(KUBECTL + ['--request-timeout=45s', 'get', '--raw', prefix + endpoint], stdout=output, stderr=errors, timeout=50, check=True)
-        finally:
-            stream.terminate()
-            stream.wait(timeout=10)
+                    for endpoint, filename in [('profile?seconds=35', f'cpu-{sample}.prof'), ('heap', f'heap-{sample}.prof')]:
+                        with urlopen(prefix + endpoint, timeout=45) as response:
+                            (target / filename).write_bytes(response.read())
+            finally:
+                forward.terminate()
+                forward.wait(timeout=10)
+                stream.terminate()
+                stream.wait(timeout=10)
 
 
 seen = set()
@@ -54,7 +66,7 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 running = any(status['name'] == 'controller' and 'running' in status.get('state', {}) for status in statuses)
                 if name not in seen and running and pod['status'].get('podIP'):
                     seen.add(name)
-                    pending.append(executor.submit(capture, pod))
+                    pending.append(executor.submit(capture, pod, len(seen) - 1))
         time.sleep(3)
     for future in pending:
         future.result()
