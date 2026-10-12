@@ -57,6 +57,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: build
     timeout-minutes: 60
+    if: ${{ !contains(github.event.head_commit.message, '[e2e-only]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -97,6 +98,39 @@ jobs:
             .pilot/
             debug-logs/
             report-integration.xml
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
+
+  e2e:
+    name: e2e-3.4-shard-1
+    runs-on: ubuntu-24.04
+    needs: build
+    timeout-minutes: 60
+    if: ${{ contains(github.event.head_commit.message, '[e2e-only]') }}
+    env:
+      PILOT_SUITE: e2e
+      BASELINE_CHART_VERSION: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: pilot-controller-image
+          path: pilot-image/
+      - name: Run the E2E shard and measure the runner
+        shell: bash
+        run: bash .github/scripts/run-runner-pilot.sh
+      - name: Retain pilot evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: runner-pilot-e2e-3.4-shard-1
+          path: |
+            .pilot/
+            debug-logs/
           include-hidden-files: true
           retention-days: 1
           if-no-files-found: error

@@ -66,7 +66,7 @@ docker run --name haptic-pilot --network host \
                 TEST_RUN_PATTERN=$(python3 scripts/shard-go-tests.py --weights tests/e2e/shard-weights.json 1 3 < debug-logs/e2e-test-inventory.txt)
                 export TEST_RUN_PATTERN
                 printf "%s\n" "$TEST_RUN_PATTERN" | tee .pilot/e2e-selection.txt
-                KEEP_CLUSTER=true make test-e2e
+                KEEP_CLUSTER=true HAPTIC_E2E_EXTRA_SET=controller.resources.limits.cpu=2 make test-e2e
                 ;;
             upgrade)
                 env -u KEEP_CLUSTER make test-chart-upgrade
@@ -92,6 +92,12 @@ if [[ "$PILOT_SUITE" == e2e ]]; then
         logs --namespace haptic --selector app.kubernetes.io/instance=haptic \
         --all-containers=true --prefix --tail=500 --max-log-requests=20 \
         > .pilot/pod-logs.txt 2>&1 || true
+    docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf \
+        logs --namespace haptic --selector app.kubernetes.io/component=controller \
+        --container controller --previous --prefix --tail=2000 --max-log-requests=20 \
+        > .pilot/previous-controller-logs.txt 2>&1 || true
+    docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf \
+        top pods --all-namespaces --containers > .pilot/pod-resources.txt 2>&1 || true
 fi
 if [[ "$result" == 0 && "$PILOT_SUITE" == build ]]; then
     mkdir -p pilot-image
