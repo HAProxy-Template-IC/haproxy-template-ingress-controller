@@ -43,7 +43,7 @@ jobs:
       HAPTIC_E2E_PROFILE: ${{ matrix.profile || '' }}
       HAPTIC_E2E_GWAPI_CHANNEL: ${{ matrix.channel || 'standard' }}
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
-      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=1500m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=750m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
       SHARD_COUNT: '4'
       E2E_SHARD_TOTAL: '3'

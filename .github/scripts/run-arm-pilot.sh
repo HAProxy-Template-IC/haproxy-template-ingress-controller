@@ -67,6 +67,9 @@ printf '{"exit_code":%s,"test_seconds":%s}\n' "$result" "$elapsed" > .pilot/resu
 touch .pilot/test-finished
 if [[ -n "${scale_profile_pid:-}" ]]; then wait "$scale_profile_pid" || true; fi
 if [[ -n "${profile_pid:-}" ]]; then wait "$profile_pid" || true; fi
+for resource in nodes pods events; do
+    docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf get "$resource" --all-namespaces -o json > ".pilot/$resource.json" 2>&1 || true
+done
 docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf describe pods --all-namespaces > .pilot/pod-details.txt 2>&1 || true
 docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf logs --namespace haptic --selector job-name=haptic-haptic-pre-rollout --all-containers --prefix --tail=-1 --max-log-requests=20 > .pilot/preflight-logs.txt 2>&1 || true
 docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf logs --namespace haptic --selector app.kubernetes.io/component=loadbalancer --container spoa-hub --prefix --tail=-1 --max-log-requests=20 > .pilot/spoa-hub-logs.txt 2>&1 || true
