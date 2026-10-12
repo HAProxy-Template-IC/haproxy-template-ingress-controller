@@ -125,3 +125,7 @@ HAPTIC_E2E_PROFILE=api-gateway HAPTIC_E2E_GWAPI_CHANNEL=experimental make test-e
 
 See [scheduled verification](../../docs/agents/ci.md#scheduled-verification) for
 the focused nightly and complete weekly schedules.
+
+### Constrained runner startup
+
+`HAPTIC_E2E_CONTROLLER_STARTUP=staged` installs the requested Helm values with one controller replica, then restores the rendered replica count through Kubernetes scaling. All hooks run and every replica completes its full startup validation before tests begin, within the existing five-minute installation deadline. Helm's stored Deployment manifest records the initial replica count; this option is for ephemeral E2E clusters, not upgrade testing.

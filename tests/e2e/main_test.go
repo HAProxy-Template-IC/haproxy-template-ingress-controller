@@ -119,6 +119,7 @@ func initializeE2ERuntime() error {
 }
 
 func TestMain(m *testing.M) {
+	runStagedPostRenderer()
 	flag.Parse()
 	if flag.Lookup("test.list").Value.String() != "" {
 		os.Exit(m.Run())
@@ -908,11 +909,8 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 			"--set-string", fmt.Sprintf("controller.extraEnv[0].value=%d", goMemLimit),
 		)
 	}
-	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return ctx, fmt.Errorf("helm upgrade --install: %w", err)
+	if err := installControllerRelease(ctx, args); err != nil {
+		return ctx, err
 	}
 	return ctx, nil
 }
