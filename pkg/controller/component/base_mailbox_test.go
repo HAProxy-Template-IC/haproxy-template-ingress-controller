@@ -284,6 +284,8 @@ func TestBase_MailboxDoesNotReplayAcrossRestarts(t *testing.T) {
 }
 
 func TestBase_MailboxStartWaitsForIntake(t *testing.T) {
+	// Hang detector, not a latency bound: a -race CI runner can park a woken goroutine past 1s.
+	const scheduled = 10 * time.Second
 	bus := busevents.NewEventBus(4)
 	h := &blockingRecorder{
 		gate:    make(chan struct{}),
@@ -308,12 +310,12 @@ func TestBase_MailboxStartWaitsForIntake(t *testing.T) {
 	require.Equal(t, 1, bus.Publish(events.NewReconciliationTriggeredEvent("warmup", true)))
 	select {
 	case <-h.started:
-	case <-time.After(time.Second):
+	case <-time.After(scheduled):
 		t.Fatal("mailbox worker did not start")
 	}
 	h.gate <- struct{}{}
 	require.Eventually(t, func() bool { return len(h.snapshot()) == 1 },
-		time.Second, time.Millisecond, "mailbox worker did not finish its warmup event")
+		scheduled, time.Millisecond, "mailbox worker did not finish its warmup event")
 
 	base.mbMu.Lock()
 	locked := true
@@ -326,7 +328,7 @@ func TestBase_MailboxStartWaitsForIntake(t *testing.T) {
 
 	require.Equal(t, 1, bus.Publish(events.NewReconciliationTriggeredEvent("blocked-intake", true)))
 	require.Eventually(t, func() bool { return len(base.eventChan) == 0 },
-		time.Second, time.Millisecond, "mailbox intake did not receive the event")
+		scheduled, time.Millisecond, "mailbox intake did not receive the event")
 
 	cancel()
 	select {
@@ -339,7 +341,7 @@ func TestBase_MailboxStartWaitsForIntake(t *testing.T) {
 	locked = false
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(scheduled):
 		t.Fatal("Base.Start did not return after its mailbox intake goroutine exited")
 	}
 }

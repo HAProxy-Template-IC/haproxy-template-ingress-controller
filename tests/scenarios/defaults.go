@@ -60,7 +60,7 @@ func (s *Session) HelmDefaults(ctx context.Context, options *DefaultsOptions) er
 }
 
 func (s *Session) installDefaultsCertManager(ctx context.Context, options *DefaultsOptions) error {
-	if _, err := s.KubeUnscoped(ctx, nil, "apply", "-f", "https://github.com/cert-manager/cert-manager/releases/download/"+options.CertManagerVersion+"/cert-manager.yaml"); err != nil {
+	if err := s.applyRemoteManifest(ctx, "https://github.com/cert-manager/cert-manager/releases/download/"+options.CertManagerVersion+"/cert-manager.yaml"); err != nil {
 		return err
 	}
 	for _, name := range []string{certManagerNamespace, certManagerCAInjector, certManagerWebhook} {

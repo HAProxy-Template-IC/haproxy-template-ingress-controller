@@ -70,7 +70,7 @@ func (u *upgrade) baselineInstall(ctx context.Context) error {
 	if err := s.LoadControllerImage(ctx); err != nil {
 		return err
 	}
-	if _, err := s.KubeUnscoped(ctx, nil, "apply", "-f", "https://github.com/cert-manager/cert-manager/releases/download/"+u.certManager+"/cert-manager.yaml"); err != nil {
+	if err := s.applyRemoteManifest(ctx, "https://github.com/cert-manager/cert-manager/releases/download/"+u.certManager+"/cert-manager.yaml"); err != nil {
 		return err
 	}
 	for _, deployment := range []string{certManagerNamespace, certManagerWebhook, certManagerCAInjector} {
