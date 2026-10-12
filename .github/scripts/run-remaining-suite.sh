@@ -11,6 +11,16 @@ case "$PILOT_SUITE" in
     agent) make test-agent-docker; exit ;;
     lint) make lint audit; exit ;;
     unit) make test; exit ;;
+    unit-renderer) GOFLAGS=-p=1 PKG=./pkg/controller/renderer TEST_RUN_PATTERN=TestGatewayFeaturePublicationsScaleByChangedGateway make test-unit; exit ;;
+    integration-diagnosis)
+        set +e
+        KEEP_CLUSTER=true TEST_RUN_PATTERN=TestSyncBackends make test-integration
+        result=$?
+        set -e
+        docker exec haproxy-test-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -A -o json > .pilot/integration-pods.json
+        python3 .github/scripts/collect-integration-startup.py
+        exit "$result"
+        ;;
     chart) make lint-chart-ci chart-schema-check validate-helm-libraries; exit ;;
     vector) make test-vector-spans test-vector-metrics; exit ;;
 esac
