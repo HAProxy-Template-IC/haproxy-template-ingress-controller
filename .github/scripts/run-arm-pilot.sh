@@ -69,7 +69,8 @@ if [[ -n "${scale_profile_pid:-}" ]]; then wait "$scale_profile_pid" || true; fi
 if [[ -n "${profile_pid:-}" ]]; then wait "$profile_pid" || true; fi
 docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf describe pods --all-namespaces > .pilot/pod-details.txt 2>&1 || true
 docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf logs --namespace haptic --selector job-name=haptic-haptic-pre-rollout --all-containers --prefix --tail=-1 --max-log-requests=20 > .pilot/preflight-logs.txt 2>&1 || true
-docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf logs --namespace haptic --selector app.kubernetes.io/component=spoa-hub --all-containers --prefix --tail=-1 --max-log-requests=20 > .pilot/spoa-hub-logs.txt 2>&1 || true
+docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf logs --namespace haptic --selector app.kubernetes.io/component=loadbalancer --container spoa-hub --prefix --tail=-1 --max-log-requests=20 > .pilot/spoa-hub-logs.txt 2>&1 || true
+docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf logs --namespace haptic --selector app.kubernetes.io/component=controller --container validators --prefix --tail=-1 --max-log-requests=20 > .pilot/validator-logs.txt 2>&1 || true
 for previous in current previous; do
     flags=()
     if [[ "$previous" == previous ]]; then flags+=(--previous); fi

@@ -1,43 +1,36 @@
-name: GitHub simultaneous startup CPU diagnosis
+name: GitHub simultaneous startup scheduling diagnosis
 'on':
   push:
     branches:
-    - ci/github-startup-cpu-20261012
+    - ci/github-startup-scheduling-20261012
 permissions:
   contents: read
 concurrency:
-  group: startup-cpu-${{ github.ref }}
+  group: startup-scheduling-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verification:
-    name: startup-cpu-${{ matrix.name }}
+    name: startup-scheduling-${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 60
       matrix:
         include:
-        - name: rate-limit-profile
+        - name: rate-limit-gc300
+          runner: ubuntu-24.04-arm
+          profile: rate-limit
+          channel: standard
+          gogc: '300'
+          gomaxprocs: '2'
+          capture: '0'
+        - name: rate-limit-gcoff
           runner: ubuntu-24.04-arm
           profile: rate-limit
           channel: standard
           gogc: 'off'
           gomaxprocs: '2'
-          capture: '1'
-        - name: rate-limit-cpu1-gc300
-          runner: ubuntu-24.04-arm
-          profile: rate-limit
-          channel: standard
-          gogc: '300'
-          gomaxprocs: '1'
-          capture: '0'
-        - name: rate-limit-cpu1-gcoff
-          runner: ubuntu-24.04-arm
-          profile: rate-limit
-          channel: standard
-          gogc: 'off'
-          gomaxprocs: '1'
           capture: '0'
     env:
       PILOT_GOGC: ${{ matrix.gogc }}
@@ -50,7 +43,7 @@ jobs:
       HAPTIC_E2E_PROFILE: ${{ matrix.profile || '' }}
       HAPTIC_E2E_GWAPI_CHANNEL: ${{ matrix.channel || 'standard' }}
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
-      HAPTIC_E2E_EXTRA_SET: controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=1500m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
       SHARD_COUNT: '4'
       E2E_SHARD_TOTAL: '3'
@@ -77,7 +70,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
-        name: runner-pilot-startup-cpu-${{ matrix.name }}
+        name: runner-pilot-startup-scheduling-${{ matrix.name }}
         path: '.pilot/
 
           debug-logs/'
