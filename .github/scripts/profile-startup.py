@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import concurrent.futures
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -40,9 +41,12 @@ def capture(pod, index):
                         time.sleep(2)
                 else:
                     raise RuntimeError(f'{name}: profiling port-forward did not become available')
-                for sample in range(3):
+                for sample in range(4):
                     with (target / f'containers-{sample}.json').open('wb') as output:
                         subprocess.run(NODE + ['crictl', 'stats', '-o', 'json'], stdout=output, stderr=errors, timeout=15, check=False)
+                    if os.environ.get('PILOT_CAPTURE_PROFILES', '1') == '0':
+                        time.sleep(35)
+                        continue
                     for endpoint, filename in [('profile?seconds=35', f'cpu-{sample}.prof'), ('heap', f'heap-{sample}.prof')]:
                         with urlopen(prefix + endpoint, timeout=45) as response:
                             (target / filename).write_bytes(response.read())
