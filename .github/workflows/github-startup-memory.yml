@@ -2,7 +2,7 @@ name: GitHub simultaneous startup memory tradeoff
 'on':
   push:
     branches:
-    - ci/github-startup-memory-20261012
+    - ci/github-startup-gc-off-20261012
 permissions:
   contents: read
 concurrency:
@@ -18,21 +18,11 @@ jobs:
       max-parallel: 20
       matrix:
         include:
-        - name: rate-limit-gc1000
-          runner: ubuntu-24.04-arm
-          profile: rate-limit
-          channel: standard
-          gogc: '1000'
         - name: rate-limit-gcoff
           runner: ubuntu-24.04-arm
           profile: rate-limit
           channel: standard
           gogc: 'off'
-        - name: api-gateway-gc1000
-          runner: ubuntu-24.04-arm
-          profile: api-gateway
-          channel: experimental
-          gogc: '1000'
         - name: api-gateway-gcoff
           runner: ubuntu-24.04-arm
           profile: api-gateway

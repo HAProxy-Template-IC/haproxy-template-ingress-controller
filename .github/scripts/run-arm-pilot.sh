@@ -28,7 +28,7 @@ values_file=scripts/dev-env-assets/e2e-values.yaml
 if [[ "${HAPTIC_E2E_PROFILE:-}" == conformance ]]; then
     values_file=scripts/dev-env-assets/conformance-values.yaml
 fi
-yq -i '.controller.extraEnv += [{"name": "GOMAXPROCS", "value": strenv(PILOT_GOMAXPROCS)}, {"name": "GOGC", "value": strenv(PILOT_GOGC)}]' "$values_file"
+yq -i '.controller.extraEnv += [{"name": "GOMAXPROCS", "value": strenv(PILOT_GOMAXPROCS)}, {"name": "GOGC", "value": strenv(PILOT_GOGC)}] | (.controller.extraEnv[] | select(.name == "GOMAXPROCS" or .name == "GOGC") | .value) style="double"' "$values_file"
 if [[ "${HAPTIC_E2E_PROFILE:-}" == cache ]]; then
     export PILOT_VARNISH_IMAGE=haptic-varnish:pilot
     make docker-build-varnish VARNISH_IMAGE="$PILOT_VARNISH_IMAGE" VARNISH_PLATFORMS=linux/arm64
@@ -68,6 +68,7 @@ touch .pilot/test-finished
 if [[ -n "${scale_profile_pid:-}" ]]; then wait "$scale_profile_pid" || true; fi
 if [[ -n "${profile_pid:-}" ]]; then wait "$profile_pid" || true; fi
 docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf describe pods --all-namespaces > .pilot/pod-details.txt 2>&1 || true
+docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf logs --namespace haptic --selector job-name=haptic-haptic-pre-rollout --all-containers --prefix --tail=-1 --max-log-requests=20 > .pilot/preflight-logs.txt 2>&1 || true
 for previous in current previous; do
     flags=()
     if [[ "$previous" == previous ]]; then flags+=(--previous); fi
