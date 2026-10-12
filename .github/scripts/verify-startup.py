@@ -24,8 +24,15 @@ def verify(log, pods):
                                 "skipped": int(skipped), "duration": duration})
     for pod in controllers:
         name = pod["metadata"]["name"]
+        process_start = re.search(
+            rf'^\[pod/{re.escape(name)}/controller\].*level=INFO msg="HAProxy Template Ingress Controller starting"',
+            log, re.MULTILINE)
+        first_completion = re.search(rf'^\[pod/{re.escape(name)}/controller\].*msg="Test run completed"',
+                                     log, re.MULTILINE)
+        if process_start is None or first_completion is None or process_start.start() > first_completion.start():
+            raise ValueError(f"{name}: initial process logs are missing or truncated")
         result = first.get(name)
-        if result is None or result["total"] <= 0 or result["passed"] != result["total"] or result["failed"]:
+        if result is None or result["total"] <= 0 or result["passed"] != result["total"] or result["failed"] or result["skipped"]:
             raise ValueError(f"{name}: first startup validation was incomplete or failed: {result}")
         statuses = [s for s in pod["status"].get("containerStatuses", []) if s["name"] == "controller"]
         if len(statuses) != 1 or not statuses[0].get("ready") or statuses[0].get("restartCount") != 0:

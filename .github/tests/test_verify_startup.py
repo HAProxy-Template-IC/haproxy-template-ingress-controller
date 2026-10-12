@@ -14,7 +14,8 @@ def pod(name, ready=True, restarts=0):
 
 
 def result(name, passed=1116):
-    return (f'[pod/{name}/controller] time=2026-10-12T21:00:00Z level=DEBUG msg="Test run completed" '
+    return (f'[pod/{name}/controller] time=2026-10-12T21:00:00Z level=INFO msg="HAProxy Template Ingress Controller starting"\n'
+            f'[pod/{name}/controller] time=2026-10-12T21:00:00Z level=DEBUG msg="Test run completed" '
             f'component=test-runner total=1116 passed={passed} failed=0 skipped=0 duration=1m30s\n')
 
 
@@ -25,6 +26,11 @@ class StartupVerificationTests(unittest.TestCase):
     def test_later_success_cannot_hide_incomplete_first_attempt(self):
         with self.assertRaises(ValueError):
             VERIFY.verify(result("a", 1098) + result("a") + result("b"), {"items": [pod("a"), pod("b")]})
+
+    def test_truncated_startup_logs_cannot_prove_first_attempt(self):
+        log = result("a").split("\n", 1)[1] + result("b")
+        with self.assertRaisesRegex(ValueError, "missing or truncated"):
+            VERIFY.verify(log, {"items": [pod("a"), pod("b")]})
 
     def test_both_replicas_need_execution_and_readiness_without_restarts(self):
         for pods, logs in [([pod("a")], result("a")),

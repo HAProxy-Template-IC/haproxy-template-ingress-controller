@@ -52,7 +52,7 @@ elif [[ -n "${TEST_RUN_PATTERN:-}" ]]; then
     printf '%s\n' "$TEST_RUN_PATTERN" > .pilot/e2e-selection.txt
 else
     go test -mod=readonly -tags=e2e -list '^Test' ./tests/e2e/... > debug-logs/e2e-test-inventory.txt
-    TEST_RUN_PATTERN=$(python3 scripts/shard-go-tests.py --weights tests/e2e/shard-weights.json "${E2E_SHARD_INDEX:-1}" "${E2E_SHARD_TOTAL:-3}" < debug-logs/e2e-test-inventory.txt)
+    TEST_RUN_PATTERN=$(python3 scripts/shard-go-tests.py --weights "${E2E_SHARD_WEIGHTS:-tests/e2e/shard-weights.json}" "${E2E_SHARD_INDEX:-1}" "${E2E_SHARD_TOTAL:-3}" < debug-logs/e2e-test-inventory.txt)
     export TEST_RUN_PATTERN
     printf '%s\n' "$TEST_RUN_PATTERN" > .pilot/e2e-selection.txt
 fi
@@ -60,14 +60,19 @@ if [[ "${PILOT_PROFILE_SCALE:-0}" == 1 ]]; then
     python3 .github/scripts/profile-scale.py > .pilot/scale-profile.log 2>&1 &
     scale_profile_pid=$!
 fi
+python3 .github/scripts/capture-startup.py > .pilot/startup-capture.log 2>&1 &
+startup_pid=$!
 started=$(date +%s)
 set +e
 KEEP_CLUSTER=true SKIP_DOCKER_BUILD=1 make "$test_target" 2>&1 | tee .pilot/test.log
 result=${PIPESTATUS[0]}
 set -e
 elapsed=$(( $(date +%s) - started ))
-printf '{"exit_code":%s,"test_seconds":%s}\n' "$result" "$elapsed" > .pilot/result.json
 touch .pilot/test-finished
+startup_result=0
+wait "$startup_pid" || startup_result=$?
+if [[ "$result" == 0 && "$startup_result" != 0 ]]; then result=$startup_result; fi
+printf '{"exit_code":%s,"test_seconds":%s,"startup_exit_code":%s}\n' "$result" "$elapsed" "$startup_result" > .pilot/result.json
 if [[ -n "${scale_profile_pid:-}" ]]; then wait "$scale_profile_pid" || true; fi
 if [[ -n "${profile_pid:-}" ]]; then wait "$profile_pid" || true; fi
 for resource in nodes pods events; do
@@ -87,7 +92,4 @@ for previous in current previous; do
 done
 sudo chown -R "$(id -u):$(id -g)" .pilot debug-logs
 printf 'Native ARM E2E exit: **%s**; duration: **%s seconds**\n' "$result" "$elapsed" >> "$GITHUB_STEP_SUMMARY"
-if [[ "${PILOT_STARTUP_ONLY:-0}" == 1 ]]; then
-    python3 .github/scripts/verify-startup.py
-fi
 exit "$result"
