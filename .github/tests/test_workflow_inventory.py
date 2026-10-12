@@ -47,7 +47,7 @@ class WorkflowInventoryTests(unittest.TestCase):
         self.assertLessEqual(len(initial), 60)
         initial_names = {row["name"] for row in initial}
         for name in self.manifest["required_jobs"]:
-            if name.startswith(("e2e-", "gateway-", "ingress-", "helm-", "unit-")) or name == "snapshot":
+            if name.startswith(("e2e-", "gateway-", "ingress-", "helm-", "unit-", "gitops-")) or name == "snapshot":
                 self.assertIn(name, initial_names)
         self.assertEqual(jobs["verification-short"]["needs"], "coverage-seed")
         self.assertEqual(jobs["verification-short"]["if"], "${{ !cancelled() }}")

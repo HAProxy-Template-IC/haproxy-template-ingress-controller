@@ -438,6 +438,58 @@ jobs:
           baseline: ''
           certificates: ''
           provider: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-flux-cert-manager
+          suite: gitops
+          provider: flux
+          certificates: cert-manager
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-argo-external
+          suite: gitops
+          provider: argo
+          certificates: external
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-flux-external
+          suite: gitops
+          provider: flux
+          certificates: external
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-argo-cert-manager
+          suite: gitops
+          provider: argo
+          certificates: cert-manager
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
     env: &id003
       PILOT_GOGC: '300'
       PILOT_GOMAXPROCS: '2'
@@ -650,45 +702,6 @@ jobs:
         include:
         - runner: ubuntu-24.04
           kind: x64
-          name: gitops-flux-cert-manager
-          suite: gitops
-          provider: flux
-          certificates: cert-manager
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: gitops-argo-external
-          suite: gitops
-          provider: argo
-          certificates: external
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: gitops-flux-external
-          suite: gitops
-          provider: flux
-          certificates: external
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-        - runner: ubuntu-24.04
-          kind: x64
           name: upgrade-0.3.0-current
           suite: upgrade
           baseline: 0.3.0
@@ -699,6 +712,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.5.0-minimum
@@ -711,6 +726,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.4.1-current
@@ -723,6 +740,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.1-minimum
@@ -735,6 +754,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.4.0-minimum
@@ -747,6 +768,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.4.0-current
@@ -759,6 +782,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.0-current
@@ -771,6 +796,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.2-current
@@ -783,6 +810,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.3.0-minimum
@@ -795,6 +824,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.0-alpha.3-current
@@ -807,6 +838,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.5.0-current
@@ -819,6 +852,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.2-minimum
@@ -831,6 +866,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.1.0-current
@@ -843,6 +880,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.0-minimum
@@ -855,19 +894,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: gitops-argo-cert-manager
-          suite: gitops
-          provider: argo
-          certificates: cert-manager
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.1.0-minimum
@@ -880,6 +908,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.0-alpha.3-minimum
@@ -892,6 +922,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.1-current
@@ -904,6 +936,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.4.1-minimum
@@ -916,6 +950,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: chart-minimum
           kind: build
           runner: ubuntu-24.04
@@ -926,6 +962,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: acceptance
@@ -936,6 +974,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: wasm
           kind: build
           runner: ubuntu-24.04
@@ -946,6 +986,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: install-without-gateway-minimum
@@ -957,6 +999,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: install-without-gateway-current
@@ -968,6 +1012,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: lint
@@ -978,6 +1024,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: defaults
@@ -988,6 +1036,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: test-support
           suite: test-support
           kind: x64
@@ -998,6 +1048,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: agent-3.4
           kind: x64
           runner: ubuntu-24.04
@@ -1010,6 +1062,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: agent-3.0
           kind: x64
           runner: ubuntu-24.04
@@ -1022,6 +1076,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - runner: ubuntu-24.04
           kind: x64
           name: vector
@@ -1032,6 +1088,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: ci-image-3.3
           kind: build
           runner: ubuntu-24.04
@@ -1044,6 +1102,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: ci-image-3.1
           kind: build
           runner: ubuntu-24.04
@@ -1056,6 +1116,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: ci-image-3.0
           kind: build
           runner: ubuntu-24.04
@@ -1068,6 +1130,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: ci-image-3.2
           kind: build
           runner: ubuntu-24.04
@@ -1080,6 +1144,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: ci-image-3.4
           kind: build
           runner: ubuntu-24.04
@@ -1092,6 +1158,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: docs-image
           kind: build
           runner: ubuntu-24.04
@@ -1102,6 +1170,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
         - name: docs
           kind: build
           runner: ubuntu-24.04
@@ -1113,6 +1183,8 @@ jobs:
           settings: ''
           shard: ''
           startup: ''
+          provider: ''
+          certificates: ''
   coverage:
     name: coverage-combined
     needs:

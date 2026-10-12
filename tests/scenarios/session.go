@@ -109,14 +109,21 @@ func poll(ctx context.Context, timeout, interval time.Duration, description stri
 
 func (s *Session) LoadControllerImage(ctx context.Context) error {
 	base := s.ImageRepository + ":" + s.ImageTag
-	if _, err := s.Run(ctx, "docker", "image", "inspect", base); err != nil {
+	return s.loadControllerImage(ctx, base)
+}
+
+func (s *Session) loadControllerImage(ctx context.Context, source string) error {
+	if _, err := s.Run(ctx, "docker", "image", "inspect", source); err != nil {
 		return err
 	}
-	versioned := base + "-haproxy" + s.HAProxyVersion
-	if _, err := s.Run(ctx, "docker", "tag", base, versioned); err != nil {
+	versioned := s.ImageRepository + ":" + s.ImageTag + "-haproxy" + s.HAProxyVersion
+	if source == versioned {
+		return s.Cluster.LoadImages(ctx, source)
+	}
+	if _, err := s.Run(ctx, "docker", "tag", source, versioned); err != nil {
 		return err
 	}
-	return s.Cluster.LoadImages(ctx, base, versioned)
+	return s.Cluster.LoadImages(ctx, source, versioned)
 }
 
 func (s *Session) ImageValues() []string {
