@@ -7,7 +7,7 @@ go version
 haproxy -v
 
 case "$PILOT_SUITE" in
-    integration) make test-integration; exit ;;
+    integration) KEEP_CLUSTER=false make test-integration; exit ;;
     agent) make test-agent-docker; exit ;;
     lint) make lint audit; exit ;;
     unit) make test; exit ;;
