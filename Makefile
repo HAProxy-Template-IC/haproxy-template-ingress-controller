@@ -374,6 +374,10 @@ test-support: ## Run script, browser, process, playground and cluster-helper tes
 test-github-verification: ## Check GitHub verification evidence fails closed
 	python3 -m unittest discover -s .github/tests -v
 
+.PHONY: compare-github-ci
+compare-github-ci: ## Compare completed GitHub workflow evidence with the GitLab baseline
+	python3 .github/scripts/compare-completed-run.py --run "$(GITHUB_RUN_JSON)" --jobs "$(GITHUB_JOBS_JSON)" --output "$(GITHUB_COMPARISON_JSON)"
+
 .PHONY: test-process
 test-process: ## Verify process supervision with real child processes, without a cluster
 	$(GO) tool gotestsum --junitfile report-process.xml --format testname -- -race -count=1 -tags=testinfra ./tests/process/...

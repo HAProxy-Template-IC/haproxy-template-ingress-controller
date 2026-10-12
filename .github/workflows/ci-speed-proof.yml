@@ -55,6 +55,7 @@ jobs:
           runner: ubuntu-24.04
           suite: helm
           haproxy: '3.4'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
         - name: e2e-hp3.1-1
           runner: ubuntu-24.04-arm
           kind: arm
@@ -157,7 +158,7 @@ jobs:
           runner: ubuntu-24.04
           suite: helm
           haproxy: '3.2'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:c4505d847baa12477b2183a7f74a08d435f55116be530a539913b6d4d65b6410
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
         - name: e2e-hp3.4-2
           runner: ubuntu-24.04-arm
           kind: arm
@@ -175,13 +176,13 @@ jobs:
           runner: ubuntu-24.04
           suite: helm
           haproxy: '3.3'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:32688acae8ee1fedf32b8dadbff4c6108a1518bc99d474aa7ad829c71e9c39c2
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
         - name: helm-3.1
           kind: build
           runner: ubuntu-24.04
           suite: helm
           haproxy: '3.1'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:8bcd1f29c537576b33ec7d09095a6b6c72ddfc4618078df4cad3125a524e37c1
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
         - runner: ubuntu-24.04
           kind: x64
           name: gitops-argo-external
@@ -310,7 +311,7 @@ jobs:
           runner: ubuntu-24.04
           suite: helm
           haproxy: '3.0'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:030d3415d1d3e94dad6c274cdb20e2612c574b24c887f0e86254a5a310220378
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
         - runner: ubuntu-24.04
           kind: x64
           name: upgrade-0.2.0-alpha.3-minimum
@@ -378,6 +379,7 @@ jobs:
           haproxy: '3.4'
           shard: rate-limit
           profile: rate-limit
+          settings: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi;spoaHub.resources.requests.cpu=200m;rateLimit.shared.managedStore.resources.requests.cpu=100m
         - runner: ubuntu-24.04
           kind: x64
           name: acceptance
@@ -463,11 +465,13 @@ jobs:
           runner: ubuntu-24.04
           suite: agent
           haproxy: '3.4'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
         - name: agent-3.0
           kind: x64
           runner: ubuntu-24.04
           suite: agent
           haproxy: '3.0'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
         - runner: ubuntu-24.04
           kind: x64
           name: vector
@@ -477,26 +481,31 @@ jobs:
           runner: ubuntu-24.04
           suite: ci-image
           haproxy: '3.3'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
         - name: ci-image-3.1
           kind: build
           runner: ubuntu-24.04
           suite: ci-image
           haproxy: '3.1'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
         - name: ci-image-3.0
           kind: build
           runner: ubuntu-24.04
           suite: ci-image
           haproxy: '3.0'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
         - name: ci-image-3.2
           kind: build
           runner: ubuntu-24.04
           suite: ci-image
           haproxy: '3.2'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
         - name: ci-image-3.4
           kind: build
           runner: ubuntu-24.04
           suite: ci-image
           haproxy: '3.4'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
         - name: spoa
           kind: build
           runner: ubuntu-24.04
@@ -509,7 +518,7 @@ jobs:
           kind: build
           runner: ubuntu-24.04
           suite: docs
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci/python-docs@sha256:d6b9d16112673a1aae153621140a3ae742c7fbbd5a2dfc14684b755490dd8aee
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci/python-docs@sha256:bd8734af3450c5c7a62260e80a8fe9b9d2aa563a4d89afc5fa19dea5c0237695
     env:
       PILOT_GOGC: '300'
       PILOT_GOMAXPROCS: '2'
@@ -523,9 +532,10 @@ jobs:
       HAPTIC_E2E_GWAPI_CHANNEL: ${{ matrix.channel || 'standard' }}
       KIND_NODE_IMAGE: ${{ matrix.node || 'kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5'
         }}
-      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=750m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      HAPTIC_E2E_EXTRA_SET: ${{ matrix.settings || 'controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi'
+        }}
       PILOT_SUITE: ${{ matrix.suite }}
-      PILOT_CI_IMAGE: ${{ matrix.image || 'registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879'
+      PILOT_CI_IMAGE: ${{ matrix.image || 'registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad'
         }}
       BASELINE_CHART_VERSION: ${{ matrix.baseline || '' }}
       GITOPS_PROVIDER: ${{ matrix.provider || '' }}
@@ -538,8 +548,8 @@ jobs:
       CONFORMANCE_PARALLEL: '4'
       SCALE_SEED_WORKERS: '4'
       E2E_SHARD_WEIGHTS: .github/e2e-shard-weights.json
-      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && format('{0}/.ci-go-cache', github.workspace) || ''
-        }}
+      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && format('{0}/.ci-go-cache',
+        github.workspace) || '' }}
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
     steps:
@@ -552,10 +562,10 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{
-          matrix.index || '0' }}-${{ github.sha }}
-        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard
-          }}-${{ matrix.index || '0' }}-
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum')
+          }}-${{ matrix.shard }}-${{ matrix.index || '0' }}-${{ github.sha }}
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod',
+          'go.sum') }}-${{ matrix.shard }}-${{ matrix.index || '0' }}-
     - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
       if: matrix.suite == 'snapshot' || matrix.suite == 'spoa'
       with:
@@ -565,7 +575,8 @@ jobs:
     - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
       with:
         go-version: 1.27.2
-        cache: false
+        cache: true
+        cache-dependency-path: go.sum
       if: matrix.runner == 'ubuntu-24.04-arm'
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
@@ -636,26 +647,31 @@ jobs:
           runner: ubuntu-24.04
           suite: integration-coverage
           haproxy: '3.0'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
         - name: integration-3.4
           kind: x64
           runner: ubuntu-24.04
           suite: integration-coverage
           haproxy: '3.4'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
         - name: integration-3.2
           kind: x64
           runner: ubuntu-24.04
           suite: integration-coverage
           haproxy: '3.2'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
         - name: integration-3.1
           kind: x64
           runner: ubuntu-24.04
           suite: integration-coverage
           haproxy: '3.1'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
         - name: integration-3.3
           kind: x64
           runner: ubuntu-24.04
           suite: integration-coverage
           haproxy: '3.3'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
         - name: coverage-renderer
           kind: x64
           runner: ubuntu-24.04
@@ -666,7 +682,8 @@ jobs:
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
       PILOT_SUITE: ${{ matrix.suite }}
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
+      PILOT_CI_IMAGE: ${{ matrix.image || 'registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad'
+        }}
       SHARD_ID: ${{ matrix.shard || '' }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -695,7 +712,7 @@ jobs:
     env:
       PILOT_SUITE: coverage-combined
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
+      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -709,8 +726,8 @@ jobs:
 
         mkdir -p .pilot/coverage-inputs
 
-        gh run download "$GITHUB_RUN_ID" --pattern ''ci-evidence-coverage-*'' --pattern ''ci-evidence-integration-*''
-        --dir .pilot/coverage-inputs
+        gh run download "$GITHUB_RUN_ID" --pattern ''ci-evidence-coverage-*'' --pattern
+        ''ci-evidence-integration-*'' --dir .pilot/coverage-inputs
 
         '
     - name: Merge the complete package coverage

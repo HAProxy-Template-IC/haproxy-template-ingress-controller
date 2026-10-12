@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "repository": "HAProxy-Template-IC/haproxy-template-ingress-controller",
   "baseline": {
     "url": "https://gitlab.com/haproxy-haptic/haptic/-/pipelines/2940207278",
     "commit": "ea30ee6fb3d4be926434db29db33590469836f45",
@@ -474,5 +475,14 @@
       "completed_at": "2026-10-12T17:09:15.675Z",
       "wall_seconds": 1869.482
     }
-  ]
+  ],
+  "comparison_context": {
+    "main_revision": "36b64fb6c93f93d4cf62aa84a0ef82da0a705b23",
+    "latest_main_train": {
+      "url": "https://gitlab.com/haproxy-haptic/haptic/-/pipelines/2940262274",
+      "commit": "883433768c9425fe20edd250e928f7eae922de88",
+      "wall_seconds": 1806.624
+    },
+    "target_selection": "Retain the faster 1760.095-second complete GitLab baseline."
+  }
 }

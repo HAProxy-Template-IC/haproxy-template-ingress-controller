@@ -14,7 +14,7 @@ git diff --exit-code "$PILOT_SOURCE_SHA"
 python3 .github/scripts/runner-metrics.py .pilot/metrics.jsonl &
 metrics_pid=$!
 trap 'kill "$metrics_pid" 2>/dev/null || true; wait "$metrics_pid" 2>/dev/null || true' EXIT
-docker pull "$PILOT_CI_IMAGE"
+bash scripts/retry.sh docker pull "$PILOT_CI_IMAGE"
 docker image inspect "$PILOT_CI_IMAGE" > .pilot/toolchain-image.json
 started=$(date +%s)
 set +e
