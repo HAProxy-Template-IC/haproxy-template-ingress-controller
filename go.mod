@@ -9,7 +9,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/go-logr/logr v1.4.4
 	github.com/golangci/golangci-lint/v2 v2.14.0
-	github.com/haproxytech/client-native/v6 v6.4.2
+	github.com/haproxytech/client-native/v6 v6.4.3
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/klauspost/compress v1.20.1
