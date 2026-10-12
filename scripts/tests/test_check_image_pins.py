@@ -24,6 +24,7 @@ class CheckImagePinsTests(unittest.TestCase):
                 '  "3.4": "3.4.4"\n'
             ),
             "scripts/dev-env-assets/haproxy-production.yaml": "image: haproxytech/haproxy-debian:3.2.23\n",
+            "charts/haptic/files/default-values.json": '{"haproxyPatchVersions":{"3.2":"3.2.23","3.4":"3.4.4"}}\n',
             ".gitlab/ci/build-pins.yml": (
                 '  HAPROXY_IMAGE_32: "haproxytech/haproxy-debian:3.2.23@sha256:' + 'a' * 64 + '"\n'
                 '  HAPROXY_IMAGE_34: "haproxytech/haproxy-debian:3.4.4@sha256:' + 'b' * 64 + '"\n'
@@ -36,7 +37,7 @@ class CheckImagePinsTests(unittest.TestCase):
     def test_compares_each_series_separately(self):
         pins = self.pins()
         self.assertEqual(set(pins), {"haproxy-debian 3.2.x", "haproxy-debian 3.4.x"})
-        self.assertEqual(len(pins["haproxy-debian 3.2.x"]["3.2.23"]), 3)
+        self.assertEqual(len(pins["haproxy-debian 3.2.x"]["3.2.23"]), 4)
         self.assertFalse(CHECKER.report_pins(pins, io.StringIO()))
 
     def test_stale_ci_patch_fails(self):
