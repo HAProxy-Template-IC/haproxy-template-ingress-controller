@@ -113,7 +113,8 @@ func TestPublicationObservationRetryAndTerminalDecode(t *testing.T) {
 			dir := t.TempDir()
 			session := &Session{Client: kubeexec.Client{Runner: runner, Kubeconfig: filepath.Join(dir, "kubeconfig"), Context: "kind-owned"}, Artifacts: dir}
 			g := &gitops{session: session}
-			timeout := time.Second
+			// Hang detector: a loaded -race coverage runner stalled one attempt for 6s.
+			timeout := 10 * time.Second
 			if operation == "persistent" {
 				timeout = 10 * time.Millisecond
 			}
@@ -147,7 +148,7 @@ func TestPublicationWaitsUntilAnObsoleteCheckpointSecretDisappears(t *testing.T)
 	}}
 	dir := t.TempDir()
 	g := &gitops{session: &Session{Client: kubeexec.Client{Runner: runner, Kubeconfig: filepath.Join(dir, "kubeconfig"), Context: "kind-owned"}, Artifacts: dir}}
-	require.NoError(t, g.waitPublication(t.Context(), "installed", time.Second, time.Millisecond))
+	require.NoError(t, g.waitPublication(t.Context(), "installed", 10*time.Second, time.Millisecond))
 	require.Equal(t, 2, observations)
 }
 
