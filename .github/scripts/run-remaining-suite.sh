@@ -10,6 +10,7 @@ case "$PILOT_SUITE" in
     integration) KEEP_CLUSTER=false make test-integration; exit ;;
     integration-coverage) KEEP_CLUSTER=false make test-integration-coverage; cp -r coverage .pilot/; exit ;;
     unit-shard)
+        started=$(date +%s)
         go list ./... > .pilot/unit-packages-all.txt
         python3 .github/scripts/select-unit-packages.py
         PKG=$(tr '\n' ' ' < .pilot/unit-packages-selected.txt)
@@ -21,7 +22,10 @@ case "$PILOT_SUITE" in
             export TEST_RUN_PATTERN
             printf '%s\n' "$TEST_RUN_PATTERN" > .pilot/unit-command-selection.txt
         fi
+        printf '{"phase":"inventory","seconds":%s}\n' "$(( $(date +%s) - started ))" > .pilot/phase-times.jsonl
+        started=$(date +%s)
         make test-unit COUNT=1
+        printf '{"phase":"tests","seconds":%s}\n' "$(( $(date +%s) - started ))" >> .pilot/phase-times.jsonl
         cp report.xml .pilot/unit-report.xml
         exit
         ;;

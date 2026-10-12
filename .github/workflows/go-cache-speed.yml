@@ -1,0 +1,19 @@
+name: GitHub cold and warm Go cache comparison
+on:
+  push:
+    branches: [ci/github-cache-speed-20261012]
+permissions:
+  contents: read
+concurrency:
+  group: go-cache-speed-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  cold:
+    uses: ./.github/workflows/unit-cache-trial.yml
+    with:
+      phase: cold
+  warm:
+    needs: cold
+    uses: ./.github/workflows/unit-cache-trial.yml
+    with:
+      phase: warm
