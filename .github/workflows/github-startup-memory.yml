@@ -1,16 +1,16 @@
-name: GitHub simultaneous startup scheduling diagnosis
+name: GitHub simultaneous startup filesystem diagnosis
 'on':
   push:
     branches:
-    - ci/github-startup-scheduling-20261012
+    - ci/github-startup-filesystem-20261012
 permissions:
   contents: read
 concurrency:
-  group: startup-scheduling-${{ github.ref }}
+  group: startup-filesystem-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verification:
-    name: startup-scheduling-${{ matrix.name }}
+    name: startup-filesystem-${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
@@ -18,25 +18,31 @@ jobs:
       max-parallel: 60
       matrix:
         include:
-        - name: rate-limit-gc300
+        - name: control
           runner: ubuntu-24.04-arm
           profile: rate-limit
           channel: standard
           gogc: '300'
           gomaxprocs: '2'
-          capture: '0'
-        - name: rate-limit-gcoff
+          tmpfs: '0'
+        - name: tmpfs
           runner: ubuntu-24.04-arm
           profile: rate-limit
           channel: standard
-          gogc: 'off'
+          gogc: '300'
           gomaxprocs: '2'
-          capture: '0'
+          tmpfs: '1'
+        - name: tmpfs-gomax3
+          runner: ubuntu-24.04-arm
+          profile: rate-limit
+          channel: standard
+          gogc: '300'
+          gomaxprocs: '3'
+          tmpfs: '1'
     env:
       PILOT_GOGC: ${{ matrix.gogc }}
       PILOT_GOMAXPROCS: ${{ matrix.gomaxprocs }}
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
-      PILOT_CAPTURE_PROFILES: ${{ matrix.capture }}
       PILOT_SOURCE_SHA: ${{ github.sha }}
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
@@ -50,6 +56,8 @@ jobs:
       PILOT_STARTUP_ONLY: '1'
       CONFORMANCE_PARALLEL: '4'
       SCALE_SEED_WORKERS: '4'
+      PILOT_STARTUP_PROFILE: '0'
+      PILOT_VALIDATION_TMPFS: ${{ matrix.tmpfs }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -70,7 +78,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
-        name: runner-pilot-startup-scheduling-${{ matrix.name }}
+        name: runner-pilot-startup-filesystem-${{ matrix.name }}
         path: '.pilot/
 
           debug-logs/'

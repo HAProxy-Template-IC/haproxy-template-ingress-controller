@@ -10,6 +10,10 @@
 
 .DEFAULT_GOAL := help
 
+.PHONY: test-github-startup
+test-github-startup:
+	python3 -m unittest discover -s .github/tests -v
+
 # Variables
 # env -u GOROOT: strips stale GOROOT set by IDEs (e.g. IntelliJ) so the asdf-managed
 # Go toolchain is used consistently across all make targets including lint and audit.

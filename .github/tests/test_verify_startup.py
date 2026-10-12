@@ -1,0 +1,39 @@
+import importlib.util
+from pathlib import Path
+import unittest
+
+
+SPEC = importlib.util.spec_from_file_location("verify_startup", Path(__file__).parents[1] / "scripts/verify-startup.py")
+VERIFY = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(VERIFY)
+
+
+def pod(name, ready=True, restarts=0):
+    return {"metadata": {"name": name, "labels": {"app.kubernetes.io/component": "controller"}},
+            "status": {"containerStatuses": [{"name": "controller", "ready": ready, "restartCount": restarts}]}}
+
+
+def result(name, passed=1116):
+    return (f'[pod/{name}/controller] time=2026-10-12T21:00:00Z level=DEBUG msg="Test run completed" '
+            f'component=test-runner total=1116 passed={passed} failed=0 skipped=0 duration=1m30s\n')
+
+
+class StartupVerificationTests(unittest.TestCase):
+    def test_complete_first_startup_passes_for_both_replicas(self):
+        self.assertEqual(len(VERIFY.verify(result("a") + result("b"), {"items": [pod("a"), pod("b")]})), 2)
+
+    def test_later_success_cannot_hide_incomplete_first_attempt(self):
+        with self.assertRaises(ValueError):
+            VERIFY.verify(result("a", 1098) + result("a") + result("b"), {"items": [pod("a"), pod("b")]})
+
+    def test_both_replicas_need_execution_and_readiness_without_restarts(self):
+        for pods, logs in [([pod("a")], result("a")),
+                           ([pod("a"), pod("b")], result("a")),
+                           ([pod("a"), pod("b", ready=False)], result("a") + result("b")),
+                           ([pod("a"), pod("b", restarts=1)], result("a") + result("b"))]:
+            with self.subTest(pods=pods, logs=logs), self.assertRaises(ValueError):
+                VERIFY.verify(logs, {"items": pods})
+
+
+if __name__ == "__main__":
+    unittest.main()

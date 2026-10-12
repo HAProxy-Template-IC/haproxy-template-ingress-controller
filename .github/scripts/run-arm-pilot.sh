@@ -29,6 +29,9 @@ if [[ "${HAPTIC_E2E_PROFILE:-}" == conformance ]]; then
     values_file=scripts/dev-env-assets/conformance-values.yaml
 fi
 yq -i '.controller.extraEnv += [{"name": "GOMAXPROCS", "value": strenv(PILOT_GOMAXPROCS)}, {"name": "GOGC", "value": strenv(PILOT_GOGC)}] | (.controller.extraEnv[] | select(.name == "GOMAXPROCS" or .name == "GOGC") | .value) style="double"' "$values_file"
+if [[ "${PILOT_VALIDATION_TMPFS:-0}" == 1 ]]; then
+    yq -i '.controller.extraEnv += [{"name": "TMPDIR", "value": "/v"}] | .controller.extraVolumes += [{"name": "validation-scratch", "emptyDir": {"medium": "Memory", "sizeLimit": "512Mi"}}] | .controller.extraVolumeMounts += [{"name": "validation-scratch", "mountPath": "/v"}]' "$values_file"
+fi
 if [[ "${HAPTIC_E2E_PROFILE:-}" == cache ]]; then
     export PILOT_VARNISH_IMAGE=haptic-varnish:pilot
     make docker-build-varnish VARNISH_IMAGE="$PILOT_VARNISH_IMAGE" VARNISH_PLATFORMS=linux/arm64
@@ -84,4 +87,7 @@ for previous in current previous; do
 done
 sudo chown -R "$(id -u):$(id -g)" .pilot debug-logs
 printf 'Native ARM E2E exit: **%s**; duration: **%s seconds**\n' "$result" "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+if [[ "${PILOT_STARTUP_ONLY:-0}" == 1 ]]; then
+    python3 .github/scripts/verify-startup.py
+fi
 exit "$result"
