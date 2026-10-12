@@ -1,8 +1,8 @@
-name: GitHub publication preflight
+name: GitHub preserved documentation preview
 'on':
   push:
     branches:
-    - ci/github-publication-preflight-20261013
+    - ci/github-docs-preserved-preview-20261013
 permissions:
   contents: read
   actions: read
@@ -22,8 +22,6 @@ jobs:
         - name: docs-preview
           suite: docs
           image: registry.gitlab.com/haproxy-haptic/haptic/ci/python-docs@sha256:d6b9d16112673a1aae153621140a3ae742c7fbbd5a2dfc14684b755490dd8aee
-        - name: snapshot-publication
-          suite: snapshot
     env:
       PILOT_SUITE: ${{ matrix.suite }}
       PILOT_SOURCE_SHA: ${{ github.sha }}
@@ -42,12 +40,6 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
-      if: matrix.suite == 'snapshot'
-      with:
-        image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-        platforms: arm64,arm
-        cache-image: false
     - name: Run the existing suite on a fresh runner
       run: bash .github/scripts/run-build-pilot.sh
     - name: Retain verification evidence
