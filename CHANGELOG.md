@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Reduce temporary template allocations during configuration validation and rendering.
+
 ## [0.5.0] - 2026-10-08
 
 HAPTIC 0.5 can restore HAProxy capacity during a controller restart or leader

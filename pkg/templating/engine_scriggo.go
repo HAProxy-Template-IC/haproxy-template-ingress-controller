@@ -271,7 +271,7 @@ func newScriggoEngine(
 	// This must stay an AdaptiveFunc to match the declaration
 	// registerScriggoCustomFunctions installs — a plain func here would shadow
 	// it and silently drop both the comparator call shape and type preservation.
-	engine.globals[FilterSortBy] = sortByAdaptive(engine.IsFilterDebugEnabled)
+	engine.globals[FilterSortBy] = native.Synchronous(sortByAdaptive(engine.IsFilterDebugEnabled))
 
 	// Store raw templates (all templates, not just entry points)
 	maps.Copy(engine.rawTemplates, templates)
