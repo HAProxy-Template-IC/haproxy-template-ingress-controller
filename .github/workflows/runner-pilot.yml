@@ -103,12 +103,27 @@ jobs:
           if-no-files-found: error
 
   e2e:
-    name: e2e-3.4-shard-1
+    name: e2e-${{ matrix.name }}
     runs-on: ubuntu-24.04
     needs: build
     timeout-minutes: 60
     if: ${{ contains(github.event.head_commit.message, '[e2e-only]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cpu2-memory1
+            memory: 1Gi
+            gomaxprocs: '2'
+          - name: cpu2-memory2
+            memory: 2Gi
+            gomaxprocs: '2'
+          - name: cpu2-go1
+            memory: 1Gi
+            gomaxprocs: '1'
     env:
+      HAPTIC_E2E_EXTRA_SET: controller.resources.limits.cpu=2,controller.resources.limits.memory=${{ matrix.memory }}
+      PILOT_GOMAXPROCS: ${{ matrix.gomaxprocs }}
       PILOT_SUITE: e2e
       BASELINE_CHART_VERSION: ''
     steps:
@@ -127,7 +142,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: runner-pilot-e2e-3.4-shard-1
+          name: runner-pilot-e2e-${{ matrix.name }}
           path: |
             .pilot/
             debug-logs/

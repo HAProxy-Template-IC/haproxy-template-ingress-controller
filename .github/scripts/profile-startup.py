@@ -14,19 +14,28 @@ KUBECTL = NODE + ['kubectl', '--kubeconfig=/etc/kubernetes/admin.conf', '-n', 'h
 
 def capture(pod):
     name = pod['metadata']['name']
-    address = pod['status']['podIP']
     target = ROOT / name
     target.mkdir(exist_ok=True)
     (target / 'pod.json').write_text(json.dumps(pod, indent=2))
     with (target / 'controller.log').open('w') as log:
         stream = subprocess.Popen(KUBECTL + ['logs', '-f', name, '-c', 'controller'], stdout=log, stderr=subprocess.STDOUT)
         try:
-            for index in range(3):
-                with (target / f'containers-{index}.json').open('wb') as output:
-                    subprocess.run(NODE + ['crictl', 'stats', '-o', 'json'], stdout=output, stderr=subprocess.DEVNULL, timeout=15, check=False)
-                for endpoint, filename in [('profile?seconds=35', f'cpu-{index}.prof'), ('heap', f'heap-{index}.prof')]:
-                    with (target / filename).open('wb') as output:
-                        subprocess.run(NODE + ['curl', '--fail', '--silent', '--show-error', '--max-time', '45', f'http://{address}:8080/debug/pprof/{endpoint}'], stdout=output, stderr=subprocess.DEVNULL, timeout=50, check=False)
+            prefix = f'/api/v1/namespaces/haptic/pods/{name}:8080/proxy/debug/pprof/'
+            with (target / 'capture-errors.log').open('w') as errors:
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    probe = subprocess.run(KUBECTL + ['--request-timeout=5s', 'get', '--raw', prefix + 'heap'], stdout=subprocess.DEVNULL, stderr=errors, timeout=10, check=False)
+                    if probe.returncode == 0:
+                        break
+                    time.sleep(2)
+                else:
+                    raise RuntimeError(f'{name}: profiling endpoint did not become available')
+                for index in range(3):
+                    with (target / f'containers-{index}.json').open('wb') as output:
+                        subprocess.run(NODE + ['crictl', 'stats', '-o', 'json'], stdout=output, stderr=errors, timeout=15, check=False)
+                    for endpoint, filename in [('profile?seconds=35', f'cpu-{index}.prof'), ('heap', f'heap-{index}.prof')]:
+                        with (target / filename).open('wb') as output:
+                            subprocess.run(KUBECTL + ['--request-timeout=45s', 'get', '--raw', prefix + endpoint], stdout=output, stderr=errors, timeout=50, check=True)
         finally:
             stream.terminate()
             stream.wait(timeout=10)

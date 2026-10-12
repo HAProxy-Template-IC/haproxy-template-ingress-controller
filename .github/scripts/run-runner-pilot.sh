@@ -36,6 +36,7 @@ docker run --name haptic-pilot --network host \
     --env PILOT_SUITE --env BASELINE_CHART_VERSION \
     --env PILOT_SOURCE_SHA --env PILOT_VARNISH_IMAGE \
     --env HAPROXY_VERSION --env KIND_NODE_IMAGE \
+    --env HAPTIC_E2E_EXTRA_SET --env PILOT_GOMAXPROCS \
     --env SKIP_DOCKER_BUILD=1 --env KEEP_CLUSTER=false \
     --entrypoint bash "$PILOT_CI_IMAGE" -euo pipefail -c '
         git config --global --add safe.directory "$PWD"
@@ -65,6 +66,9 @@ docker run --name haptic-pilot --network host \
                 make test-integration
                 ;;
             e2e)
+                if [[ -n "${PILOT_GOMAXPROCS:-}" ]]; then
+                    yq -i '\''.controller.extraEnv += [{"name": "GOMAXPROCS", "value": strenv(PILOT_GOMAXPROCS)}]'\'' scripts/dev-env-assets/e2e-values.yaml
+                fi
                 mkdir -p debug-logs
                 go test -mod=readonly -tags=e2e -list "^Test" ./tests/e2e/... > debug-logs/e2e-test-inventory.txt
                 TEST_RUN_PATTERN=$(python3 scripts/shard-go-tests.py --weights tests/e2e/shard-weights.json 1 3 < debug-logs/e2e-test-inventory.txt)
