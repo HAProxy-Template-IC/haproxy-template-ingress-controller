@@ -2,6 +2,7 @@
 set -euo pipefail
 
 mkdir -p .pilot debug-logs
+rm -f .pilot/test-finished
 git diff --exit-code "$PILOT_SOURCE_SHA"
 {
     git rev-parse HEAD
@@ -57,6 +58,7 @@ result=${PIPESTATUS[0]}
 set -e
 elapsed=$(( $(date +%s) - started ))
 printf '{"exit_code":%s,"test_seconds":%s}\n' "$result" "$elapsed" > .pilot/result.json
+touch .pilot/test-finished
 if [[ -n "${profile_pid:-}" ]]; then wait "$profile_pid" || true; fi
 docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf describe pods --all-namespaces > .pilot/pod-details.txt 2>&1 || true
 for previous in current previous; do

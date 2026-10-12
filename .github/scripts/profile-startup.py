@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
 
+FINISHED = Path('.pilot/test-finished')
 ROOT = Path('.pilot/startup')
 ROOT.mkdir(parents=True, exist_ok=True)
 NODE = ['docker', 'exec', 'haptic-e2e-control-plane']
@@ -31,6 +32,8 @@ def capture(pod, index):
                 prefix = f'http://{node_ip}:{forward_port}/debug/pprof/'
                 deadline = time.monotonic() + 60
                 while time.monotonic() < deadline:
+                    if FINISHED.exists():
+                        return
                     try:
                         with urlopen(prefix + 'heap', timeout=5) as response:
                             response.read()
@@ -42,6 +45,8 @@ def capture(pod, index):
                 else:
                     raise RuntimeError(f'{name}: profiling port-forward did not become available')
                 for sample in range(4):
+                    if FINISHED.exists():
+                        break
                     with (target / f'containers-{sample}.json').open('wb') as output:
                         subprocess.run(NODE + ['crictl', 'stats', '-o', 'json'], stdout=output, stderr=errors, timeout=15, check=False)
                     if os.environ.get('PILOT_CAPTURE_PROFILES', '1') == '0':
@@ -61,7 +66,7 @@ seen = set()
 deadline = time.monotonic() + 600
 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
     pending = []
-    while time.monotonic() < deadline and len(seen) < 2:
+    while time.monotonic() < deadline and len(seen) < 2 and not FINISHED.exists():
         result = subprocess.run(KUBECTL + ['get', 'pods', '-l', 'app.kubernetes.io/component=controller', '-o', 'json'], capture_output=True, timeout=15, check=False)
         if result.returncode == 0:
             for pod in json.loads(result.stdout)['items']:
