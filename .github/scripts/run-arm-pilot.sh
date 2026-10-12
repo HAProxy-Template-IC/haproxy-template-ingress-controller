@@ -53,6 +53,10 @@ else
     export TEST_RUN_PATTERN
     printf '%s\n' "$TEST_RUN_PATTERN" > .pilot/e2e-selection.txt
 fi
+if [[ "${PILOT_PROFILE_SCALE:-0}" == 1 ]]; then
+    python3 .github/scripts/profile-scale.py > .pilot/scale-profile.log 2>&1 &
+    scale_profile_pid=$!
+fi
 started=$(date +%s)
 set +e
 KEEP_CLUSTER=true SKIP_DOCKER_BUILD=1 make "$test_target" 2>&1 | tee .pilot/test.log
@@ -61,6 +65,7 @@ set -e
 elapsed=$(( $(date +%s) - started ))
 printf '{"exit_code":%s,"test_seconds":%s}\n' "$result" "$elapsed" > .pilot/result.json
 touch .pilot/test-finished
+if [[ -n "${scale_profile_pid:-}" ]]; then wait "$scale_profile_pid" || true; fi
 if [[ -n "${profile_pid:-}" ]]; then wait "$profile_pid" || true; fi
 docker exec haptic-e2e-control-plane kubectl --kubeconfig=/etc/kubernetes/admin.conf describe pods --all-namespaces > .pilot/pod-details.txt 2>&1 || true
 for previous in current previous; do
