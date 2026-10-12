@@ -1,8 +1,8 @@
-name: GitHub SPOA build verification
+name: GitHub CI toolchain image verification
 'on':
   push:
     branches:
-    - ci/github-spoa-verification-20261012
+    - ci/github-toolchain-verification-20261012
 permissions:
   contents: read
   actions: read
@@ -19,14 +19,29 @@ jobs:
       max-parallel: 10
       matrix:
         include:
-        - name: spoa
-          suite: spoa
+        - name: ci-image-3.0
+          suite: ci-image
+          haproxy: '3.0'
+        - name: ci-image-3.1
+          suite: ci-image
+          haproxy: '3.1'
+        - name: ci-image-3.2
+          suite: ci-image
+          haproxy: '3.2'
+        - name: ci-image-3.3
+          suite: ci-image
+          haproxy: '3.3'
+        - name: ci-image-3.4
+          suite: ci-image
+          haproxy: '3.4'
+        - name: docs-image
+          suite: docs-image
     env:
       PILOT_SUITE: ${{ matrix.suite }}
       PILOT_SOURCE_SHA: ${{ github.sha }}
       PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
-      HAPROXY_VERSION: '3.4'
+      HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
@@ -38,12 +53,6 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
-      if: matrix.suite == 'snapshot' || matrix.suite == 'spoa'
-      with:
-        image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-        platforms: arm64,arm
-        cache-image: false
     - name: Run the existing suite on a fresh runner
       run: bash .github/scripts/run-build-pilot.sh
     - name: Retain verification evidence
