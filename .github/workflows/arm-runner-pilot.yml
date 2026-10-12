@@ -1,4 +1,4 @@
-name: ARM startup scheduling diagnostic
+name: ARM staged startup diagnostic
 
 on:
   push:
@@ -14,22 +14,19 @@ concurrency:
 
 jobs:
   e2e:
-    name: startup-arm64-go${{ matrix.gomaxprocs }}-gc${{ matrix.gogc }}
+    name: startup-arm64-staged-${{ matrix.profile || 'default' }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - gomaxprocs: '1'
-            gogc: '300'
-          - gomaxprocs: '1'
-            gogc: '1000'
-          - gomaxprocs: '2'
-            gogc: '1000'
+        profile: ['', 'cache', 'api-gateway']
     env:
-      PILOT_GOGC: ${{ matrix.gogc }}
-      PILOT_GOMAXPROCS: ${{ matrix.gomaxprocs }}
+      PILOT_GOGC: '300'
+      PILOT_GOMAXPROCS: '2'
+      HAPTIC_E2E_CONTROLLER_STARTUP: staged
+      HAPTIC_E2E_PROFILE: ${{ matrix.profile }}
+      HAPTIC_E2E_GWAPI_CHANNEL: ${{ matrix.profile == 'api-gateway' && 'experimental' || 'standard' }}
       PILOT_STARTUP_ONLY: '1'
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
@@ -54,7 +51,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: runner-pilot-startup-arm64-go${{ matrix.gomaxprocs }}-gc${{ matrix.gogc }}
+          name: runner-pilot-startup-arm64-staged-${{ matrix.profile || 'default' }}
           path: |
             .pilot/
             debug-logs/
