@@ -1,0 +1,126 @@
+name: Request mirror failure diagnosis
+'on':
+  push:
+    branches:
+    - ci/github-mirror-diagnosis-20261013
+permissions:
+  contents: read
+jobs:
+  mirror:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix:
+        include:
+        - name: minimum-full-shard
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-3
+          index: '3'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          baseline: ''
+          certificates: ''
+          provider: ''
+          repeat: '1'
+          pattern: ''
+        - name: minimum-mirror-repeat
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-3
+          index: '3'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          baseline: ''
+          certificates: ''
+          provider: ''
+          repeat: '20'
+          pattern: ^TestHapticMirrorTarget$
+        - name: current-mirror-repeat
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-3
+          index: '3'
+          node: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+          baseline: ''
+          certificates: ''
+          provider: ''
+          repeat: '20'
+          pattern: ^TestHapticMirrorTarget$
+    env:
+      PILOT_GOGC: '300'
+      PILOT_GOMAXPROCS: '2'
+      HAPTIC_E2E_CONTROLLER_STARTUP: parallel
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
+      E2E_SHARD_INDEX: ${{ matrix.index || matrix.shard || '1' }}
+      KIND_NODE_IMAGE: ${{ matrix.node || 'kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5'
+        }}
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      E2E_SHARD_TOTAL: '4'
+      E2E_SHARD_WEIGHTS: .github/e2e-shard-weights.json
+      PILOT_STARTUP_PROFILE: '0'
+      PILOT_VALIDATION_TMPFS: '1'
+      COUNT: ${{ matrix.repeat }}
+      TEST_RUN_PATTERN: ${{ matrix.pattern }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: 1.27.2
+        cache: true
+        cache-dependency-path: go.sum
+      if: matrix.runner == 'ubuntu-24.04-arm'
+    - name: Install pinned native tools
+      run: bash .github/scripts/install-arm-pilot-tools.sh
+      if: matrix.runner == 'ubuntu-24.04-arm'
+    - name: Run native ARM suite
+      if: matrix.runner == 'ubuntu-24.04-arm'
+      run: 'set -euo pipefail
+
+        sudo apt-get update -qq
+
+        sudo apt-get install -y tcpdump
+
+        mkdir -p .pilot
+
+        python3 .github/scripts/capture-cluster-network.py > .pilot/network-capture.log 2>&1 &
+
+        capture_pid=$!
+
+        set +e
+
+        bash .github/scripts/run-arm-pilot.sh
+
+        result=$?
+
+        set -e
+
+        touch .pilot/test-finished
+
+        wait "$capture_pid"
+
+        sudo chown -R "$(id -u):$(id -g)" .pilot
+
+        exit "$result"
+
+        '
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: mirror-diagnosis-${{ matrix.name }}
+        path: '.pilot/
+
+          debug-logs/'
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error

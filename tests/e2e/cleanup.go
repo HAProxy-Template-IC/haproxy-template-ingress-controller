@@ -124,7 +124,10 @@ func DumpLogsOnFailure(t *testing.T, namespace string) {
 
 		dumpCommand(t, dumpDir, "backend-fixtures-logs.txt",
 			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", SharedFixturesNamespace,
-			"logs", "--all-containers", "--prefix", "--tail=200", "-l", "")
+			"logs", "--all-containers", "--prefix", "--tail=200", "-l", "app")
+		dumpCommand(t, dumpDir, "test-backend-logs.txt",
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", namespace,
+			"logs", "--all-containers", "--prefix", "--tail=2000", "-l", "app")
 
 		// Valkey and Sentinel stdout from the shared rate-limit store. A stalled
 		// failover is only diagnosable from Sentinel's own election log
@@ -214,6 +217,10 @@ func dumpHAProxyRuntimeServers(t *testing.T, dumpDir string) {
 
 	for _, podBytes := range pods {
 		pod := string(podBytes)
+		dumpCommand(t, dumpDir, "spoa-metrics-"+pod+".txt",
+			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
+			"exec", pod, "-c", "haproxy", "--", "curl", "-fsS", "--max-time", "5",
+			"http://127.0.0.1:9095/metrics")
 		dumpCommand(t, dumpDir, "haproxy-agent-state-"+pod+".json",
 			"kubectl", kubeconfigFlag, kubeconfigPath, "-n", ControllerNamespace,
 			"exec", pod, "-c", "agent", "--", "haptic", "agent", "state", "-o", "json")
