@@ -1,0 +1,751 @@
+name: CI migration speed proof
+'on':
+  push:
+    branches:
+    - ci/github-speed-proof-20261012
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: speed-proof-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verification:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix:
+        include:
+        - name: e2e-hp3.1-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '3'
+        - name: e2e-hp3.1-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '4'
+        - name: e2e-hp3.2-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '3'
+        - name: e2e-hp3.2-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '4'
+        - name: e2e-hp3.3-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '3'
+        - name: e2e-hp3.3-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '4'
+        - name: helm-3.4
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.4'
+        - name: e2e-hp3.1-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '1'
+        - name: e2e-hp3.0-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '3'
+        - name: e2e-hp3.0-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '4'
+        - runner: ubuntu-24.04
+          kind: x64
+          name: chart
+          suite: chart
+        - name: e2e-hp3.0-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '1'
+        - name: e2e-hp3.3-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '1'
+        - name: e2e-hp3.2-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '1'
+        - name: e2e-hp3.4-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '3'
+        - name: e2e-hp3.4-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '4'
+        - name: e2e-minimum-kubernetes-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-3
+          index: '3'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: e2e-minimum-kubernetes-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-4
+          index: '4'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: e2e-hp3.3-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '2'
+        - name: e2e-hp3.4-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '1'
+        - name: e2e-minimum-kubernetes-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-1
+          index: '1'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: e2e-hp3.2-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '2'
+        - name: e2e-hp3.1-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '2'
+        - name: e2e-minimum-kubernetes-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-2
+          index: '2'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: e2e-hp3.0-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '2'
+        - name: helm-3.2
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.2'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:c4505d847baa12477b2183a7f74a08d435f55116be530a539913b6d4d65b6410
+        - name: e2e-hp3.4-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '2'
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-flux-cert-manager
+          suite: gitops
+          provider: flux
+          certificates: cert-manager
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: helm-3.3
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.3'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:32688acae8ee1fedf32b8dadbff4c6108a1518bc99d474aa7ad829c71e9c39c2
+        - name: helm-3.1
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.1'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:8bcd1f29c537576b33ec7d09095a6b6c72ddfc4618078df4cad3125a524e37c1
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-argo-external
+          suite: gitops
+          provider: argo
+          certificates: external
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-flux-external
+          suite: gitops
+          provider: flux
+          certificates: external
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.3.0-current
+          suite: upgrade
+          baseline: 0.3.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.5.0-minimum
+          suite: upgrade
+          baseline: 0.5.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.1-current
+          suite: upgrade
+          baseline: 0.4.1
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.1-minimum
+          suite: upgrade
+          baseline: 0.2.1
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.0-minimum
+          suite: upgrade
+          baseline: 0.4.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.0-current
+          suite: upgrade
+          baseline: 0.4.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-current
+          suite: upgrade
+          baseline: 0.2.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.2-current
+          suite: upgrade
+          baseline: 0.2.2
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.3.0-minimum
+          suite: upgrade
+          baseline: 0.3.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-alpha.3-current
+          suite: upgrade
+          baseline: 0.2.0-alpha.3
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.5.0-current
+          suite: upgrade
+          baseline: 0.5.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.2-minimum
+          suite: upgrade
+          baseline: 0.2.2
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: unit-command-3
+          suite: unit-shard
+          shard: command
+          index: '3'
+          kind: x64
+          runner: ubuntu-24.04
+        - name: unit-command-2
+          suite: unit-shard
+          shard: command
+          index: '2'
+          kind: x64
+          runner: ubuntu-24.04
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.1.0-current
+          suite: upgrade
+          baseline: 0.1.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-minimum
+          suite: upgrade
+          baseline: 0.2.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-argo-cert-manager
+          suite: gitops
+          provider: argo
+          certificates: cert-manager
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.1.0-minimum
+          suite: upgrade
+          baseline: 0.1.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: helm-3.0
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.0'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:030d3415d1d3e94dad6c274cdb20e2612c574b24c887f0e86254a5a310220378
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-alpha.3-minimum
+          suite: upgrade
+          baseline: 0.2.0-alpha.3
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.1-current
+          suite: upgrade
+          baseline: 0.2.1
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.1-minimum
+          suite: upgrade
+          baseline: 0.4.1
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: ingress-2
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '2'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: unit-renderer
+          suite: unit-shard
+          shard: renderer
+          kind: x64
+          runner: ubuntu-24.04
+        - name: chart-minimum
+          kind: build
+          runner: ubuntu-24.04
+          suite: chart-minimum
+        - name: ingress-1
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '1'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: ingress-4
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '4'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: unit-command-1
+          suite: unit-shard
+          shard: command
+          index: '1'
+          kind: x64
+          runner: ubuntu-24.04
+        - name: ingress-3
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '3'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: e2e-rate-limit
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: rate-limit
+          profile: rate-limit
+        - runner: ubuntu-24.04
+          kind: x64
+          name: acceptance
+          suite: acceptance
+        - name: e2e-cache
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: cache
+          profile: cache
+        - name: gateway-3
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '3'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: gateway-4
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '4'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: gateway-1
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '1'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: e2e-api-gateway
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: api-gateway
+          profile: api-gateway
+          channel: experimental
+        - name: gateway-2
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '2'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: snapshot
+          kind: build
+          runner: ubuntu-24.04
+          suite: snapshot
+        - name: wasm
+          kind: build
+          runner: ubuntu-24.04
+          suite: wasm
+        - name: unit-rest
+          suite: unit-shard
+          shard: rest
+          kind: x64
+          runner: ubuntu-24.04
+        - runner: ubuntu-24.04
+          kind: x64
+          name: install-without-gateway-minimum
+          suite: plain
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: install-without-gateway-current
+          suite: plain
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: lint
+          suite: lint
+        - runner: ubuntu-24.04
+          kind: x64
+          name: defaults
+          suite: defaults
+        - name: test-support
+          suite: test-support
+          kind: x64
+          runner: ubuntu-24.04
+        - name: agent-3.4
+          kind: x64
+          runner: ubuntu-24.04
+          suite: agent
+          haproxy: '3.4'
+        - name: agent-3.0
+          kind: x64
+          runner: ubuntu-24.04
+          suite: agent
+          haproxy: '3.0'
+        - runner: ubuntu-24.04
+          kind: x64
+          name: vector
+          suite: vector
+        - name: ci-image-3.3
+          kind: build
+          runner: ubuntu-24.04
+          suite: ci-image
+          haproxy: '3.3'
+        - name: ci-image-3.1
+          kind: build
+          runner: ubuntu-24.04
+          suite: ci-image
+          haproxy: '3.1'
+        - name: ci-image-3.0
+          kind: build
+          runner: ubuntu-24.04
+          suite: ci-image
+          haproxy: '3.0'
+        - name: ci-image-3.2
+          kind: build
+          runner: ubuntu-24.04
+          suite: ci-image
+          haproxy: '3.2'
+        - name: ci-image-3.4
+          kind: build
+          runner: ubuntu-24.04
+          suite: ci-image
+          haproxy: '3.4'
+        - name: spoa
+          kind: build
+          runner: ubuntu-24.04
+          suite: spoa
+        - name: docs-image
+          kind: build
+          runner: ubuntu-24.04
+          suite: docs-image
+        - name: docs
+          kind: build
+          runner: ubuntu-24.04
+          suite: docs
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci/python-docs@sha256:d6b9d16112673a1aae153621140a3ae742c7fbbd5a2dfc14684b755490dd8aee
+    env:
+      PILOT_GOGC: '300'
+      PILOT_GOMAXPROCS: '2'
+      HAPTIC_E2E_CONTROLLER_STARTUP: parallel
+      PILOT_CAPTURE_PROFILES: '0'
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
+      E2E_SHARD_INDEX: ${{ matrix.index || matrix.shard || '1' }}
+      HAPTIC_E2E_PROFILE: ${{ matrix.profile || '' }}
+      HAPTIC_E2E_GWAPI_CHANNEL: ${{ matrix.channel || 'standard' }}
+      KIND_NODE_IMAGE: ${{ matrix.node || 'kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5'
+        }}
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=750m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      PILOT_SUITE: ${{ matrix.suite }}
+      PILOT_CI_IMAGE: ${{ matrix.image || 'registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879'
+        }}
+      BASELINE_CHART_VERSION: ${{ matrix.baseline || '' }}
+      GITOPS_PROVIDER: ${{ matrix.provider || '' }}
+      GITOPS_CERTIFICATES: ${{ matrix.certificates || '' }}
+      SHARD_ID: ${{ matrix.shard || '' }}
+      SHARD_COUNT: '4'
+      E2E_SHARD_TOTAL: '4'
+      SHARD_INDEX: ${{ matrix.index || matrix.shard || '' }}
+      PILOT_STARTUP_ONLY: ${{ matrix.startup || '0' }}
+      CONFORMANCE_PARALLEL: '4'
+      SCALE_SEED_WORKERS: '4'
+      E2E_SHARD_WEIGHTS: .github/e2e-shard-weights.json
+      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && format('{0}/.ci-go-cache', github.workspace) || ''
+        }}
+      PILOT_STARTUP_PROFILE: '0'
+      PILOT_VALIDATION_TMPFS: '1'
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Reuse Go downloads and compilation
+      if: matrix.suite == 'unit-shard'
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      with:
+        path: ${{ env.PILOT_GO_CACHE_DIR }}
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{
+          matrix.index || '0' }}-${{ github.sha }}
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard
+          }}-${{ matrix.index || '0' }}-
+    - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+      if: matrix.suite == 'snapshot' || matrix.suite == 'spoa'
+      with:
+        image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+        platforms: arm64,arm
+        cache-image: false
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: 1.27.2
+        cache: false
+      if: matrix.runner == 'ubuntu-24.04-arm'
+    - name: Install pinned native tools
+      run: bash .github/scripts/install-arm-pilot-tools.sh
+      if: matrix.runner == 'ubuntu-24.04-arm'
+    - name: Run native ARM suite
+      if: matrix.runner == 'ubuntu-24.04-arm'
+      run: bash .github/scripts/run-arm-pilot.sh
+    - name: Run upstream Gateway conformance
+      if: matrix.kind == 'gateway'
+      run: 'set -euo pipefail
+
+        TEST_RUN_PATTERN=$(scripts/shard-conformance-tests.sh "$SHARD_INDEX" 4)
+
+        export TEST_RUN_PATTERN
+
+        printf ''%s\n'' "$TEST_RUN_PATTERN" > .pilot/conformance-selection.txt
+
+        set +e
+
+        make test-gateway-conformance 2>&1 | tee .pilot/conformance.log
+
+        result=${PIPESTATUS[0]}
+
+        printf ''%s\n'' "$result" > .pilot/conformance.exit
+
+        exit "$result"
+
+        '
+    - name: Run upstream Ingress conformance
+      if: matrix.kind == 'ingress'
+      run: bash .github/scripts/run-ingress-arm-pilot.sh
+    - name: Check controller output
+      if: matrix.kind == 'nightly'
+      run: KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
+    - name: Run existing x64 suite
+      if: matrix.kind == 'x64'
+      run: bash .github/scripts/run-remaining-pilot.sh
+    - name: Run native build and publication checks
+      if: matrix.kind == 'build'
+      run: bash .github/scripts/run-build-pilot.sh
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ci-evidence-${{ matrix.name }}
+        path: '.pilot/
+
+          debug-logs/'
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error
+  coverage-inputs:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix:
+        include:
+        - name: coverage-rest
+          kind: x64
+          runner: ubuntu-24.04
+          suite: coverage-shard
+          shard: rest
+        - name: integration-3.0
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.0'
+        - name: integration-3.4
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.4'
+        - name: integration-3.2
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.2'
+        - name: integration-3.1
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.1'
+        - name: integration-3.3
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.3'
+        - name: coverage-renderer
+          kind: x64
+          runner: ubuntu-24.04
+          suite: coverage-shard
+          shard: renderer
+    env:
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
+      PILOT_SUITE: ${{ matrix.suite }}
+      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
+      SHARD_ID: ${{ matrix.shard || '' }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Run existing x64 suite
+      if: matrix.kind == 'x64'
+      run: bash .github/scripts/run-remaining-pilot.sh
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ci-evidence-${{ matrix.name }}
+        path: '.pilot/
+
+          debug-logs/'
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error
+  coverage:
+    name: coverage-combined
+    needs: coverage-inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PILOT_SUITE: coverage-combined
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Download all seven coverage profiles
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: 'set -euo pipefail
+
+        mkdir -p .pilot/coverage-inputs
+
+        gh run download "$GITHUB_RUN_ID" --pattern ''ci-evidence-coverage-*'' --pattern ''ci-evidence-integration-*''
+        --dir .pilot/coverage-inputs
+
+        '
+    - name: Merge the complete package coverage
+      run: bash .github/scripts/run-build-pilot.sh
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      if: always()
+      with:
+        name: ci-evidence-coverage-combined
+        path: '.pilot/combined*
+
+          .pilot/result.json'
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error
+  verified:
+    name: verified
+    needs:
+    - verification
+    - coverage-inputs
+    - coverage
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Require every check from this exact run and source
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 .github/scripts/verify-run.py
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: ci-verification
+        path: ci-verification.json
+        retention-days: 1
+        if-no-files-found: error

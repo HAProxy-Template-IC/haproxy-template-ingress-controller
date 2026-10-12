@@ -370,6 +370,10 @@ test-support: ## Run script, browser, process, playground and cluster-helper tes
 	@$(MAKE) test-playground
 	@$(MAKE) test-e2e-helpers
 
+.PHONY: test-github-verification
+test-github-verification: ## Check GitHub verification evidence fails closed
+	python3 -m unittest discover -s .github/tests -v
+
 .PHONY: test-process
 test-process: ## Verify process supervision with real child processes, without a cluster
 	$(GO) tool gotestsum --junitfile report-process.xml --format testname -- -race -count=1 -tags=testinfra ./tests/process/...
@@ -1217,6 +1221,13 @@ release: ## Prepare a release of controller + chart (usage: make release RELEASE
 		exit 1; \
 	fi
 	@./scripts/release.sh $(RELEASE_VERSION)
+
+.PHONY: build-docs-preview test-snapshot-publication
+build-docs-preview: ## Build the versioned documentation preview artifact
+	bash .github/scripts/build-docs-preview.sh
+
+test-snapshot-publication: ## Verify image and chart publication in a local registry
+	bash .github/scripts/test-snapshot-publication.sh
 
 goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
 	@set -eu; \

@@ -16,9 +16,15 @@ metrics_pid=$!
 trap 'kill "$metrics_pid" 2>/dev/null || true; wait "$metrics_pid" 2>/dev/null || true' EXIT
 docker pull "$PILOT_CI_IMAGE"
 docker image inspect "$PILOT_CI_IMAGE" > .pilot/toolchain-image.json
+cache_args=()
+if [[ -n "${PILOT_GO_CACHE_DIR:-}" ]]; then
+    mkdir -p "$PILOT_GO_CACHE_DIR"/{build,modules}
+    cache_args+=(--volume "$PILOT_GO_CACHE_DIR:/ci-go-cache" --env GOCACHE=/ci-go-cache/build --env GOMODCACHE=/ci-go-cache/modules)
+fi
 started=$(date +%s)
 set +e
 docker run --name haptic-pilot --network host \
+    "${cache_args[@]}" \
     --volume /var/run/docker.sock:/var/run/docker.sock \
     --volume "$PWD:$PWD" --workdir "$PWD" \
     --env PILOT_SUITE --env PILOT_SOURCE_SHA --env PILOT_VARNISH_IMAGE \
@@ -33,5 +39,10 @@ printf '{"exit_code":%s,"test_seconds":%s}\n' "$result" "$elapsed" > .pilot/resu
 docker stats --no-stream > .pilot/docker-stats.txt
 docker ps -a > .pilot/docker-ps.txt
 sudo chown -R "$(id -u):$(id -g)" .pilot debug-logs
+if [[ -n "${PILOT_GO_CACHE_DIR:-}" ]]; then
+    sudo chown -R "$(id -u):$(id -g)" "$PILOT_GO_CACHE_DIR"
+    du --bytes --summarize "$PILOT_GO_CACHE_DIR" > .pilot/cache-size.txt
+    test "$(cut -f1 .pilot/cache-size.txt)" -lt 7516192768
+fi
 printf 'Suite: **%s**; exit: **%s**; duration: **%s seconds**\n' "$PILOT_SUITE" "$result" "$elapsed" >> "$GITHUB_STEP_SUMMARY"
 exit "$result"

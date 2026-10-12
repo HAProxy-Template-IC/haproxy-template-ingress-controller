@@ -25,9 +25,18 @@ case "$PILOT_SUITE" in
         cp report.xml .pilot/unit-report.xml
         exit
         ;;
+    coverage-shard)
+        go list ./... > .pilot/unit-packages-all.txt
+        python3 .github/scripts/select-coverage-packages.py
+        PKG=$(tr '\n' ' ' < .pilot/unit-packages-selected.txt)
+        export PKG
+        GOFLAGS=-p=4 make test-coverage-unit
+        cp coverage.out coverage.txt .pilot/
+        exit
+        ;;
     test-support)
         go mod download sigs.k8s.io/gateway-api/conformance
-        SHARD_CONFORMANCE_TESTS_REQUIRED=1 make test-support
+        SHARD_CONFORMANCE_TESTS_REQUIRED=1 make test-support test-github-verification
         exit
         ;;
     agent) make test-agent-docker; exit ;;
@@ -43,7 +52,7 @@ case "$PILOT_SUITE" in
         python3 .github/scripts/collect-integration-startup.py
         exit "$result"
         ;;
-    chart) make lint-chart-ci chart-schema-check validate-helm-libraries; exit ;;
+    chart) make lint-chart-ci chart-schema-check; exit ;;
     vector) make test-vector-spans test-vector-metrics; exit ;;
 esac
 

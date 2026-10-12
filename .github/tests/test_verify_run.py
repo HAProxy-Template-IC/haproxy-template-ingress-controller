@@ -1,0 +1,55 @@
+import copy
+import importlib.util
+from pathlib import Path
+import unittest
+
+
+SPEC = importlib.util.spec_from_file_location("verify_run", Path(__file__).parents[1] / "scripts/verify-run.py")
+VERIFY = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(VERIFY)
+
+
+class VerifyRunTests(unittest.TestCase):
+    def setUp(self):
+        self.run = {"id": 42, "head_sha": "abc", "run_attempt": 2, "repository": {"full_name": "owner/repo"}}
+        self.job = {
+            "id": 123, "run_id": 42, "run_attempt": 2, "head_sha": "abc", "name": "unit", "status": "completed",
+            "conclusion": "success", "started_at": "2026-10-12T20:00:00Z", "completed_at": "2026-10-12T20:01:00Z",
+        }
+
+    def check(self, jobs, run=None, required=None):
+        return VERIFY.verify(self.run if run is None else run, jobs, ["unit"] if required is None else required,
+                             repository="owner/repo", sha="abc", attempt=2)
+
+    def test_all_required_jobs_must_have_run_and_passed(self):
+        self.assertEqual(self.check([self.job]), [{"name": "unit", "id": 123}])
+        for conclusion in ("failure", "skipped", "cancelled", "neutral", "timed_out", None):
+            with self.subTest(conclusion=conclusion), self.assertRaises(ValueError):
+                self.check([dict(self.job, conclusion=conclusion)])
+        for jobs in ([], [dict(self.job, name="other")], [dict(self.job, status="in_progress")]):
+            with self.subTest(jobs=jobs), self.assertRaises(ValueError):
+                self.check(jobs)
+
+    def test_provenance_cannot_cross_revision_repository_run_or_attempt(self):
+        for key, value in (("head_sha", "stale"), ("run_attempt", 1), ("repository", {"full_name": "another/repo"})):
+            run = copy.deepcopy(self.run)
+            run[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.check([self.job], run=run)
+        for key, value in (("head_sha", "stale"), ("run_id", 41), ("run_attempt", 1)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.check([dict(self.job, **{key: value})])
+
+    def test_rejects_empty_duplicate_or_incomplete_evidence(self):
+        for required in ([], ["unit", "unit"]):
+            with self.subTest(required=required), self.assertRaises(ValueError):
+                self.check([self.job], required=required)
+        with self.assertRaises(ValueError):
+            self.check([self.job, self.job])
+        for key in ("started_at", "completed_at"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.check([dict(self.job, **{key: None})])
+
+
+if __name__ == "__main__":
+    unittest.main()
