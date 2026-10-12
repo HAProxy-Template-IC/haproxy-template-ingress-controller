@@ -49,6 +49,8 @@ case "$PILOT_SUITE" in
         make spoa-bundle-check spoa-hub-image SPOA_DEV_IMAGE=haptic-spoa:pilot
         docker run --detach --name pilot-registry --publish 127.0.0.1:5000:5000 \
             registry@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+        curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-all-errors \
+            http://127.0.0.1:5000/v2/
         docker tag haptic-spoa:pilot 127.0.0.1:5000/haptic-spoa:pilot
         docker push 127.0.0.1:5000/haptic-spoa:pilot
         bash scripts/smoke-spoa-image.sh 127.0.0.1:5000/haptic-spoa:pilot

@@ -1,8 +1,8 @@
-name: GitHub build and documentation verification
+name: GitHub SPOA build verification
 'on':
   push:
     branches:
-    - ci/github-build-verification-20261012
+    - ci/github-spoa-verification-20261012
 permissions:
   contents: read
   actions: read
@@ -19,42 +19,14 @@ jobs:
       max-parallel: 10
       matrix:
         include:
-        - name: helm-3.0
-          suite: helm
-          haproxy: '3.0'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:030d3415d1d3e94dad6c274cdb20e2612c574b24c887f0e86254a5a310220378
-        - name: helm-3.1
-          suite: helm
-          haproxy: '3.1'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:8bcd1f29c537576b33ec7d09095a6b6c72ddfc4618078df4cad3125a524e37c1
-        - name: helm-3.2
-          suite: helm
-          haproxy: '3.2'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:c4505d847baa12477b2183a7f74a08d435f55116be530a539913b6d4d65b6410
-        - name: helm-3.3
-          suite: helm
-          haproxy: '3.3'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:32688acae8ee1fedf32b8dadbff4c6108a1518bc99d474aa7ad829c71e9c39c2
-        - name: chart-minimum
-          suite: chart-minimum
-        - name: wasm
-          suite: wasm
-        - name: snapshot
-          suite: snapshot
         - name: spoa
           suite: spoa
-        - name: docs
-          suite: docs
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci/python-docs@sha256:d6b9d16112673a1aae153621140a3ae742c7fbbd5a2dfc14684b755490dd8aee
-        - name: coverage-combined
-          suite: coverage-combined
     env:
       PILOT_SUITE: ${{ matrix.suite }}
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_CI_IMAGE: ${{ matrix.image || 'registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879'
-        }}
+      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
-      HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
+      HAPROXY_VERSION: '3.4'
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
@@ -66,35 +38,12 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+    - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1
       if: matrix.suite == 'snapshot' || matrix.suite == 'spoa'
       with:
         image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
         platforms: arm64,arm
         cache-image: false
-    - name: Collect complete matching coverage profiles
-      if: matrix.suite == 'coverage-combined'
-      env:
-        GH_TOKEN: ${{ github.token }}
-        GH_REPO: ${{ github.repository }}
-      run: 'set -euo pipefail
-
-        mkdir -p .pilot/coverage-inputs
-
-        gh run watch 38292605828 --exit-status --interval 30
-
-        gh run view 38292605828 --json headSha,conclusion > .pilot/coverage-provenance.json
-
-        jq --exit-status ''.headSha == "ab603176bf92d9f1bb9e3c558635a900bb6065f1"
-        and .conclusion == "success"'' .pilot/coverage-provenance.json
-
-        gh run download 38292605828 --pattern ''runner-pilot-agent-fix-coverage-*''
-        --dir .pilot/coverage-inputs
-
-        gh run download 38292605828 --pattern ''runner-pilot-agent-fix-integration-*''
-        --dir .pilot/coverage-inputs
-
-        '
     - name: Run the existing suite on a fresh runner
       run: bash .github/scripts/run-build-pilot.sh
     - name: Retain verification evidence
