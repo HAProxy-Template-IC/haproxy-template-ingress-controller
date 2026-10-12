@@ -792,6 +792,14 @@ build-integration-test: ## Build integration test binary (without running)
 	@mkdir -p bin
 	$(GO) test -c -o bin/integration.test ./tests/integration/...
 
+.PHONY: test-coverage-unit
+test-coverage-unit: ## Collect unit coverage independently of the race suite (PKG selects packages)
+	$(GO) tool gotestsum --format testname -- \
+		-count=1 -timeout 45m -coverprofile=coverage.out -covermode=atomic \
+		-coverpkg=$(COVERAGE_PACKAGES) $${PKG:-./...}
+	$(GO) tool cover -func=coverage.out > coverage.txt
+	tail -1 coverage.txt
+
 test-coverage: ## Run unit tests with coverage report
 	@echo "Running unit tests with coverage..."
 	$(GO) test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=$(COVERAGE_PACKAGES) ./pkg/...

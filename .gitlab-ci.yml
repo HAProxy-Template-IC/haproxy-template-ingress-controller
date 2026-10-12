@@ -722,13 +722,7 @@ test-coverage-unit:
     # on main carry coverage profile entries for files that have been deleted
     # on the branch, which break `go tool cover -func` on the next step (cover
     # needs to read each referenced source file by path).
-    - |
-      go tool gotestsum --format testname -- \
-        -count=1 -timeout 45m -coverprofile=coverage.out -covermode=atomic \
-        -coverpkg=${COVERAGE_PACKAGES} \
-        ./...
-    # Show coverage summary
-    - go tool cover -func=coverage.out | tail -1
+    - make test-coverage-unit
   artifacts:
     paths:
       - coverage.out
