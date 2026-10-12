@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"slices"
 	"strconv"
 	"time"
@@ -25,21 +24,7 @@ import (
 )
 
 func (g *gitops) installManifest(ctx context.Context, name, url, namespace string, deployments []string) error {
-	fetch, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	request, err := http.NewRequestWithContext(fetch, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return err
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s manifest returned HTTP %d", name, response.StatusCode)
-	}
-	content, err := io.ReadAll(io.LimitReader(response.Body, 32<<20))
+	content, err := fetchManifest(ctx, url)
 	if err != nil {
 		return err
 	}
