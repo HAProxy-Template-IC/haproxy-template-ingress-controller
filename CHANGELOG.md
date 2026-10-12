@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Reduce temporary template allocations during configuration validation and rendering.
+
 ### Security
 
 - Update `golang.org/x/net` to v0.60.0 to fix five HTTP/2 vulnerabilities.
