@@ -22,6 +22,7 @@ docker run --name haptic-pilot --network host \
     --volume /var/run/docker.sock:/var/run/docker.sock \
     --volume "$PWD:$PWD" --workdir "$PWD" \
     --env PILOT_SUITE --env PILOT_SOURCE_SHA --env PILOT_VARNISH_IMAGE \
+    --env GITHUB_RUN_ID --env GITHUB_JOB \
     --env HAPROXY_VERSION --env KIND_NODE_IMAGE --env BASELINE_CHART_VERSION \
     --env GITOPS_PROVIDER --env GITOPS_CERTIFICATES --env SHARD_ID --env SHARD_COUNT \
     --entrypoint bash "$PILOT_CI_IMAGE" .github/scripts/run-build-suite.sh \

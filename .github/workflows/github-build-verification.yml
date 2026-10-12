@@ -1,8 +1,8 @@
-name: GitHub CI toolchain image verification
+name: GitHub publication preflight
 'on':
   push:
     branches:
-    - ci/github-toolchain-verification-20261012
+    - ci/github-publication-preflight-20261013
 permissions:
   contents: read
   actions: read
@@ -19,29 +19,18 @@ jobs:
       max-parallel: 10
       matrix:
         include:
-        - name: ci-image-3.0
-          suite: ci-image
-          haproxy: '3.0'
-        - name: ci-image-3.1
-          suite: ci-image
-          haproxy: '3.1'
-        - name: ci-image-3.2
-          suite: ci-image
-          haproxy: '3.2'
-        - name: ci-image-3.3
-          suite: ci-image
-          haproxy: '3.3'
-        - name: ci-image-3.4
-          suite: ci-image
-          haproxy: '3.4'
-        - name: docs-image
-          suite: docs-image
+        - name: docs-preview
+          suite: docs
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci/python-docs@sha256:d6b9d16112673a1aae153621140a3ae742c7fbbd5a2dfc14684b755490dd8aee
+        - name: snapshot-publication
+          suite: snapshot
     env:
       PILOT_SUITE: ${{ matrix.suite }}
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
+      PILOT_CI_IMAGE: ${{ matrix.image || 'registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879'
+        }}
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
-      HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
+      HAPROXY_VERSION: '3.4'
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
@@ -53,6 +42,12 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+      if: matrix.suite == 'snapshot'
+      with:
+        image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+        platforms: arm64,arm
+        cache-image: false
     - name: Run the existing suite on a fresh runner
       run: bash .github/scripts/run-build-pilot.sh
     - name: Retain verification evidence

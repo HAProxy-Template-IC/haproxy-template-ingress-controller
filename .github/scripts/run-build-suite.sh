@@ -44,6 +44,7 @@ case "$PILOT_SUITE" in
         mkdocs build --strict --config-file docs/site/mkdocs.yml --site-dir /tmp/docs-check
         mkdocs build --strict --config-file docs/landing/mkdocs.yml --site-dir /tmp/landing-check
         du -sb /tmp/docs-check /tmp/landing-check > .pilot/docs-sizes.txt
+        make build-docs-preview
         ;;
     wasm)
         scripts/build-playground.sh "$PWD/public/playground/dev" dev
@@ -62,6 +63,7 @@ case "$PILOT_SUITE" in
         rg --files dist > .pilot/snapshot-files.txt
         cp dist/checksums.txt dist/metadata.json dist/artifacts.json .pilot/
         du -sb dist > .pilot/snapshot-size.txt
+        make test-snapshot-publication
         ;;
     spoa)
         make spoa-bundle-check spoa-hub-image SPOA_DEV_IMAGE=haptic-spoa:pilot

@@ -1214,6 +1214,13 @@ release: ## Prepare a release of controller + chart (usage: make release RELEASE
 	fi
 	@./scripts/release.sh $(RELEASE_VERSION)
 
+.PHONY: build-docs-preview test-snapshot-publication
+build-docs-preview: ## Build the versioned documentation preview artifact
+	bash .github/scripts/build-docs-preview.sh
+
+test-snapshot-publication: ## Verify image and chart publication in a local registry
+	bash .github/scripts/test-snapshot-publication.sh
+
 goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
 	@set -eu; \
 	for series in $$(yq -r '.haproxyPatchVersions | keys | .[]' charts/haptic/values.yaml); do \
