@@ -13,10 +13,12 @@
     "schedule": [
       "at any time"
     ],
-    "minimumReleaseAge": null
+    "minimumReleaseAge": null,
+    "groupName": "security and go toolchain"
   },
   "postUpdateOptions": [
-    "gomodTidy"
+    "gomodTidy",
+    "npmInstallTwice"
   ],
   "customManagers": [
     {
@@ -154,7 +156,7 @@
       "rangeStrategy": "bump"
     },
     {
-      "description": "Group Go version updates from go.mod and .tool-versions",
+      "description": "Go toolchain bumps share one MR with every vulnerability fix: make audit gates on all of them, so split MRs each fail on the vulns the other fixes.",
       "matchManagers": [
         "gomod",
         "asdf"
@@ -163,7 +165,10 @@
         "go",
         "golang"
       ],
-      "groupName": "go version"
+      "groupName": "security and go toolchain",
+      "schedule": [
+        "at any time"
+      ]
     },
     {
       "description": "Group Kubernetes dependencies",
