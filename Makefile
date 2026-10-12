@@ -725,6 +725,7 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test docker-
 	@echo "  HAPTIC_E2E_CLUSTER_NAME - Kind cluster name (default: haptic-e2e)"
 	@echo "  KIND_NODE_IMAGE     - Kind node image (default: bundled Kind image)"
 	@echo "  KEEP_CLUSTER        - Keep cluster after tests (default: true; set false to destroy)"
+	@echo "  HAPTIC_E2E_CONTROLLER_STARTUP - staged validates the first replica before starting the others"
 	@echo "  KEEP_NAMESPACE      - Keep test namespaces after failure for debugging (default: false)"
 	@echo "  SKIP_CLUSTER_CREATE - CI mode: assume cluster already exists; skip kind create"
 	@echo "  SKIP_DOCKER_BUILD   - CI mode: assume haptic:test-haproxyX.Y already loaded"

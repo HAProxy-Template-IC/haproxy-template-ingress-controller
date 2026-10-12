@@ -101,6 +101,9 @@ they reject requests until that endpoint is configured during setup.
 enables the chart's matching experimental-field validation tests.
 `KIND_NODE_IMAGE` selects the node image when creating a cluster; it does not
 replace an existing cluster. Omit it to use Kind's bundled default.
+`HAPTIC_E2E_CONTROLLER_STARTUP=staged` waits for one validated controller before
+restoring the configured replica count, with one shared five-minute install
+deadline. Every replica still validates its configuration before becoming ready.
 
 ## CI
 

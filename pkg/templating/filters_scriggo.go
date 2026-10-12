@@ -261,14 +261,14 @@ func registerStatusAndEventFunctions(decl native.Declarations) {
 	decl[FuncJSONPathGet] = scriggoJSONPathGet
 	decl[FuncJSONPathSet] = scriggoJSONPathSet
 	decl[FuncDeriveResource] = scriggoDeriveResource
-	decl[FuncIncrementalRender] = scriggoIncrementalRender
-	decl[FuncIncrementalValues] = scriggoIncrementalValues
-	decl[FuncIncrementalRankedFragments] = scriggoIncrementalRankedFragments
-	decl[FuncIncrementalRankedFragmentsJoin] = scriggoIncrementalRankedFragmentsJoin
-	decl[FuncIncrementalRankedTextFragment] = scriggoIncrementalRankedTextFragment
-	decl[FuncIncrementalRankedTextFragmentJoin] = scriggoIncrementalRankedTextFragmentJoin
-	decl[FuncIncrementalRankedFragmentBytes] = scriggoIncrementalRankedFragmentBytes
-	decl[FuncIncrementalValueCount] = scriggoIncrementalValueCount
+	decl[FuncIncrementalRender] = native.Synchronous(scriggoIncrementalRender)
+	decl[FuncIncrementalValues] = native.Synchronous(scriggoIncrementalValues)
+	decl[FuncIncrementalRankedFragments] = native.Synchronous(scriggoIncrementalRankedFragments)
+	decl[FuncIncrementalRankedFragmentsJoin] = native.Synchronous(scriggoIncrementalRankedFragmentsJoin)
+	decl[FuncIncrementalRankedTextFragment] = native.Synchronous(scriggoIncrementalRankedTextFragment)
+	decl[FuncIncrementalRankedTextFragmentJoin] = native.Synchronous(scriggoIncrementalRankedTextFragmentJoin)
+	decl[FuncIncrementalRankedFragmentBytes] = native.Synchronous(scriggoIncrementalRankedFragmentBytes)
+	decl[FuncIncrementalValueCount] = native.Synchronous(scriggoIncrementalValueCount)
 	decl[FuncUntarGz] = scriggoUntarGz
 }
 

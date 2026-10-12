@@ -908,13 +908,31 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 			"--set-string", fmt.Sprintf("controller.extraEnv[0].value=%d", goMemLimit),
 		)
 	}
-	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return ctx, fmt.Errorf("helm upgrade --install: %w", err)
+	if err := runControllerHelmInstall(ctx, args); err != nil {
+		return ctx, err
 	}
 	return ctx, nil
+}
+
+func runControllerHelmInstall(ctx context.Context, args []string) error {
+	stages, err := e2ecluster.ControllerInstallStages(args, os.Getenv("HAPTIC_E2E_CONTROLLER_STARTUP"))
+	if err != nil {
+		return err
+	}
+	if len(stages) > 1 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultHelmInstallTimeout)
+		defer cancel()
+	}
+	for index, stage := range stages {
+		fmt.Fprintf(os.Stderr, "e2e: controller Helm install phase %d/%d\n", index+1, len(stages))
+		cmd := exec.CommandContext(ctx, "helm", stage...)
+		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("controller Helm install phase %d/%d: %w", index+1, len(stages), err)
+		}
+	}
+	return nil
 }
 
 func e2eProfileHelmArgs(profile string) []string {
