@@ -28,7 +28,7 @@ jobs:
       PILOT_SUITE: build
       BASELINE_CHART_VERSION: ''
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/run-runner-pilot.sh
       - name: Transfer the image to test jobs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: pilot-controller-image
           path: pilot-image/
@@ -45,7 +45,7 @@ jobs:
           if-no-files-found: error
       - name: Retain build evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: runner-pilot-build-3.4
           path: .pilot/
@@ -77,11 +77,11 @@ jobs:
       PILOT_SUITE: ${{ matrix.suite }}
       BASELINE_CHART_VERSION: ${{ matrix.baseline }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: pilot-controller-image
           path: pilot-image/
@@ -90,7 +90,7 @@ jobs:
         run: bash .github/scripts/run-runner-pilot.sh
       - name: Retain pilot evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: runner-pilot-${{ matrix.name }}
           path: |
