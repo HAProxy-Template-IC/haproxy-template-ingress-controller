@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Reduce temporary template allocations during configuration validation and rendering.
+
 ### Fixed
 
 - Retained configuration recovery now starts after leader failover when a critical HTTP source is unavailable, including with large watched resource sets.
