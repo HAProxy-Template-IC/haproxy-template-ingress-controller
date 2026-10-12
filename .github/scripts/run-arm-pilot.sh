@@ -22,7 +22,8 @@ test "$(kind get clusters | wc -l)" -eq 0
 chart_version="0.0.0-github.g${PILOT_SOURCE_SHA:0:8}"
 sed -i "s|^version:.*|version: ${chart_version}|" charts/haptic/Chart.yaml
 yq -i '.cache.varnish.image = strenv(PILOT_VARNISH_IMAGE)' charts/haptic/values.yaml
-yq -i '.controller.extraEnv += [{"name": "GOMAXPROCS", "value": "2"}, {"name": "GOGC", "value": strenv(PILOT_GOGC)}]' scripts/dev-env-assets/e2e-values.yaml
+export PILOT_GOMAXPROCS="${PILOT_GOMAXPROCS:-2}"
+yq -i '.controller.extraEnv += [{"name": "GOMAXPROCS", "value": strenv(PILOT_GOMAXPROCS)}, {"name": "GOGC", "value": strenv(PILOT_GOGC)}]' scripts/dev-env-assets/e2e-values.yaml
 if [[ "${HAPTIC_E2E_PROFILE:-}" == cache ]]; then
     export PILOT_VARNISH_IMAGE=haptic-varnish:pilot
     make docker-build-varnish VARNISH_IMAGE="$PILOT_VARNISH_IMAGE" VARNISH_PLATFORMS=linux/arm64
@@ -35,7 +36,9 @@ if [[ "${PILOT_STARTUP_PROFILE:-1}" == 1 ]]; then
     profile_pid=$!
 fi
 test_target=test-e2e
-if [[ -n "${HAPTIC_E2E_PROFILE:-}" ]]; then
+if [[ "${PILOT_STARTUP_ONLY:-0}" == 1 ]]; then
+    export TEST_RUN_PATTERN='^$'
+elif [[ -n "${HAPTIC_E2E_PROFILE:-}" ]]; then
     test_target=test-e2e-profile
 else
     go test -mod=readonly -tags=e2e -list '^Test' ./tests/e2e/... > debug-logs/e2e-test-inventory.txt
