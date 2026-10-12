@@ -28,6 +28,9 @@ if [[ "${HAPTIC_E2E_PROFILE:-}" == conformance ]]; then
     values_file=scripts/dev-env-assets/conformance-values.yaml
 fi
 yq -i '.controller.extraEnv += [{"name": "GOMAXPROCS", "value": strenv(PILOT_GOMAXPROCS)}, {"name": "GOGC", "value": strenv(PILOT_GOGC)}]' "$values_file"
+if [[ "${PILOT_TMPFS:-0}" == 1 ]]; then
+    yq -i '.controller.extraVolumes += [{"name": "validation-tmp", "emptyDir": {"medium": "Memory", "sizeLimit": "1Gi"}}] | .controller.extraVolumeMounts += [{"name": "validation-tmp", "mountPath": "/vtmp"}] | .controller.extraEnv += [{"name": "TMPDIR", "value": "/vtmp"}]' "$values_file"
+fi
 if [[ "${HAPTIC_E2E_PROFILE:-}" == cache ]]; then
     export PILOT_VARNISH_IMAGE=haptic-varnish:pilot
     make docker-build-varnish VARNISH_IMAGE="$PILOT_VARNISH_IMAGE" VARNISH_PLATFORMS=linux/arm64

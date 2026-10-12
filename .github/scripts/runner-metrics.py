@@ -24,5 +24,6 @@ with open(sys.argv[1], "a", encoding="utf-8", buffering=1) as output:
             "disk_free": disk.free,
             "docker_disk_free": docker_disk.free,
             "load": os.getloadavg(),
+            "cpu_ticks": Path("/proc/stat").read_text().splitlines()[0].split()[1:],
         }) + "\n")
         time.sleep(5)
