@@ -65,7 +65,14 @@ func StageControllerStartup(manifests []byte) ([]byte, ControllerScale, error) {
 }
 
 func stageControllerObject(object *unstructured.Unstructured, target *ControllerScale) error {
-	if object.GetKind() != "Deployment" || object.GetLabels()["app.kubernetes.io/component"] != "controller" {
+	if object.GetKind() != "Deployment" {
+		return nil
+	}
+	component, _, err := unstructured.NestedString(object.Object, "spec", "template", "metadata", "labels", "app.kubernetes.io/component")
+	if err != nil {
+		return fmt.Errorf("read Deployment pod labels: %w", err)
+	}
+	if component != "controller" {
 		return nil
 	}
 	if target.Name != "" {
