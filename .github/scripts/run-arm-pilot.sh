@@ -45,6 +45,8 @@ if [[ "${PILOT_STARTUP_ONLY:-0}" == 1 ]]; then
     export TEST_RUN_PATTERN='^$'
 elif [[ -n "${HAPTIC_E2E_PROFILE:-}" ]]; then
     test_target=test-e2e-profile
+elif [[ -n "${TEST_RUN_PATTERN:-}" ]]; then
+    printf '%s\n' "$TEST_RUN_PATTERN" > .pilot/e2e-selection.txt
 else
     go test -mod=readonly -tags=e2e -list '^Test' ./tests/e2e/... > debug-logs/e2e-test-inventory.txt
     TEST_RUN_PATTERN=$(python3 scripts/shard-go-tests.py --weights tests/e2e/shard-weights.json "${E2E_SHARD_INDEX:-1}" "${E2E_SHARD_TOTAL:-3}" < debug-logs/e2e-test-inventory.txt)
