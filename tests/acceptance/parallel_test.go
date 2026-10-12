@@ -57,10 +57,11 @@ func TestAllAcceptanceParallel(t *testing.T) {
 
 	// Collect all feature builders
 	features := []types.Feature{
-		buildRetainedConfigurationFeature("Recovery", (*retainedFleet).assessRecovery),
-		buildRetainedConfigurationFeature("Sudden leader loss", (*retainedFleet).assessSuddenRecovery),
-		buildRetainedConfigurationFeature("Tampering", (*retainedFleet).assessTampering),
-		buildRetainedConfigurationFeature("Freshness", (*retainedFleet).assessFreshness),
+		buildRetainedConfigurationFeature("Recovery", 0, (*retainedFleet).assessRecovery),
+		buildRetainedConfigurationFeature("Recovery with 3200 watched inputs", 3200, (*retainedFleet).assessRecovery),
+		buildRetainedConfigurationFeature("Sudden leader loss", 0, (*retainedFleet).assessSuddenRecovery),
+		buildRetainedConfigurationFeature("Tampering", 0, (*retainedFleet).assessTampering),
+		buildRetainedConfigurationFeature("Freshness", 0, (*retainedFleet).assessFreshness),
 		// Error scenarios tests
 		buildInvalidHAProxyConfigFeature(),
 		buildBasicAuthInputIsolationFeature(),

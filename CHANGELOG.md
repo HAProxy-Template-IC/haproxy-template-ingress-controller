@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Retained configuration recovery now starts after leader failover when a critical HTTP source is unavailable, including with large watched resource sets.
+- Prevent queued mailbox events from delaying controller shutdown after cancellation during queue processing.
+
+### Security
+
+- Update Go to 1.27.2 and its HTTP/2 dependency to fix HTTP, TLS, and filesystem vulnerabilities.
+
 ## [0.5.0] - 2026-10-08
 
 HAPTIC 0.5 can restore HAProxy capacity during a controller restart or leader

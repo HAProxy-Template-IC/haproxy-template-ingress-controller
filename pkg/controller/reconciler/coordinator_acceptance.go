@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 	"weak"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
@@ -45,21 +46,23 @@ type acceptanceWindow struct {
 }
 
 type acceptanceLedger struct {
-	mu           sync.Mutex
-	windows      map[weak.Pointer[rendercycle.Occurrence]]acceptanceWindow
-	refused      map[string]struct{}
-	refusedOrder []string
-	attempting   bool
-	again        bool
-	attempts     sync.WaitGroup
-	attempted    atomic.Uint64
-	lastRefusal  string
+	mu              sync.Mutex
+	windows         map[weak.Pointer[rendercycle.Occurrence]]acceptanceWindow
+	refused         map[string]struct{}
+	refusedOrder    []string
+	attempting      bool
+	requested       chan struct{}
+	attempts        sync.WaitGroup
+	attempted       atomic.Uint64
+	lastRefusal     string
+	criticalFailure error
 }
 
 func newAcceptanceLedger() *acceptanceLedger {
 	return &acceptanceLedger{
-		windows: make(map[weak.Pointer[rendercycle.Occurrence]]acceptanceWindow),
-		refused: make(map[string]struct{}),
+		windows:   make(map[weak.Pointer[rendercycle.Occurrence]]acceptanceWindow),
+		refused:   make(map[string]struct{}),
+		requested: make(chan struct{}, 1),
 	}
 }
 
@@ -161,7 +164,10 @@ func (c *Coordinator) requestAcceptanceAttempt(ctx context.Context, generation u
 	c.ledger.mu.Lock()
 	defer c.ledger.mu.Unlock()
 	if c.ledger.attempting {
-		c.ledger.again = true
+		select {
+		case c.ledger.requested <- struct{}{}:
+		default:
+		}
 		return
 	}
 	c.ledger.attempting = true
@@ -172,41 +178,88 @@ func (c *Coordinator) requestAcceptanceAttempt(ctx context.Context, generation u
 func (c *Coordinator) runAcceptanceAttempts(ctx context.Context, generation uint64) {
 	defer c.ledger.attempts.Done()
 	for {
-		c.attemptAcceptance(ctx, generation)
+		retryAfter := c.attemptAcceptance(ctx, generation)
 		c.ledger.attempted.Add(1)
-		c.ledger.mu.Lock()
-		if !c.ledger.again || ctx.Err() != nil {
-			c.ledger.attempting = false
-			c.ledger.again = false
-			c.ledger.mu.Unlock()
+		if !c.ledger.awaitRetry(ctx, retryAfter) {
 			return
 		}
-		c.ledger.again = false
-		c.ledger.mu.Unlock()
 	}
 }
 
+func (l *acceptanceLedger) awaitRetry(ctx context.Context, retryAfter time.Duration) bool {
+	l.mu.Lock()
+	if ctx.Err() == nil {
+		select {
+		case <-l.requested:
+			l.mu.Unlock()
+			return true
+		default:
+		}
+	}
+	if retryAfter <= 0 || ctx.Err() != nil {
+		l.attempting = false
+		l.mu.Unlock()
+		return false
+	}
+	l.mu.Unlock()
+	timer := time.NewTimer(retryAfter)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		l.mu.Lock()
+		l.attempting = false
+		l.mu.Unlock()
+		return false
+	case <-l.requested:
+	case <-timer.C:
+	}
+	return true
+}
+
 // Acceptance output is discarded; a new deploying render reads the accepted content.
-func (c *Coordinator) attemptAcceptance(ctx context.Context, generation uint64) {
+func (c *Coordinator) attemptAcceptance(ctx context.Context, generation uint64) time.Duration {
 	opts, err := c.renderOptions(generation)
 	if err != nil {
 		c.logger.Debug("HTTP content acceptance attempt skipped", "error", err)
-		return
+		return 0
 	}
 	before := c.acceptance.AcceptanceSequence()
 	attemptCtx := pipeline.WithRefusedOutputs(ctx, c.ledger.isRefused)
 	if _, err := c.pipeline.Execute(attemptCtx, c.storeProvider, rendercontext.RenderModeReconcile, opts...); err != nil {
 		if ctx.Err() == nil {
 			c.reportPendingContent(err)
+			if c.ledger.updateCriticalContentFailure(err) {
+				c.eventBus.Publish(events.NewReconciliationTriggeredEvent("critical_http_content_unavailable", true, events.WithNewCorrelation()))
+			}
 		}
-		return
+		return pipeline.CriticalContentRetryInterval(err)
 	}
 	c.ledger.mu.Lock()
 	c.ledger.lastRefusal = ""
+	c.ledger.criticalFailure = nil
 	c.ledger.mu.Unlock()
 	if c.acceptance.AcceptanceSequence() != before {
 		c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_accepted", true, events.WithNewCorrelation()))
 	}
+	return 0
+}
+
+func (l *acceptanceLedger) criticalContentFailure() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.criticalFailure
+}
+
+func (l *acceptanceLedger) updateCriticalContentFailure(err error) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !pipeline.CriticalContentUnavailable(err) {
+		l.criticalFailure = nil
+		return false
+	}
+	firstFailure := l.criticalFailure == nil
+	l.criticalFailure = err
+	return firstFailure
 }
 
 // Repeated refusals under watch churn should not bury the original diagnostic.

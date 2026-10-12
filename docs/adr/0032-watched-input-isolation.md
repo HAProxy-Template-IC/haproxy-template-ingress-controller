@@ -35,6 +35,12 @@ object withheld. If no validated baseline can be established, reconciliation
 reports the failure and publishes nothing. A template or global configuration
 error that remains without the offending object is not a resource-local failure.
 
+An unavailable critical HTTP source aborts selection without rejecting watched
+resources. Removing Kubernetes objects cannot establish the missing HTTP input's
+validity. Fetch errors retain their identity even when a template calls
+`fail(fetchErr.Error())`. Promotion cancels the follower's render and drains its
+work before the shared isolation permit becomes available to the leader.
+
 Admission checks the observed view first. If that fails, it substitutes retained
 revisions only for the exact changes already rejected by reconciliation. It keeps
 every other observed change, including valid updates that have not reconciled yet

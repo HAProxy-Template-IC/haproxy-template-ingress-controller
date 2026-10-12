@@ -95,6 +95,13 @@ as a narrowing. Two facts were not weighed then:
    deploying render (`ErrCandidateWithheld`) instead of deploying without it,
    whether it was never accepted or was revoked. The reconcile succeeds again
    once an attempt accepts the content.
+   If fetching required content fails, the acceptance worker records that failure
+   and requests reconciliation once. The coordinator reports the blocked render
+   through its normal failure events, allowing retained-configuration recovery.
+   Acceptance retries at the failed source's configured refresh interval, without
+   holding the render permit. New requests can retry sooner; ending leadership
+   cancels the wait. A zero interval still requires another trigger.
+   Successful acceptance clears the failure.
 
 ## RULE #2 delta
 

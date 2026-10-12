@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"gitlab.com/haproxy-haptic/haptic/pkg/controller/inputisolation"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
 	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
@@ -245,6 +246,97 @@ func TestWarmerStandsDownWhenLeadershipArrivesMidRender(t *testing.T) {
 	h.waitForRender(t)
 	h.assertNoRender(t)
 	assert.Equal(t, 1, p.executions(), "only the render that was already in flight")
+}
+
+type cancelablePipeline struct {
+	started chan context.Context
+}
+
+func (p *cancelablePipeline) Execute(ctx context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
+	p.started <- ctx
+	<-ctx.Done()
+	return warmResult(), ctx.Err()
+}
+
+func TestWarmerCancelsInFlightRenderOnPromotionAndShutdown(t *testing.T) {
+	for _, stop := range []bool{false, true} {
+		t.Run(map[bool]string{false: "context", true: "stop"}[stop], func(t *testing.T) {
+			testWarmerCancellation(t, stop)
+		})
+	}
+}
+
+func testWarmerCancellation(t *testing.T, stop bool) {
+	t.Helper()
+	bus, logger := testutil.NewTestBusAndLogger()
+	p := &cancelablePipeline{started: make(chan context.Context, 4)}
+	selector := inputisolation.New(p, nil, logger)
+	provider := stores.NewRealStoreProvider(nil)
+	c := New(&Config{
+		EventBus: bus, Pipeline: selector, StoreProvider: provider, Logger: logger,
+		CurrentFilesSource: func() (rendercontext.CurrentAuxFilesSource, error) {
+			return newTestCurrentFilesSource(), nil
+		},
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		_ = c.Start(ctx)
+	}()
+	t.Cleanup(func() { cancel(); <-stopped })
+	bus.Start()
+	bus.Publish(events.NewReconciliationTriggeredEvent("initial_sync_complete", true))
+	follower := waitForPipelineContext(t, p.started)
+	bus.Publish(events.NewBecameLeaderEvent("this-replica"))
+	select {
+	case <-follower.Done():
+	case <-time.After(testutil.EventTimeout):
+		t.Fatal("promotion did not cancel the in-flight follower render")
+	}
+
+	leaderCtx, cancelLeader := context.WithCancel(ctx)
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := selector.Execute(leaderCtx, provider, rendercontext.RenderModeReconcile)
+		leaderDone <- err
+	}()
+	waitForPipelineContext(t, p.started)
+	cancelLeader()
+	require.ErrorIs(t, <-leaderDone, context.Canceled)
+	select {
+	case <-c.Warmed():
+		t.Fatal("canceled render reported a warm graph")
+	default:
+	}
+
+	bus.Publish(events.NewLostLeadershipEvent("this-replica", "lease_lost"))
+	bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	nextFollower := waitForPipelineContext(t, p.started)
+	require.NoError(t, nextFollower.Err())
+	if stop {
+		c.Stop()
+	} else {
+		cancel()
+	}
+	select {
+	case <-stopped:
+	case <-time.After(testutil.EventTimeout):
+		t.Fatal("shutdown did not drain the render worker")
+	}
+	require.ErrorIs(t, nextFollower.Err(), context.Canceled)
+}
+
+func waitForPipelineContext(t *testing.T, started <-chan context.Context) context.Context {
+	t.Helper()
+	select {
+	case ctx := <-started:
+		return ctx
+	case <-time.After(testutil.EventTimeout):
+		t.Fatal("pipeline did not start")
+		return nil
+	}
 }
 
 // A hand-over waits for a committed graph. A render whose cache the next

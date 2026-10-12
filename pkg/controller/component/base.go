@@ -322,22 +322,10 @@ func (b *Base) startMailbox(ctx context.Context, eventTypes []string) error {
 	}
 }
 
-// mailboxDrain dispatches queued entries until the queue is empty or
-// shutdown is requested; returns true on shutdown. Checking for shutdown
-// between dispatches is load-bearing: with a slow handler and a deep queue,
-// draining to empty first would delay shutdown by the whole backlog.
-// Undispatched entries stay queued and are discarded at the next Start
-// (term boundary), matching FlushPending semantics.
 func (b *Base) mailboxDrain(ctx context.Context) (stopped bool) {
 	for {
-		select {
-		case <-ctx.Done():
-			b.logger.Info(b.name+" shutting down", "reason", ctx.Err())
+		if b.shutdownRequested(ctx) {
 			return true
-		case <-b.stopCh:
-			b.logger.Info(b.name + " shutting down")
-			return true
-		default:
 		}
 		entry, ok := b.mailboxPop()
 		if !ok {
@@ -348,7 +336,23 @@ func (b *Base) mailboxDrain(ctx context.Context) (stopped bool) {
 				"event_type", entry.event.EventType(),
 				"superseded_count", entry.superseded)
 		}
+		if b.shutdownRequested(ctx) {
+			return true
+		}
 		b.dispatch(entry.event)
+	}
+}
+
+func (b *Base) shutdownRequested(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		b.logger.Info(b.name+" shutting down", "reason", ctx.Err())
+		return true
+	case <-b.stopCh:
+		b.logger.Info(b.name + " shutting down")
+		return true
+	default:
+		return false
 	}
 }
 
