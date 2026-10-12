@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/haproxytech/client-native/v6/runtime"
@@ -55,13 +56,19 @@ type Client struct {
 	cfg      Config
 	worker   *runtime.SingleRuntime
 	masterRT *runtime.SingleRuntime
-	master   runtime.Runtime
+	master   func() (runtime.Runtime, error)
 	logger   *slog.Logger
 }
 
 // New wires both sockets without probing them: readiness is the server's job,
 // and the agent must come up before HAProxy answers.
 func New(ctx context.Context, cfg Config) (*Client, error) {
+	if cfg.WorkerSocket == "" {
+		return nil, errors.New("worker socket is required")
+	}
+	if cfg.MasterSocket == "" {
+		return nil, errors.New("master socket is required")
+	}
 	deferProbe := options.RuntimeOptions{DoNotCheckRuntimeOnInit: true}
 	worker := &runtime.SingleRuntime{}
 	if err := worker.Init(cfg.WorkerSocket, false, deferProbe); err != nil {
@@ -71,10 +78,10 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	if err := masterRT.Init(cfg.MasterSocket, true, deferProbe); err != nil {
 		return nil, fmt.Errorf("master socket %s: %w", cfg.MasterSocket, err)
 	}
-	master, err := runtime.New(ctx, options.MasterSocket(cfg.MasterSocket), options.DoNotCheckRuntimeOnInit)
-	if err != nil {
-		return nil, fmt.Errorf("master socket %s: %w", cfg.MasterSocket, err)
-	}
+	// client-native's initWithMasterSocket probes even with DoNotCheckRuntimeOnInit.
+	master := sync.OnceValues(func() (runtime.Runtime, error) {
+		return runtime.New(ctx, options.MasterSocket(cfg.MasterSocket), options.DoNotCheckRuntimeOnInit)
+	})
 	return &Client{cfg: cfg, worker: worker, masterRT: masterRT, master: master, logger: cfg.Logger}, nil
 }
 
@@ -127,7 +134,11 @@ func (c *Client) ShowProc() (string, error) {
 // Reload asks the master to re-exec. The returned string is HAProxy's startup
 // log, which is what a NACK carries back to the operator.
 func (c *Client) Reload() (string, error) {
-	return c.master.Reload()
+	master, err := c.master()
+	if err != nil {
+		return "", fmt.Errorf("master socket %s: %w", c.cfg.MasterSocket, err)
+	}
+	return master.Reload()
 }
 
 // Raw runs one command on the worker socket with the experimental prefix.

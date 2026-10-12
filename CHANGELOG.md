@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prevent a 30-second agent startup stall when HAProxy is still starting its worker.
 - Retained configuration recovery now starts after leader failover when a critical HTTP source is unavailable, including with large watched resource sets.
 - Prevent queued mailbox events from delaying controller shutdown after cancellation during queue processing.
 

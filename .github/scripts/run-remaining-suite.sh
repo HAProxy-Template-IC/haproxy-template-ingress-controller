@@ -8,6 +8,22 @@ haproxy -v
 
 case "$PILOT_SUITE" in
     integration) KEEP_CLUSTER=false make test-integration; exit ;;
+    integration-coverage) KEEP_CLUSTER=false make test-integration-coverage; cp -r coverage .pilot/; exit ;;
+    unit-shard|coverage-shard)
+        go list ./... > .pilot/unit-packages-all.txt
+        python3 .github/scripts/select-unit-packages.py
+        PKG=$(tr '\n' ' ' < .pilot/unit-packages-selected.txt)
+        export PKG
+        if [[ "$PILOT_SUITE" == coverage-shard ]]; then
+            GOFLAGS=-p=1 make test-coverage-unit
+            cp coverage.out coverage.txt .pilot/
+        elif [[ "$SHARD_ID" == renderer ]]; then
+            GOFLAGS=-p=1 make test-unit
+        else
+            GOFLAGS=-p=1 make test
+        fi
+        exit
+        ;;
     agent) make test-agent-docker; exit ;;
     lint) make lint audit; exit ;;
     unit) make test; exit ;;
