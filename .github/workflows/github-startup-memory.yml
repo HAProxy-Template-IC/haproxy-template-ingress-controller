@@ -1,16 +1,16 @@
-name: GitHub complete E2E suite check
+name: GitHub rate-limit scheduling diagnosis
 'on':
   push:
     branches:
-    - ci/github-complete-suite-check-20261013
+    - ci/github-rate-limit-scheduling-20261013
 permissions:
   contents: read
 concurrency:
-  group: suite-check-${{ github.ref }}
+  group: rate-limit-scheduling-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verification:
-    name: suite-check-${{ matrix.name }}
+    name: rate-limit-scheduling-${{ matrix.name }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     strategy:
@@ -18,10 +18,10 @@ jobs:
       max-parallel: 60
       matrix:
         include:
-        - name: e2e-hp3.4-4
-          shard: '4'
-        - name: rate-limit
-          profile: rate-limit
+        - name: balanced
+          settings: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi;spoaHub.resources.requests.cpu=200m;rateLimit.shared.managedStore.resources.requests.cpu=100m
+        - name: balanced-info
+          settings: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi;spoaHub.resources.requests.cpu=200m;rateLimit.shared.managedStore.resources.requests.cpu=100m;spoaHub.hub.logLevel=info
     env:
       PILOT_GOGC: '300'
       PILOT_GOMAXPROCS: '2'
@@ -29,10 +29,10 @@ jobs:
       PILOT_SOURCE_SHA: ${{ github.sha }}
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
-      HAPTIC_E2E_PROFILE: ${{ matrix.profile || '' }}
+      HAPTIC_E2E_PROFILE: rate-limit
       HAPTIC_E2E_GWAPI_CHANNEL: standard
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
-      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=750m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      HAPTIC_E2E_EXTRA_SET: ${{ matrix.settings }}
       PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
       SHARD_COUNT: '4'
       E2E_SHARD_TOTAL: '4'
@@ -41,7 +41,7 @@ jobs:
       SCALE_SEED_WORKERS: '4'
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
-      E2E_SHARD_INDEX: ${{ matrix.shard || '1' }}
+      E2E_SHARD_INDEX: '1'
       E2E_SHARD_WEIGHTS: .github/e2e-shard-weights.json
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -60,7 +60,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
-        name: runner-pilot-suite-check-${{ matrix.name }}
+        name: runner-pilot-rate-limit-scheduling-${{ matrix.name }}
         path: '.pilot/
 
           debug-logs/'
