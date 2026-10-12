@@ -1,0 +1,326 @@
+{
+  "TestAgentStateUsesLocalSocketWithoutNetworkCredentials": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestAggregateIncludeStatsFromSlices": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestAppliedPlanOfRejectsAMismatchedBlob": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestApplyCRD_ServerSideApply": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestBaselineOfAPodSide": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestBaselineOfARenderedSide": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestBundledChartAdmissionUserlistsStayConsistentUnderReconcileChurn": {
+    "parallel": false,
+    "seconds": 113.26
+  },
+  "TestBundledChartHTTPRouteIncrementalRenderServiceWarmExecution": {
+    "parallel": false,
+    "seconds": 104.88
+  },
+  "TestBundledChartHapticActivationStaysExactAcrossScaleAndGovernance": {
+    "parallel": false,
+    "seconds": 209.1
+  },
+  "TestBundledChartIncrementalRenderServiceWarmExecution": {
+    "parallel": false,
+    "seconds": 106.17
+  },
+  "TestBundledChartIncrementalVectorCarrierEligibility": {
+    "parallel": false,
+    "seconds": 104.0
+  },
+  "TestBundledGatewayPolicyActivationTransitions": {
+    "parallel": false,
+    "seconds": 113.55
+  },
+  "TestBundledHTTPRouteSourceTransactionWaveControl": {
+    "parallel": false,
+    "seconds": 104.58
+  },
+  "TestBundledRenderedRootsHaveExactCycleProtocols": {
+    "parallel": false,
+    "seconds": 103.6
+  },
+  "TestCanonicalBenchmarkStatusMapOnlyNormalizesTransitionTime": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestCheckRenderedSidecarConfigsInvokesBothCompilers": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestCheckRenderedSidecarConfigsReportsTheConsequence": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestCheckRenderedSidecarConfigsSkipsWhenNothingRendered": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestCollectConfigDocuments": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestCollectSidecarConfigsFindsNativeSidecars": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestCollectSidecarConfigsPreservesVariants": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestCollectSidecarConfigsRejectsUnverifiableImages": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestContainerRuntimeRejectsMissingOverride": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestDiffRendersTwoConfigs": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestDiffVerdicts": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestDisableTransparentHugePages": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestDoctorRejectsInvalidOutputAndTimeoutBeforeConnecting": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestDoctorWritesEvidenceBeforeReturningUnhealthy": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestExtractFileNames": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestFetchAgentStateNeedsTheCredentials": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestFetchAgentStateReadsTheFakeAgent": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestFetchAgentStateRejectsWrongCredentials": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestIncrementalBenchmarkCacheLifecyclePhases": {
+    "parallel": false,
+    "seconds": 0.66
+  },
+  "TestIncrementalBenchmarkCountingEngineForwardsGlobalUsage": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalBenchmarkEnginesForwardExactCycleReplay": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestIncrementalBenchmarkEnginesForwardPostProcessReuseProof": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestIncrementalBenchmarkEnginesForwardSourceTransactions": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestIncrementalBenchmarkSourceComparisonEnginesIgnoreProcessFlags": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestIncrementalRenderServiceExecutionScaling": {
+    "parallel": false,
+    "seconds": 3.05
+  },
+  "TestLoadCRDs": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestLoadCRDs_MultiDocFile": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestLoadCRDs_RejectsNonCRD": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestMergeIncludeStat": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestNewDirSchemaSource": {
+    "parallel": false,
+    "seconds": 1.56
+  },
+  "TestParseDiffSource": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPlanDifferentialBackendTLSShapes": {
+    "parallel": false,
+    "seconds": 194.95
+  },
+  "TestPlanDifferentialCatchesABrokenPartition": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPlanDifferentialCatchesAWrongMapEntry": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPlanDifferentialCorpus": {
+    "parallel": false,
+    "seconds": 199.46
+  },
+  "TestPlanDifferentialDefaultServerKeywordsAreStructured": {
+    "parallel": false,
+    "seconds": 194.29
+  },
+  "TestPlanDifferentialSynthetic": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestPreflightSchemas": {
+    "parallel": false,
+    "seconds": 1.67
+  },
+  "TestPrintAgentStateHuman": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPrintAgentStateJSON": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPrintAgentStateListsFiles": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPrintAgentStateRejectsAnUnknownFormat": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPrintAgentStateWithoutAnApply": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPrintDiffHuman": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPrintDiffJSON": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPrintDiffRejectsAnUnknownFormat": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestPrintDiffSaysWhenNothingChanges": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestRemoveConfigHooksIn": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestRenderAllFilesIncludesK8sResourceRoots": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderChartManifests": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderChartManifests_ChartVersionGuard": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestResolveConfigName": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestResolveDurationOption": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestResolveFloat32Option": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestResolveIntOption": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestSetupValidationRejectsInvalidIncrementalStructure": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestShortenTestName": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestSidecarCollectorIgnoresOtherResourceShapes": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestSidecarImageOverridesMustMatch": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestSnapshotName": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestSortedKeys": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestTruncateString": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestVCLBackendHosts": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestVCLUsesItsOwnWorkloadImage": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestWithLiveDeadline": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestWriteSnapshot": {
+    "parallel": false,
+    "seconds": 0.0
+  },
+  "TestZeroSchemaSourceIsTheOfflineFallThrough": {
+    "parallel": false,
+    "seconds": 0.0
+  }
+}

@@ -1,0 +1,73 @@
+name: GitHub complete unit suite speed verification
+'on':
+  push:
+    branches:
+    - ci/github-migration-20261012
+permissions:
+  contents: read
+concurrency:
+  group: unit-speed-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  remaining:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 60
+      matrix:
+        include:
+        - name: unit-command-1
+          suite: unit-shard
+          shard: command
+          index: '1'
+        - name: unit-command-2
+          suite: unit-shard
+          shard: command
+          index: '2'
+        - name: unit-command-3
+          suite: unit-shard
+          shard: command
+          index: '3'
+        - name: unit-renderer
+          suite: unit-shard
+          shard: renderer
+        - name: unit-rest
+          suite: unit-shard
+          shard: rest
+        - name: test-support
+          suite: test-support
+    env:
+      PILOT_SUITE: ${{ matrix.suite }}
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: '3.4'
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      BASELINE_CHART_VERSION: ''
+      GITOPS_PROVIDER: ''
+      GITOPS_CERTIFICATES: ''
+      SHARD_ID: ${{ matrix.shard || '' }}
+      SHARD_COUNT: '3'
+      SHARD_INDEX: ${{ matrix.index || '' }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Run the existing suite on a fresh runner
+      run: bash .github/scripts/run-remaining-pilot.sh
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: runner-pilot-unit-speed-${{ matrix.name }}
+        path: '.pilot/
+
+          debug-logs/
+
+          '
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: warn

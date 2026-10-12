@@ -12,6 +12,18 @@ SPEC.loader.exec_module(SHARD)
 
 
 class ShardTest(unittest.TestCase):
+    def test_unit_inventory_includes_examples_and_fuzz_seeds(self):
+        names = ["TestOne", "TestTwo", "Example", "ExampleRenderer_output", "FuzzDecode"]
+        inventory = "\n".join(names + ["BenchmarkRender", "ok example/pkg 0.01s"])
+        shards = SHARD.partition(inventory, 3, kinds=("Test", "Example", "Fuzz"))
+        self.assertCountEqual([name for shard in shards for name in shard], names)
+        self.assertEqual(SHARD.partition(inventory, 1), [["TestOne", "TestTwo"]])
+
+    def test_rejects_unsupported_test_kinds(self):
+        for kinds in [(), ("Benchmark",), (".*",)]:
+            with self.subTest(kinds=kinds), self.assertRaises(ValueError):
+                SHARD.partition("TestOne", 1, kinds=kinds)
+
     def test_disjoint_complete_balanced_partitions(self):
         names = ["Test"] + [f"TestCase{index}" for index in range(173)]
         inventory = "\n".join(names + ["ok example/package 0.001s", "? example/helper [no test files]"])

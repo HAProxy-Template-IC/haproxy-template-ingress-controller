@@ -335,7 +335,12 @@ check-no-lua: ## Reject Lua scripts and runtime hooks in HAPTIC
 test-admission-readiness: ## Verify admission readiness polling fails closed
 	$(GO) tool gotestsum --format testname -- -race ./tests/admission/...
 
-test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
+test: ## Run all unit and supporting test suites
+	@$(MAKE) test-support
+	@$(MAKE) test-unit
+
+.PHONY: test-support
+test-support: ## Run script, browser, process, playground and cluster-helper tests
 	@echo "Running tests..."
 	$(MAKE) test-admission-readiness
 	$(MAKE) test-playground-web
@@ -361,7 +366,6 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 	bash scripts/tests/test_chart_varnish_image.sh
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
-	@$(MAKE) test-unit
 	@$(MAKE) test-process
 	@$(MAKE) test-playground
 	@$(MAKE) test-e2e-helpers
@@ -377,7 +381,7 @@ test-unit: ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 	@# produce the profile; a correctness run does not need it.
 	@# -timeout: pkg/controller/renderer's chart-scale suites run well past go
 	@# test's 10m default under -race, which fails the package on time alone.
-	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") $${PKG:-./...}
+	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $(if $(COUNT),-count=$(COUNT)) $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") $${PKG:-./...}
 
 .PHONY: test-e2e-helpers
 test-e2e-helpers: ## Test e2e client and cluster helpers without creating a cluster
