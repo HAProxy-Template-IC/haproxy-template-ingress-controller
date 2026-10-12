@@ -1,0 +1,474 @@
+name: GitHub complete candidate verification
+'on':
+  push:
+    branches:
+    - ci/github-complete-candidate-20261012
+permissions:
+  contents: read
+concurrency:
+  group: complete-candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verification:
+    name: candidate-${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include:
+        - name: e2e-hp3.0-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '1'
+        - name: e2e-hp3.0-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '2'
+        - name: e2e-hp3.0-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '3'
+        - name: e2e-hp3.1-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '1'
+        - name: e2e-hp3.1-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '2'
+        - name: e2e-hp3.1-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '3'
+        - name: e2e-hp3.2-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '1'
+        - name: e2e-hp3.2-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '2'
+        - name: e2e-hp3.2-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '3'
+        - name: e2e-hp3.3-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '1'
+        - name: e2e-hp3.3-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '2'
+        - name: e2e-hp3.3-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '3'
+        - name: e2e-hp3.4-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '1'
+        - name: e2e-hp3.4-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '2'
+        - name: e2e-hp3.4-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '3'
+        - name: e2e-cache
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: cache
+          profile: cache
+        - name: e2e-rate-limit
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: rate-limit
+          profile: rate-limit
+        - name: e2e-api-gateway
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: api-gateway
+          profile: api-gateway
+          channel: experimental
+        - name: e2e-minimum-kubernetes-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-1
+          index: '1'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: e2e-minimum-kubernetes-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-2
+          index: '2'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: e2e-minimum-kubernetes-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-3
+          index: '3'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - name: gateway-1
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '1'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: gateway-2
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '2'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: gateway-3
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '3'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: gateway-4
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '4'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: ingress-1
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '1'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: ingress-2
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '2'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: ingress-3
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '3'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - name: ingress-4
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '4'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+        - runner: ubuntu-24.04-arm
+          kind: nightly
+          name: gateway-1.1.0
+          release: v1.1.0
+          pattern: TestGatewayAPIReleaseMatrix
+        - runner: ubuntu-24.04-arm
+          kind: nightly
+          name: gateway-1.4.0
+          release: v1.4.0
+          pattern: TestGatewayAPIReleaseMatrix
+        - runner: ubuntu-24.04-arm
+          kind: nightly
+          name: gateway-1.5.1
+          release: v1.5.1
+          pattern: TestGatewayAPIReleaseMatrix
+        - runner: ubuntu-24.04-arm
+          kind: nightly
+          name: gateway-churn
+          churn: '1'
+          pattern: TestGatewayChurn
+        - runner: ubuntu-24.04-arm
+          kind: nightly
+          name: scale
+          scale: '1'
+          pattern: TestScale
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.1.0-current
+          suite: upgrade
+          baseline: 0.1.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-current
+          suite: upgrade
+          baseline: 0.2.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.1-current
+          suite: upgrade
+          baseline: 0.2.1
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.2-current
+          suite: upgrade
+          baseline: 0.2.2
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.3.0-current
+          suite: upgrade
+          baseline: 0.3.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.0-current
+          suite: upgrade
+          baseline: 0.4.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.1-current
+          suite: upgrade
+          baseline: 0.4.1
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.5.0-current
+          suite: upgrade
+          baseline: 0.5.0
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-alpha.3-current
+          suite: upgrade
+          baseline: 0.2.0-alpha.3
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: install-without-gateway-current
+          suite: plain
+          node: ''
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.1.0-minimum
+          suite: upgrade
+          baseline: 0.1.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-minimum
+          suite: upgrade
+          baseline: 0.2.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.1-minimum
+          suite: upgrade
+          baseline: 0.2.1
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.2-minimum
+          suite: upgrade
+          baseline: 0.2.2
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.3.0-minimum
+          suite: upgrade
+          baseline: 0.3.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.0-minimum
+          suite: upgrade
+          baseline: 0.4.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.1-minimum
+          suite: upgrade
+          baseline: 0.4.1
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.5.0-minimum
+          suite: upgrade
+          baseline: 0.5.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-alpha.3-minimum
+          suite: upgrade
+          baseline: 0.2.0-alpha.3
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: install-without-gateway-minimum
+          suite: plain
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-argo-external
+          suite: gitops
+          provider: argo
+          certificates: external
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-argo-cert-manager
+          suite: gitops
+          provider: argo
+          certificates: cert-manager
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-flux-external
+          suite: gitops
+          provider: flux
+          certificates: external
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-flux-cert-manager
+          suite: gitops
+          provider: flux
+          certificates: cert-manager
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+        - runner: ubuntu-24.04
+          kind: x64
+          name: acceptance
+          suite: acceptance
+        - runner: ubuntu-24.04
+          kind: x64
+          name: defaults
+          suite: defaults
+        - runner: ubuntu-24.04
+          kind: x64
+          name: vector
+          suite: vector
+        - runner: ubuntu-24.04
+          kind: x64
+          name: lint
+          suite: lint
+        - runner: ubuntu-24.04
+          kind: x64
+          name: chart
+          suite: chart
+    env:
+      PILOT_GOGC: '300'
+      PILOT_GOMAXPROCS: '4'
+      HAPTIC_E2E_CONTROLLER_STARTUP: staged
+      PILOT_CAPTURE_PROFILES: '0'
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
+      E2E_SHARD_INDEX: ${{ matrix.index || matrix.shard || '1' }}
+      HAPTIC_E2E_PROFILE: ${{ matrix.profile || '' }}
+      HAPTIC_E2E_GWAPI_CHANNEL: ${{ matrix.channel || 'standard' }}
+      KIND_NODE_IMAGE: ${{ matrix.node || 'kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5'
+        }}
+      HAPTIC_E2E_EXTRA_SET: controller.resources.limits.cpu=4;controller.resources.limits.memory=2Gi
+      PILOT_SUITE: ${{ matrix.suite }}
+      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:d4a7ca1d3f00d5c9af8f0ca64a2acf29f3f8e4df61e02c810c1b8fea974b6879
+      BASELINE_CHART_VERSION: ${{ matrix.baseline || '' }}
+      GITOPS_PROVIDER: ${{ matrix.provider || '' }}
+      GITOPS_CERTIFICATES: ${{ matrix.certificates || '' }}
+      SHARD_ID: ${{ matrix.shard || '' }}
+      SHARD_COUNT: '4'
+      E2E_SHARD_TOTAL: '3'
+      SHARD_INDEX: ${{ matrix.shard || '' }}
+      PILOT_STARTUP_ONLY: ${{ matrix.startup || '0' }}
+      CONFORMANCE_PARALLEL: '4'
+      TEST_RUN_PATTERN: ${{ matrix.pattern || '' }}
+      HAPTIC_E2E_GWAPI_VERSION: ${{ matrix.release || '' }}
+      HAPTIC_E2E_CHURN: ${{ matrix.churn || '' }}
+      HAPTIC_E2E_SCALE: ${{ matrix.scale || '' }}
+      HAPTIC_E2E_AGENT_DEBUG: ${{ matrix.scale || '' }}
+      SCALE_SEED_WORKERS: '4'
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: 1.27.2
+        cache: false
+      if: matrix.runner == 'ubuntu-24.04-arm'
+    - name: Install pinned native tools
+      run: bash .github/scripts/install-arm-pilot-tools.sh
+      if: matrix.runner == 'ubuntu-24.04-arm'
+    - name: Run native ARM suite
+      if: matrix.runner == 'ubuntu-24.04-arm'
+      run: bash .github/scripts/run-arm-pilot.sh
+    - name: Run upstream Gateway conformance
+      if: matrix.kind == 'gateway'
+      run: 'set -euo pipefail
+
+        TEST_RUN_PATTERN=$(scripts/shard-conformance-tests.sh "$SHARD_INDEX" 4)
+
+        export TEST_RUN_PATTERN
+
+        printf ''%s\n'' "$TEST_RUN_PATTERN" > .pilot/conformance-selection.txt
+
+        set +e
+
+        make test-gateway-conformance 2>&1 | tee .pilot/conformance.log
+
+        result=${PIPESTATUS[0]}
+
+        printf ''%s\n'' "$result" > .pilot/conformance.exit
+
+        exit "$result"
+
+        '
+    - name: Run upstream Ingress conformance
+      if: matrix.kind == 'ingress'
+      run: bash .github/scripts/run-ingress-arm-pilot.sh
+    - name: Check controller output
+      if: matrix.kind == 'nightly'
+      run: KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
+    - name: Run existing x64 suite
+      if: matrix.kind == 'x64'
+      run: bash .github/scripts/run-remaining-pilot.sh
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: runner-pilot-candidate-${{ matrix.name }}
+        path: '.pilot/
+
+          debug-logs/
+
+          scale-metrics.json
+
+          '
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error

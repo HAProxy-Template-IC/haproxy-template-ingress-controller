@@ -303,8 +303,10 @@ Keep any existing entries for this watch: Helm replaces lists. These entries add
 ## HTTP Resources
 
 Use `http.Fetch(url, options, authentication)` to read a response body into a
-template. For example, you can maintain an IP blocklist separately from your
-routing resources.
+template. It returns two values: the response body and an error. Assign both
+values and check the error before using the body; `fail(tostring(fetchErr))`
+stops rendering when the error isn't `nil`. For example, you can maintain an IP
+blocklist separately from your routing resources.
 
 Deploying renders don't fetch a new URL's first response. Until that content passes
 `haproxy -c` together with the rest of the configuration, deploying renders
@@ -346,9 +348,12 @@ Set `critical: true` only when an empty body would produce a dangerously wrong c
 A render can also return an empty string for content that hasn't failed: new content waiting for a render that can accept it. `http.Pending(url)` returns `true` in that case, and a later render returns the content. Check it before reporting a failed fetch:
 
 ```
-{%- var page = http.Fetch(url) %}
+{%- var page, fetchErr = http.Fetch(url) %}
+{%- if fetchErr != nil %}
+{{ fail(tostring(fetchErr)) }}
+{%- end %}
 {%- if page == "" && !http.Pending(url) %}
-{# the fetch failed: report it #}
+{# The fetch failed or returned an empty body. #}
 {%- end %}
 ```
 
@@ -380,7 +385,10 @@ spec:
         timeout server 30s
       frontend web
         bind :80
-        {%- var blocklist = http.Fetch("https://example.com/ip-blocklist.txt", map[string]any{"interval": "5m", "critical": true}) %}
+        {%- var blocklist, fetchErr = http.Fetch("https://example.com/ip-blocklist.txt", map[string]any{"interval": "5m", "critical": true}) %}
+        {%- if fetchErr != nil %}
+        {{ fail(tostring(fetchErr)) }}
+        {%- end %}
         {%- for _, ip := range split(tostring(blocklist), "\n") %}
         {%- if strip(ip) != "" %}
         http-request deny if { src {{ strip(ip) }} }
