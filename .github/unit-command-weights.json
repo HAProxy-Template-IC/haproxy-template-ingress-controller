@@ -179,10 +179,6 @@
     "parallel": false,
     "seconds": 0.0
   },
-  "TestPlanDifferentialBackendTLSShapes": {
-    "parallel": false,
-    "seconds": 194.95
-  },
   "TestPlanDifferentialCatchesABrokenPartition": {
     "parallel": false,
     "seconds": 0.0
@@ -194,10 +190,6 @@
   "TestPlanDifferentialCorpus": {
     "parallel": false,
     "seconds": 199.46
-  },
-  "TestPlanDifferentialDefaultServerKeywordsAreStructured": {
-    "parallel": false,
-    "seconds": 194.29
   },
   "TestPlanDifferentialSynthetic": {
     "parallel": false,

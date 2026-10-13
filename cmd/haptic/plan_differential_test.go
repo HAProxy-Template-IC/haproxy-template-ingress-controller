@@ -640,11 +640,6 @@ func TestPlanDifferentialCatchesAWrongMapEntry(t *testing.T) {
 	})
 }
 
-// --- corpus case -----------------------------------------------------------
-
-// TestPlanDifferentialCorpus renders every validationTest of the bundled chart
-// and holds each render's plan against the configuration and map files it
-// produced.
 func TestPlanDifferentialCorpus(t *testing.T) {
 	restoreHAProxy := dataplanetest.InstallFakeHAProxy()
 	t.Cleanup(restoreHAProxy)
@@ -653,35 +648,31 @@ func TestPlanDifferentialCorpus(t *testing.T) {
 	t.Cleanup(cleanup)
 	require.NotEmpty(t, testNames, "the bundled chart contributed no validation tests")
 
-	// Rendered in parallel like the runner does, compared serially:
-	// client-native's parser writes a package-level global while parsing.
-	compared := 0
-	for _, rendered := range renderCorpus(t, runner, testNames) {
-		assert.Emptyf(t, planMismatches(t, rendered.config, rendered.maps, rendered.plan),
-			"%s: the plan does not describe what the render emitted", rendered.name)
-		compared++
-	}
-	assert.Greater(t, compared, len(testNames)/2, "most of the corpus must actually render")
+	renders := renderCorpus(t, runner, testNames)
+	assert.Greater(t, len(renders), len(testNames)/2, "most of the corpus must actually render")
+	t.Run("configuration and maps", func(t *testing.T) {
+		// client-native's parser writes a package-level global, so comparisons stay serial.
+		for _, rendered := range renders {
+			assert.Emptyf(t, planMismatches(t, rendered.config, rendered.maps, rendered.plan),
+				"%s: the plan does not describe what the render emitted", rendered.name)
+		}
+	})
+	t.Run("structured default server keywords", func(t *testing.T) {
+		assertCorpusDefaultServerKeywords(t, renders)
+	})
+	t.Run("dynamic backend TLS", func(t *testing.T) {
+		assertCorpusBackendTLS(t, renders)
+	})
 }
 
-// TestPlanDifferentialDefaultServerKeywordsAreStructured proves the per-server
-// keywords reach the plan record (Backend.DefaultServer), not only the profile
-// text: the deploy side composes `add server` from the record, so a BackendTLS
-// backend must record ssl/verify/ca-file and every checked backend must record
-// `check` — otherwise a runtime-added pod loses its TLS control or health check.
-func TestPlanDifferentialDefaultServerKeywordsAreStructured(t *testing.T) {
-	restoreHAProxy := dataplanetest.InstallFakeHAProxy()
-	t.Cleanup(restoreHAProxy)
-
-	runner, testNames, cleanup := bundledChartRunner(t)
-	t.Cleanup(cleanup)
-	require.NotEmpty(t, testNames)
-
+func assertCorpusDefaultServerKeywords(t *testing.T, renders []corpusRender) {
+	t.Helper()
 	sawCheck, sawBTLS := false, false
-	for _, rendered := range renderCorpus(t, runner, testNames) {
-		for _, backend := range rendered.plan.Backends {
-			kws := make(map[string]bool, len(backend.DefaultServer))
-			for _, kw := range backend.DefaultServer {
+	for _, rendered := range renders {
+		for name := range rendered.plan.Backends {
+			keywords := rendered.plan.Backends[name].DefaultServer
+			kws := make(map[string]bool, len(keywords))
+			for _, kw := range keywords {
 				kws[kw.Name] = true
 			}
 			if kws["check"] {
@@ -696,25 +687,10 @@ func TestPlanDifferentialDefaultServerKeywordsAreStructured(t *testing.T) {
 	assert.True(t, sawBTLS, "no backend records ssl+verify+ca-file in DefaultServer — a BackendTLS add server would drop the TLS control")
 }
 
-// TestPlanDifferentialBackendTLSShapes proves the two BackendTLS reload-free
-// properties. First, a CA bundle is registered as a runtime-rotatable ca-file
-// (FileKindCA), so a new verify-BackendTLS route and a CA rotation apply over
-// the runtime API instead of reloading. Second, an mTLS client cert is
-// referenced bare under crt-base, which resolves to the path the plan
-// registers it under — the runtime cert-store ident `add server ... crt` must
-// match — so the backend stays dynamic and pod churn on it never reloads; a
-// crt the plan does not register would make the worker refuse the add server,
-// which is why the arg is pinned to the plan.
-func TestPlanDifferentialBackendTLSShapes(t *testing.T) {
-	restoreHAProxy := dataplanetest.InstallFakeHAProxy()
-	t.Cleanup(restoreHAProxy)
-
-	runner, testNames, cleanup := bundledChartRunner(t)
-	t.Cleanup(cleanup)
-	require.NotEmpty(t, testNames)
-
+func assertCorpusBackendTLS(t *testing.T, renders []corpusRender) {
+	t.Helper()
 	sawCA, sawCrtBackend := false, false
-	for _, rendered := range renderCorpus(t, runner, testNames) {
+	for _, rendered := range renders {
 		for i := range rendered.plan.Files {
 			f := &rendered.plan.Files[i]
 			if f.Kind == renderplan.FileKindCA && strings.Contains(f.Path, "backend-tls-ca") {
@@ -722,7 +698,8 @@ func TestPlanDifferentialBackendTLSShapes(t *testing.T) {
 			}
 		}
 		certs := deployplan.InventoryOf(rendered.plan).Certs
-		for name, backend := range rendered.plan.Backends {
+		for name := range rendered.plan.Backends {
+			backend := rendered.plan.Backends[name]
 			if assertClientCertDynamic(t, name, &backend, certs) {
 				sawCrtBackend = true
 			}
