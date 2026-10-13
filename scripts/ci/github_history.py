@@ -1,6 +1,7 @@
 """Fetch metrics from successful jobs in one GitHub workflow."""
 
 import datetime
+import hashlib
 import io
 import itertools
 import json
@@ -48,6 +49,8 @@ def successful_job_metrics(api, repository, current_run, *, workflow, branch, jo
             if error.code in {404, 410}:
                 continue
             raise
+        if artifact["digest"] != "sha256:" + hashlib.sha256(content).hexdigest():
+            raise ValueError("Workflow metrics artifact digest does not match GitHub's record")
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             if archive.namelist() != [metrics_name] or archive.getinfo(metrics_name).file_size > 1024 * 1024:
                 raise ValueError("Workflow metrics artifact has unexpected contents")

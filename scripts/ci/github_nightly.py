@@ -30,7 +30,8 @@ def plan(api, env, event):
     if event["repository"]["full_name"] != repository:
         raise ValueError("Nightly trigger belongs to a different repository")
     run = api.get(f"repos/{repository}/actions/runs/{env['GITHUB_RUN_ID']}")
-    if run["head_sha"] != env["GITHUB_SHA"] or run["event"] != env["GITHUB_EVENT_NAME"]:
+    if (run["id"] != int(env["GITHUB_RUN_ID"]) or run["head_sha"] != env["GITHUB_SHA"]
+            or run["event"] != env["GITHUB_EVENT_NAME"]):
         raise ValueError("Nightly run does not match its trigger revision")
     if run["event"] == "schedule":
         schedules = {"30 2 * * 1-6": "nightly", "30 3 * * 0": "weekly"}

@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import io
 import json
 import unittest
@@ -26,6 +27,7 @@ class HistoryTests(unittest.TestCase):
         self.api.all.side_effect = lambda path, field, **params: iter({
             "workflow_runs": [self.run], "jobs": [self.job], "artifacts": [self.artifact]}[field])
         self.api.artifact.return_value = self.archive()
+        self.artifact["digest"] = "sha256:" + hashlib.sha256(self.api.artifact.return_value).hexdigest()
 
     @staticmethod
     def archive(name="scale-metrics.json", contents=None):
@@ -87,8 +89,14 @@ class HistoryTests(unittest.TestCase):
     def test_archive_paths_are_never_extracted_or_treated_as_metrics(self):
         for name in ("../scale-metrics.json", "other.json", "/scale-metrics.json"):
             self.api.artifact.return_value = self.archive(name)
-            with self.subTest(name=name), self.assertRaises(ValueError):
+            self.artifact["digest"] = "sha256:" + hashlib.sha256(self.api.artifact.return_value).hexdigest()
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unexpected contents"):
                 self.history()
+
+    def test_artifact_bytes_must_match_the_digest_from_github(self):
+        self.api.artifact.return_value = self.archive(contents={"controller_rss_bytes": 1})
+        with self.assertRaisesRegex(ValueError, "digest does not match"):
+            self.history()
 
     def test_duplicate_jobs_are_rejected(self):
         self.api.all.return_value = iter([self.job, self.job])
