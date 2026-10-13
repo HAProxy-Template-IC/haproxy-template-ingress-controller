@@ -27,6 +27,14 @@ class WorkflowInventoryTests(unittest.TestCase):
         mapped = {name for group in self.manifest["gitlab_job_mapping"].values() for name in group}
         self.assertEqual(mapped, set(names))
 
+    def test_skipped_jobs_keep_unique_names_before_matrix_expansion(self):
+        names = [job["name"] for job in self.workflow["jobs"].values()]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(set(names), set(self.manifest["required_jobs"]) | {"verified"})
+        for job in self.workflow["jobs"].values():
+            if "strategy" in job:
+                self.assertEqual(job["name"], job["strategy"]["matrix"]["include"][0]["name"])
+
     def test_coverage_has_every_profile_without_waiting_for_unrelated_suites(self):
         jobs = self.workflow["jobs"]
         rows = [row for group in jobs["coverage"]["needs"]
