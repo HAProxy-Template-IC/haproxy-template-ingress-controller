@@ -44,7 +44,11 @@ if [[ "${HAPTIC_E2E_PROFILE:-}" == cache ]]; then
     make docker-build-varnish VARNISH_IMAGE="$PILOT_VARNISH_IMAGE" VARNISH_PLATFORMS=linux/arm64
     yq -i '.cache.varnish.image = strenv(PILOT_VARNISH_IMAGE)' charts/haptic/values.yaml
 fi
-make docker-build-test 2>&1 | tee .pilot/build.log
+build_target=docker-build-test
+if [[ "${PILOT_NATIVE_BUILD:-0}" == 1 ]]; then
+    build_target=docker-build-test-native
+fi
+make "$build_target" 2>&1 | tee .pilot/build.log
 docker image inspect haptic:test > .pilot/controller-image.json
 if [[ "${PILOT_STARTUP_PROFILE:-1}" == 1 ]]; then
     python3 .github/scripts/profile-startup.py > .pilot/startup-profile.log 2>&1 &

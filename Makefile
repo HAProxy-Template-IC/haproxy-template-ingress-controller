@@ -34,6 +34,8 @@ IMAGE_NAME ?= haptic# Container image name (override: IMAGE_NAME=my-image)
 IMAGE_TAG ?= dev# Image tag (override: IMAGE_TAG=v1.0.0)
 REGISTRY ?=# Container registry (e.g., registry.gitlab.com/myorg)
 FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NAME):$(IMAGE_TAG))
+DOCKER_BINARY_ARCH ?= amd64
+DOCKER_BINARY_CONTEXT ?=
 # HAProxy version baked into the controller image at build time.
 # Override per-build with HAPROXY_VERSION=3.x.
 HAPROXY_VERSION ?= $(shell yq -r '.haproxyVersion' charts/haptic/values.yaml)
@@ -986,18 +988,18 @@ build: check-source-hash ## Build the controller binary for local development (w
 build-for-docker: check-source-hash ## Build binary in platform-structured path for Docker builds with --build-context
 	@echo "Building controller for Docker..."
 	@echo "  Version: $(VERSION)"
-	@echo "  Platform: linux/amd64"
-	@mkdir -p dist/linux/amd64
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build \
+	@echo "  Platform: linux/$(DOCKER_BINARY_ARCH)"
+	@mkdir -p dist/linux/$(DOCKER_BINARY_ARCH)
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(DOCKER_BINARY_ARCH) $(GO) build \
 		-mod=readonly \
 		-pgo=auto \
 		-trimpath \
 		-buildvcs=false \
 		-ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.sourceHash=$(SOURCE_HASH)" \
-		-o dist/linux/amd64/haptic \
+		-o dist/linux/$(DOCKER_BINARY_ARCH)/haptic \
 		./cmd/haptic
-	@echo "✓ Binary built: dist/linux/amd64/haptic"
-	@echo "  Use with: docker buildx build --platform linux/amd64 --build-context binary=dist --target runtime ..."
+	@echo "✓ Binary built: dist/linux/$(DOCKER_BINARY_ARCH)/haptic"
+	@echo "  Use with: docker buildx build --platform linux/$(DOCKER_BINARY_ARCH) --build-context binary=dist --target runtime ..."
 
 ## Docker targets
 
@@ -1011,6 +1013,7 @@ docker-build: check-source-hash ## Build Docker image
 	@echo "  Source hash:     $(SOURCE_HASH)"
 	@echo "  HAProxy series:  $(HAPROXY_VERSION) (chart-selected patch)"
 	DOCKER_BUILDKIT=1 bash scripts/retry-registry-build.sh docker build \
+		$(if $(DOCKER_BINARY_CONTEXT),--build-context "binary=$(DOCKER_BINARY_CONTEXT)" --target runtime) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
 		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
@@ -1021,6 +1024,11 @@ docker-build: check-source-hash ## Build Docker image
 
 docker-build-test: ## Build Docker image with test tag for acceptance tests
 	IMAGE_TAG=test $(MAKE) docker-build
+
+.PHONY: docker-build-test-native
+docker-build-test-native: ## Build the test image with the host Go compiler and cache
+	$(MAKE) build-for-docker VERSION="$(GIT_TAG)" DOCKER_BINARY_ARCH="$(shell $(GO) env GOARCH)"
+	IMAGE_TAG=test DOCKER_BINARY_CONTEXT="$(CURDIR)/dist" $(MAKE) docker-build
 
 docker-build-multiarch: check-source-hash ## Build multi-platform Docker image for local testing (linux/amd64 only)
 	@echo "Building multi-platform Docker image: $(FULL_IMAGE)"
