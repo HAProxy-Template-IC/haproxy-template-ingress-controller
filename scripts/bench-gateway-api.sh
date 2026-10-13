@@ -1124,6 +1124,7 @@ check_build_prerequisites() {
     command_required git
     command_required go
     command_required jq
+    command_required rg
     command_required sha256sum
     command_required xargs
     command_required cp
@@ -1454,7 +1455,7 @@ capture_host_provenance() {
 
 check_cluster_prerequisites() {
     local cmd
-    for cmd in kind kubectl helm make docker python3 rg timeout yq curl ps base64 tr; do
+    for cmd in kind kubectl helm make docker python3 timeout yq curl ps base64 tr; do
         command_required "$cmd"
     done
     local analyzer="${PROJECT_ROOT}/scripts/analyze-gateway-api-bench.py"

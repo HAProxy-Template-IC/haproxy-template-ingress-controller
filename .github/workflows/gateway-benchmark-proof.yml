@@ -29,6 +29,10 @@ jobs:
         cache-dependency-path: go.sum
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
+    - name: Install benchmark source inspection tools
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends ripgrep
     - name: Run unchanged benchmark workload and artifact gates
       run: |
         export BENCH_CI_OUTPUT="$RUNNER_TEMP/gateway-benchmark"
