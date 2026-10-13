@@ -1,0 +1,29 @@
+name: Report verification failures
+'on':
+  workflow_run:
+    workflows: [CI, Nightly and weekly verification]
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+  issues: write
+concurrency:
+  group: report-failures-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+jobs:
+  report:
+    if: >-
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+      contains(fromJSON('["push", "schedule", "workflow_dispatch"]'), github.event.workflow_run.event) &&
+      !contains(fromJSON('["cancelled", "skipped"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Track new failures and recurrences
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.ci.github_failures

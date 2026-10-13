@@ -29,7 +29,7 @@ class GitHub:
         page = 1
         while True:
             result = self.get(path, per_page=100, page=page, **params)
-            values = result[field]
+            values = result[field] if field is not None else result
             yield from values
             if len(values) < 100:
                 return
