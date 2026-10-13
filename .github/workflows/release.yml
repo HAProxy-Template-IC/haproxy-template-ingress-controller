@@ -104,6 +104,16 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash .github/scripts/run-release-publication.sh
       - *evidence
+  conformance:
+    needs: [source, chart]
+    permissions:
+      contents: write
+      actions: read
+      packages: read
+    uses: ./.github/workflows/conformance-report.yml
+    with:
+      source_sha: ${{ needs.source.outputs.sha }}
+      release: true
   smoke:
     needs: [source, spoa]
     strategy:
