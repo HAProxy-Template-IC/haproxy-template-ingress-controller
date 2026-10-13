@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -31,9 +33,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 	want := Default()
-	if got != want {
-		t.Fatalf("Load() = %#v, want %#v", got, want)
-	}
+	require.Equal(t, want, got)
 }
 
 func TestLoadIsolationOverrides(t *testing.T) {
@@ -47,12 +47,11 @@ func TestLoadIsolationOverrides(t *testing.T) {
 		ClusterName:     "haptic-gwbench-abc123",
 		KubeconfigPath:  "/tmp/haptic-gwbench-abc123.kubeconfig",
 		DockerNetwork:   "haptic-gwbench-abc123",
+		NetworkLabels:   map[string]string{},
 		ExposeHostPorts: false,
 		RequireNew:      true,
 	}
-	if got != want {
-		t.Fatalf("Load() = %#v, want %#v", got, want)
-	}
+	require.Equal(t, want, got)
 }
 
 func TestLoadRejectsInvalidExposeHostPorts(t *testing.T) {
@@ -225,10 +224,41 @@ func setIsolationEnv(t *testing.T, values map[string]string) {
 
 func unsetIsolationEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{clusterNameEnv, kubeconfigPathEnv, exposeHostPortsEnv, dockerNetworkEnv} {
+	for _, name := range []string{clusterNameEnv, kubeconfigPathEnv, exposeHostPortsEnv, dockerNetworkEnv, networkLabelsEnv} {
 		t.Setenv(name, "")
 		if err := os.Unsetenv(name); err != nil {
 			t.Fatalf("unset %s: %v", name, err)
 		}
+	}
+}
+
+func TestLoadNetworkLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		value    string
+		isolated bool
+		valid    bool
+	}{
+		{"owned", `{"benchmark.owner":"token"}`, true, true},
+		{"shared network", `{"benchmark.owner":"token"}`, false, false},
+		{"malformed", `{`, true, false},
+		{"null", `null`, true, false},
+		{"non-string", `{"benchmark.owner":42}`, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string]string{}
+			if tc.isolated {
+				values = validIsolationEnv()
+			}
+			values[networkLabelsEnv] = tc.value
+			setIsolationEnv(t, values)
+			config, err := Load()
+			if !tc.valid {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, map[string]string{"benchmark.owner": "token"}, config.NetworkLabels)
+		})
 	}
 }

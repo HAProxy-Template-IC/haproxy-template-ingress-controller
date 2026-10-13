@@ -32,6 +32,7 @@ func TestClusterNetworkRefusesExistingAndLabelsNewNetworks(t *testing.T) {
 				case "create":
 					created = true
 					require.Contains(t, cmd.Args, networkOwnerLabel+"="+cluster.Owner)
+					require.Contains(t, cmd.Args, "benchmark.owner=outer-owner")
 					require.Contains(t, cmd.Args, "--ipv6")
 					require.Contains(t, cmd.Args, "com.docker.network.driver.mtu=1450")
 					require.Equal(t, "private-network", cmd.Args[len(cmd.Args)-1])
@@ -45,7 +46,7 @@ func TestClusterNetworkRefusesExistingAndLabelsNewNetworks(t *testing.T) {
 			}}
 			dir := t.TempDir()
 			var err error
-			cluster, err = NewCluster(runner, &ClusterOptions{Name: "private", Kubeconfig: filepath.Join(dir, "kubeconfig"), Artifacts: dir, Environment: map[string]string{dockerNetworkSetting: "private-network"}})
+			cluster, err = NewCluster(runner, &ClusterOptions{Name: "private", Kubeconfig: filepath.Join(dir, "kubeconfig"), Artifacts: dir, Environment: map[string]string{dockerNetworkSetting: "private-network"}, NetworkLabels: map[string]string{"benchmark.owner": "outer-owner"}})
 			require.NoError(t, err)
 			err = cluster.createNetwork(t.Context())
 			if exists {
@@ -111,4 +112,27 @@ func networkCleanupRunner(t *testing.T, mode string, cluster **Cluster, removed 
 			return process.Result{}, nil
 		}
 	}}
+}
+
+func TestClusterRejectsUnsafeNetworkLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		network string
+		labels  map[string]string
+	}{
+		{"default network", "", map[string]string{"owner": "token"}},
+		{"shared network", "kind", map[string]string{"owner": "token"}},
+		{"owner override", "private-network", map[string]string{networkOwnerLabel: "foreign"}},
+		{"empty key", "private-network", map[string]string{"": "token"}},
+		{"equals in key", "private-network", map[string]string{"owner=foreign": "token"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			_, err := NewCluster(clusterRunner{}, &ClusterOptions{
+				Name: "private", Kubeconfig: filepath.Join(dir, "kubeconfig"), Artifacts: dir,
+				Environment: map[string]string{dockerNetworkSetting: tc.network}, NetworkLabels: tc.labels,
+			})
+			require.Error(t, err)
+		})
+	}
 }

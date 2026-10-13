@@ -372,6 +372,7 @@ func createE2ECluster(ctx context.Context) error {
 	ownedE2ECluster, err = kindutil.NewCluster(process.Executor{}, &kindutil.ClusterOptions{
 		Name: ClusterName, Kubeconfig: filepath.Join(artifacts, "kubeconfig"), Artifacts: artifacts,
 		Config: []byte(e2eCluster.KindConfig()), Environment: kindutil.DockerEnvironment(os.Getenv), ReadyTimeout: DefaultClusterCreateTimeout,
+		NetworkLabels: e2eCluster.NetworkLabels,
 	})
 	if err != nil {
 		return err

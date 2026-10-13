@@ -1524,13 +1524,9 @@ bootstrap_cluster() {
         cluster_owned=true
         network_owned=true
         kubeconfig_owned=true
-        docker network create \
-            --label 'haproxy-haptic.org/gateway-api-benchmark=true' \
-            --label "haproxy-haptic.org/benchmark-cluster=${CLUSTER_NAME}" \
-            --label "haproxy-haptic.org/benchmark-owner=${CLUSTER_OWNERSHIP_TOKEN}" \
-            "$DOCKER_NETWORK_NAME" > "${BENCH_OUTPUT_DIR}/cluster/docker-network-id.txt" || \
-            die "failed to create the owned benchmark Docker network"
-        verify_network_ownership || die "created Docker network does not carry the benchmark ownership token"
+        local network_labels
+        network_labels="$(jq -cn --arg cluster "$CLUSTER_NAME" --arg owner "$CLUSTER_OWNERSHIP_TOKEN" \
+            '{"haproxy-haptic.org/gateway-api-benchmark":"true", "haproxy-haptic.org/benchmark-cluster":$cluster, "haproxy-haptic.org/benchmark-owner":$owner}')"
         info "creating isolated HAPTIC e2e environment"
         local bootstrap_rc=0
         run_logged "${BENCH_OUTPUT_DIR}/cluster/bootstrap.log" \
@@ -1549,6 +1545,7 @@ bootstrap_cluster() {
                 HAPTIC_E2E_CLUSTER_NAME="$CLUSTER_NAME" \
                 HAPTIC_E2E_KUBECONFIG_PATH="$KUBECONFIG_PATH" \
                 HAPTIC_E2E_EXPOSE_HOST_PORTS=false \
+                HAPTIC_E2E_NETWORK_LABELS="$network_labels" \
                 KIND_EXPERIMENTAL_DOCKER_NETWORK="$DOCKER_NETWORK_NAME" \
                 KIND_NODE_IMAGE="$BENCH_KIND_NODE_IMAGE" \
                 HAPTIC_E2E_GWAPI_VERSION="$BENCH_GATEWAY_API_VERSION" \
@@ -1559,6 +1556,9 @@ bootstrap_cluster() {
                 printf 'benchmark: pod failure summary is unavailable\n' >&2
             die "isolated HAPTIC e2e bootstrap failed"
         fi
+        verify_network_ownership || die "created Docker network does not carry the benchmark ownership token"
+        docker network inspect "$DOCKER_NETWORK_NAME" --format '{{.Id}}' > "${BENCH_OUTPUT_DIR}/cluster/docker-network-id.txt" || \
+            die "failed to record the owned benchmark Docker network"
         cluster_state="$(kind_cluster_state "$CLUSTER_NAME")" || \
             die "could not verify the created kind cluster"
         [[ "$cluster_state" == "present" ]] || die "e2e bootstrap did not create ${CLUSTER_NAME}"

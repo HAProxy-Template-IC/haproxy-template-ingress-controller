@@ -39,6 +39,7 @@ type Config struct {
 	ClusterName     string
 	KubeconfigPath  string
 	DockerNetwork   string
+	NetworkLabels   map[string]string
 	ExposeHostPorts bool
 	RequireNew      bool
 }
@@ -76,6 +77,10 @@ func Load() (Config, error) {
 			setCount++
 		}
 	}
+	labels, err := loadNetworkLabels(setCount == len(settings))
+	if err != nil {
+		return Config{}, err
+	}
 	if setCount == 0 {
 		return Default(), nil
 	}
@@ -96,6 +101,7 @@ func Load() (Config, error) {
 		ClusterName:     clusterName,
 		KubeconfigPath:  kubeconfigPath,
 		DockerNetwork:   dockerNetwork,
+		NetworkLabels:   labels,
 		ExposeHostPorts: false,
 		RequireNew:      true,
 	}
