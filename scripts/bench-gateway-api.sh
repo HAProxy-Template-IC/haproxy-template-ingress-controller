@@ -719,6 +719,10 @@ capture_failure_state() {
         kubectl logs -n "$RELEASE_NAMESPACE" \
             -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
             --all-containers --prefix --tail=-1 --timestamps=true
+    best_effort_failure_capture "$output/previous-controller.log" \
+        kubectl logs -n "$RELEASE_NAMESPACE" \
+            -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
+            --container controller --previous --prefix --tail=-1 --timestamps=true
     best_effort_failure_capture "$output/loadbalancer.log" \
         kubectl logs -n "$RELEASE_NAMESPACE" \
             -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=loadbalancer \

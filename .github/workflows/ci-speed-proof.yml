@@ -114,6 +114,13 @@ jobs:
         exit "$result"
 
         '
+    - name: Collect conformance failure snapshots
+      if: always() && matrix.kind == 'gateway'
+      env:
+        KUBECONFIG: /tmp/haproxy-e2e-kubeconfig
+      run: |
+        kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot \
+          -o json > .pilot/conformance-snapshots.json
     - name: Run upstream Ingress conformance
       if: matrix.kind == 'ingress'
       run: bash .github/scripts/run-ingress-arm-pilot.sh

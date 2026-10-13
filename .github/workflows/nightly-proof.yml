@@ -208,6 +208,13 @@ jobs:
         make test-gateway-conformance
 
         '
+    - name: Collect conformance failure snapshots
+      if: always()
+      env:
+        KUBECONFIG: /tmp/haproxy-e2e-kubeconfig
+      run: |
+        kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot \
+          -o json > .pilot/conformance-snapshots.json
     - name: Retain verification evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
