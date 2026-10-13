@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Helm chart
 
+#### Changed
+
+- Render the Helm chart faster by avoiding repeated YAML serialization of template libraries.
+
 #### Fixed
 
 - TLS Gateways use isolated service addresses and pod ports to prevent routing to another Gateway's TLSRoutes.

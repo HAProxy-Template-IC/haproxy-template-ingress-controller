@@ -23,13 +23,8 @@ Schema for `_helm_load:` is documented in charts/CLAUDE.md. See ADR-0002
 */}}
 
 {{/*
-Strip skip-marked entries from the library's validationTests block, then
-return the (possibly modified) library as YAML. For each test, evaluates
-the optional `_helm_skip_test` template expression: if it trims to
-"true", the test is dropped; otherwise the test is kept with its
-`_helm_skip_test` metadata stripped. Libraries with no validationTests
-or no `_helm_skip_test` markers pass through untouched.
-Args (list): [library dict, root context]
+Mutates the library's validationTests in place; callers retain the parsed map.
+Args: [library dict, root context].
 */}}
 {{- define "haptic.filterTests" -}}
 {{- $library := index . 0 }}
@@ -60,7 +55,6 @@ Args (list): [library dict, root context]
   {{- end }}
   {{- $_ := set $library "validationTests" $filteredTests }}
 {{- end }}
-{{- $library | toYaml }}
 {{- end }}
 
 {{/*
@@ -221,8 +215,8 @@ the cost of its source being stored in the release Secret.
 {{- define "haptic.prepareLibraries" -}}
 {{- $prepared := list }}
 {{- $declared := dict }}
-{{- $context := . }}
-{{- $templateLibraries := .Values.controller.templateLibraries }}
+{{- $context := .context }}
+{{- $templateLibraries := $context.Values.controller.templateLibraries }}
 {{- if not $templateLibraries.kubernetesBackends.enabled }}
   {{- $consumers := list }}
   {{- range $name := list "ingress" "gateway" "ingressAnnotationsCompat" "hapticAnnotations" "haproxyIngress" "nginxIngress" }}
@@ -367,7 +361,7 @@ the cost of its source being stored in the release Secret.
     {{- end }}
     {{- $_ := unset $library "_helm_load" }}
     {{- include "haptic.projectKnownAnnotations" $library }}
-    {{- $library = include "haptic.filterTests" (list $library $context) | fromYaml }}
+    {{- $_ := include "haptic.filterTests" (list $library $context) }}
     {{- /* Underscore-prefixed top-level keys are chart-time-only scratch
            (ssl.yaml's _test_tls_* YAML anchors); they are not CRD fields and
            server-side apply would reject the object carrying them. */ -}}
@@ -399,7 +393,7 @@ the cost of its source being stored in the release Secret.
     {{- $prepared = append $prepared (dict "name" $slug "config" $library) }}
   {{- end }}
 {{- end }}
-{{- dict "libraries" $prepared | toYaml }}
+{{- $_ := set .result "libraries" $prepared }}
 {{- end }}
 
 {{/*
@@ -411,7 +405,9 @@ which the object emitter strips.
 */}}
 {{- define "haptic.watchedResourcesUnion" -}}
 {{- $union := dict }}
-{{- range $library := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
+{{- $prepared := dict }}
+{{- $_ := include "haptic.prepareLibraries" (dict "context" . "result" $prepared) }}
+{{- range $library := $prepared.libraries }}
   {{- $union = merge $union ($library.config.watchedResources | default dict) }}
 {{- end }}
 {{- $union = merge (deepCopy (.Values.controller.config.watchedResources | default dict)) $union }}
