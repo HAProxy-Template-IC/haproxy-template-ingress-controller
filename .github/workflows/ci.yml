@@ -18,17 +18,32 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  selection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      profile: ${{ steps.select.outputs.profile }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: select
+        run: python3 .github/scripts/select-verification-profile.py
   full:
+    needs: selection
     uses: ./.github/workflows/ci-speed-proof.yml
     with:
       verification_job_prefix: 'full / '
+      verification_profile: ${{ needs.selection.outputs.profile }}
   verified:
-    needs: full
+    needs: [selection, full]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require complete verification
         env:
+          SELECTION_RESULT: ${{ needs.selection.result }}
           VERIFICATION_RESULT: ${{ needs.full.result }}
-        run: test "$VERIFICATION_RESULT" = success
+        run: test "$SELECTION_RESULT" = success && test "$VERIFICATION_RESULT" = success

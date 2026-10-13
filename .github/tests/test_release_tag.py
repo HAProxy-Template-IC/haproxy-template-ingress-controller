@@ -37,6 +37,11 @@ class ReleaseTagTests(unittest.TestCase):
             "repos/owner/repo/actions/workflows/release.yml/dispatches"])
         self.assertEqual(api.posts[-1][1], {"ref": "v1.2.3", "inputs": {"verification_run": "42"}})
 
+    def test_documentation_only_evidence_cannot_tag_a_release(self):
+        self.receipt["profile"] = "prose"
+        with self.assertRaises(ValueError):
+            self.plan()
+
     def test_existing_release_version_and_lookup_failure_never_create_a_tag(self):
         for status in (200, 403, 503):
             api = FakeAPI(self.sha, status)

@@ -51,6 +51,11 @@ class SnapshotPublicationTests(unittest.TestCase):
                     self.plan()
                 self.values[component]["image"][key] = original
 
+    def test_documentation_only_verification_cannot_publish_runtime_images(self):
+        self.receipt["profile"] = "prose"
+        with self.assertRaises(ValueError):
+            self.plan()
+
     def test_rejects_incomplete_duplicate_or_extra_platforms(self):
         self.assertEqual(set(check_index(self.index, self.platforms)), set(self.platforms))
         for entries in (self.index["manifests"][:2], self.index["manifests"] * 2,

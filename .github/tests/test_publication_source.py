@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, patch
 import zipfile
 
 
@@ -103,6 +104,39 @@ class PublicationSourceTests(unittest.TestCase):
         self.receipt["event"] = "workflow_dispatch"
         self.pack()
         self.check()
+
+    def test_documentation_receipt_requires_explicit_scope_and_recomputed_changes(self):
+        self.manifest = json.dumps({"required_jobs": ["unit", "runtime"], "prose": {
+            "paths": ["README.md"], "patterns": [], "required_jobs": ["unit"]}}).encode()
+        paths = ["README.md"]
+        self.receipt.update(profile="prose", comparison_base="a" * 40,
+                            changed_paths_sha256=SOURCE.VERIFY.paths_digest(paths),
+                            manifest_sha256=hashlib.sha256(self.manifest).hexdigest())
+        self.pack()
+        with self.assertRaisesRegex(ValueError, "requires full"):
+            self.check()
+        comparison = Mock(return_value=paths)
+        arguments = dict(repository="owner/repo", sha="sha", tree="tree", manifest=self.manifest,
+                         allow_prose=True, comparison=comparison)
+        result = SOURCE.check_evidence(self.run, self.jobs, self.artifact, self.content, **arguments)
+        self.assertEqual(result["profile"], "prose")
+        comparison.assert_called_with("a" * 40, "sha")
+        for changed in ([], ["README.md", "main.go"], ["CHANGELOG.md"]):
+            comparison.return_value = changed
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                SOURCE.check_evidence(self.run, self.jobs, self.artifact, self.content, **arguments)
+        comparison.return_value = paths
+        self.jobs[0]["conclusion"] = "skipped"
+        with self.assertRaises(ValueError):
+            SOURCE.check_evidence(self.run, self.jobs, self.artifact, self.content, **arguments)
+
+    def test_publication_comparison_rejects_unrelated_or_malformed_base(self):
+        with patch.object(SOURCE.VERIFY, "git_is_ancestor", return_value=False), \
+                patch.object(SOURCE.VERIFY, "git_changed_paths") as paths:
+            for base in ("--all", "b" * 40, "a" * 40):
+                with self.subTest(base=base), self.assertRaises(ValueError):
+                    SOURCE.publication_changes(base, "b" * 40)
+            paths.assert_not_called()
 
 
 if __name__ == "__main__":

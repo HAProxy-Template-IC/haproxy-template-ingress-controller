@@ -17,7 +17,8 @@ def release_plan(version, chart, receipt, *, repository, sha):
         raise ValueError("VERSION is not a release version")
     if chart["version"] != version or chart["appVersion"] != version:
         raise ValueError("VERSION and chart versions differ; prepare the complete release first")
-    if (receipt["version"] != 2 or receipt["repository"] != repository or receipt["sha"] != sha or
+    if (receipt.get("profile", "full") != "full" or
+            receipt["version"] != 2 or receipt["repository"] != repository or receipt["sha"] != sha or
             not re.fullmatch(r"[a-f0-9]{40}", sha) or not receipt["jobs"] or
             not (receipt["branch"] == "main" or receipt["branch"].startswith("maint/"))):
         raise ValueError("Release source differs from its canonical verification receipt")

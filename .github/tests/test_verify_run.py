@@ -1,7 +1,9 @@
 import copy
 import importlib.util
+import json
 from pathlib import Path
 import unittest
+from unittest.mock import Mock
 
 
 SPEC = importlib.util.spec_from_file_location("verify_run", Path(__file__).parents[1] / "scripts/verify-run.py")
@@ -134,6 +136,64 @@ class RevisionIdentityTests(unittest.TestCase):
         event["action"] = "destroyed"
         with self.assertRaises(ValueError):
             VERIFY.revision_identity("merge_group", event, **arguments, is_ancestor=ancestry)
+
+
+class VerificationProfileTests(unittest.TestCase):
+    def setUp(self):
+        self.manifest = json.loads((Path(__file__).parents[1] / "ci-verification.json").read_text())
+        self.base, self.sha = "a" * 40, "b" * 40
+        self.paths = Mock(return_value=["docs/site/docs/getting-started.md"])
+        self.ancestor = Mock(return_value=True)
+
+    def select(self, event_name="push", before=None, identity=None):
+        return VERIFY.selection(self.manifest, event_name,
+                                {"before": self.base if before is None else before},
+                                {} if identity is None else identity, sha=self.sha,
+                                is_ancestor=self.ancestor, changed_paths=self.paths)
+
+    def test_only_the_existing_prose_allowlist_gets_focused_verification(self):
+        for paths in (["README.md"], ["charts/haptic/README.md", "CHANGELOG.md"],
+                      ["docs/site/docs/development/linting.md"]):
+            with self.subTest(paths=paths):
+                self.assertEqual(VERIFY.paths_profile(self.manifest, paths), "prose")
+        for paths in ([], ["README.md", "pkg/controller/controller.go"], ["docs/site/mkdocs.yml"],
+                      [".github/workflows/ci.yml"], ["docs/site/docs/example.yaml"],
+                      ["scripts/generate.md"], ["charts/haptic/values.yaml"], ["VERSION"],
+                      ["docs/site/docs/line\nbreak.md"], ["pkg/old.go", "docs/site/docs/new.md"]):
+            with self.subTest(paths=paths):
+                self.assertEqual(VERIFY.paths_profile(self.manifest, paths), "full")
+
+    def test_push_pr_and_merge_group_use_their_real_comparison_base(self):
+        for event_name in ("push", "pull_request", "merge_group"):
+            result = self.select(event_name, identity={"base_sha": self.base})
+            self.assertEqual(result, {"profile": "prose", "comparison_base": self.base,
+                                      "changed_paths_sha256": VERIFY.paths_digest(self.paths.return_value)})
+            self.paths.assert_called_with(self.base, self.sha)
+        self.paths.return_value.append(".github/ci-verification.json")
+        self.assertEqual(self.select()["profile"], "full")
+
+    def test_new_branches_force_pushes_and_dispatches_require_full_verification(self):
+        for before in ("0" * 40, "", "--all", "short"):
+            with self.subTest(before=before):
+                self.assertEqual(self.select(before=before), {"profile": "full"})
+        self.ancestor.return_value = False
+        self.assertEqual(self.select(), {"profile": "full"})
+        for event_name in ("schedule", "workflow_dispatch"):
+            self.assertEqual(self.select(event_name), {"profile": "full"})
+        self.paths.assert_not_called()
+        for event_name in ("pull_request", "merge_group"):
+            with self.subTest(event_name=event_name), self.assertRaises(ValueError):
+                self.select(event_name, identity={"base_sha": self.base})
+
+    def test_profile_inventory_rejects_unknown_or_incomplete_policy(self):
+        self.assertEqual(VERIFY.required_jobs(self.manifest, "full"), self.manifest["required_jobs"])
+        for selected in ([], ["lint", "lint"], ["missing-job"]):
+            self.manifest["prose"]["required_jobs"] = selected
+            with self.subTest(selected=selected), self.assertRaises(ValueError):
+                VERIFY.required_jobs(self.manifest, "prose")
+        for profile in ("", "skip", "docs"):
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                VERIFY.required_jobs(self.manifest, profile)
 
 
 if __name__ == "__main__":

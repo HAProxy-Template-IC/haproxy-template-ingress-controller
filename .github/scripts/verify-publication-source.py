@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import zipfile
 
@@ -29,11 +30,9 @@ def check_run(run, repository):
         raise ValueError("Publication requires a completed successful workflow")
 
 
-def check_evidence(run, jobs, artifact, content, *, repository, sha, tree, manifest):
+def check_evidence(run, jobs, artifact, content, *, repository, sha, tree, manifest,
+                   allow_prose=False, comparison=None):
     check_run(run, repository)
-    required = json.loads(manifest)["required_jobs"]
-    checked = VERIFY.verify(run, jobs, required, repository=repository, sha=sha,
-                            attempt=run["run_attempt"], prefix="full / ")
     VERIFY.verify(run, jobs, ["full / verified", "verified"], repository=repository, sha=sha,
                   attempt=run["run_attempt"])
     producer = next(job for job in jobs if job["name"] == "full / verified")
@@ -52,6 +51,19 @@ def check_evidence(run, jobs, artifact, content, *, repository, sha, tree, manif
         if archive.namelist() != ["ci-verification.json"] or archive.infolist()[0].file_size > 1024 * 1024:
             raise ValueError("Verification artifact has unexpected contents")
         receipt = json.loads(archive.read("ci-verification.json"))
+    profile = receipt.get("profile", "full")
+    policy = json.loads(manifest)
+    if profile == "prose":
+        base = receipt.get("comparison_base", "")
+        if not allow_prose or comparison is None:
+            raise ValueError("This publication requires full CI verification")
+        paths = comparison(base, sha)
+        if (VERIFY.paths_profile(policy, paths) != "prose" or
+                receipt.get("changed_paths_sha256") != VERIFY.paths_digest(paths)):
+            raise ValueError("Documentation verification does not match the published changes")
+    required = VERIFY.required_jobs(policy, profile)
+    checked = VERIFY.verify(run, jobs, required, repository=repository, sha=sha,
+                            attempt=run["run_attempt"], prefix="full / ")
     expected = {
         "version": 2, "repository": repository, "run_id": run["id"], "run_attempt": run["run_attempt"],
         "sha": sha, "tree": tree, "jobs": checked, "job_prefix": "full / ", "event": run["event"],
@@ -61,13 +73,21 @@ def check_evidence(run, jobs, artifact, content, *, repository, sha, tree, manif
     if any(receipt.get(key) != value for key, value in expected.items()):
         raise ValueError("Verification receipt does not cover this complete source and job inventory")
     return {**expected, "artifact_id": artifact["id"], "artifact_digest": artifact["digest"],
-            "branch": run["head_branch"]}
+            "branch": run["head_branch"], "profile": profile}
+
+
+def publication_changes(base, sha):
+    if (not re.fullmatch(r"[a-f0-9]{40}", base) or base == sha or
+            not VERIFY.git_is_ancestor(base, sha)):
+        raise ValueError("Documentation publication requires the verified comparison base")
+    return VERIFY.git_changed_paths(base, sha)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", required=True, type=int)
     parser.add_argument("--resolve", action="store_true")
+    parser.add_argument("--allow-prose", action="store_true")
     args = parser.parse_args()
     repository = os.environ["GITHUB_REPOSITORY"]
     root = f"repos/{repository}/actions/runs/{args.run}"
@@ -93,7 +113,8 @@ def main():
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
     receipt = check_evidence(run, jobs, artifact, content, repository=repository, sha=sha, tree=tree,
-                             manifest=Path(".github/ci-verification.json").read_bytes())
+                             manifest=Path(".github/ci-verification.json").read_bytes(),
+                             allow_prose=args.allow_prose, comparison=publication_changes)
     refreshed = VERIFY.api(root)
     if (refreshed["run_attempt"], refreshed["status"], refreshed["conclusion"]) != (
             run["run_attempt"], "completed", "success"):
@@ -101,6 +122,9 @@ def main():
     output = Path(".publication/verified-source.json")
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(receipt, indent=2) + "\n")
+    if "GITHUB_OUTPUT" in os.environ:
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+            stream.write(f"profile={receipt['profile']}\n")
     print(f"Publication verified {len(receipt['jobs'])} jobs for {sha} ({tree})")
 
 

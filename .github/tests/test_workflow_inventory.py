@@ -47,7 +47,6 @@ class WorkflowInventoryTests(unittest.TestCase):
             self.assertEqual(len(job["strategy"]["matrix"]["include"]), 1)
             if job.get("needs"):
                 self.assertIn(job["needs"], suites)
-                self.assertEqual(job["if"], "${{ !cancelled() }}")
                 children[job["needs"]] += 1
             visited = set()
             current = key
@@ -56,6 +55,28 @@ class WorkflowInventoryTests(unittest.TestCase):
                 visited.add(current)
                 current = suites[current]["needs"]
         self.assertTrue(all(count == 1 for count in children.values()), "A lane must not fork")
+
+    def test_prose_profile_preserves_every_gitlab_common_gate(self):
+        policy = json.loads((ROOT / ".gitlab/ci/verification-policy.json").read_text())
+        mapping = self.manifest["gitlab_job_mapping"]
+        expected = {name for job in policy["common_jobs"] for key, names in mapping.items()
+                    if key == job or key.startswith(job + ": [") for name in names}
+        prose = self.manifest["prose"]
+        self.assertEqual(prose["paths"], policy["prose_paths"])
+        self.assertEqual(prose["patterns"], policy["prose_patterns"])
+        self.assertEqual(set(prose["required_jobs"]), expected)
+        for key, job in self.workflow["jobs"].items():
+            if key == "verified":
+                self.assertEqual(job["if"], "always()")
+                continue
+            names = ([row["name"] for row in job["strategy"]["matrix"]["include"]]
+                     if "strategy" in job else [job["name"]])
+            self.assertEqual(len(names), 1)
+            condition = ("${{ !cancelled() }}" if names[0] in expected else
+                         "${{ !cancelled() && inputs.verification_profile != 'prose' }}")
+            self.assertEqual(job["if"], condition)
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["verification_profile"]["default"], "full")
 
     def test_e2e_matrix_has_every_shard_of_every_supported_version(self):
         groups = collections.defaultdict(set)

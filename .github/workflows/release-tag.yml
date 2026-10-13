@@ -36,11 +36,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Recheck source and every required CI job
+        id: verification
         env:
           GH_TOKEN: ${{ github.token }}
           VERIFICATION_RUN: ${{ github.event.workflow_run.id }}
-        run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN"
+        run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN" --allow-prose
       - name: Create a missing release tag and dispatch its publication
+        if: steps.verification.outputs.profile == 'full'
         env:
           GH_TOKEN: ${{ github.token }}
           CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad

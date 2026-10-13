@@ -476,5 +476,29 @@
       "wall_seconds": 1684.165
     },
     "target_selection": "Latest complete GitLab merge train, measured from pipeline creation through the final required check; post-merge cleanup is excluded."
+  },
+  "prose": {
+    "paths": [
+      "README.md",
+      "CHANGELOG.md",
+      "CONTRIBUTING.md",
+      "LICENSE",
+      "charts/CLAUDE.md",
+      "charts/haptic/README.md",
+      "charts/haptic/CHANGELOG.md"
+    ],
+    "patterns": [
+      "docs/site/docs/.*\\.md"
+    ],
+    "required_jobs": [
+      "ci-image-3.0",
+      "ci-image-3.1",
+      "ci-image-3.2",
+      "ci-image-3.3",
+      "ci-image-3.4",
+      "docs",
+      "docs-image",
+      "lint"
+    ]
   }
 }

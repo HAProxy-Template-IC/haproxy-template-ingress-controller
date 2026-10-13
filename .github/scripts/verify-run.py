@@ -51,6 +51,63 @@ def api(path):
         return json.load(response)
 
 
+def required_jobs(manifest, profile):
+    if profile == "full":
+        return manifest["required_jobs"]
+    if profile != "prose":
+        raise ValueError("Unknown CI verification profile")
+    selected = manifest["prose"]["required_jobs"]
+    if not selected or len(selected) != len(set(selected)) or not set(selected) <= set(manifest["required_jobs"]):
+        raise ValueError("Documentation verification has an invalid job inventory")
+    return selected
+
+
+def paths_profile(manifest, paths):
+    policy = manifest["prose"]
+    return "prose" if paths and all(
+        path in policy["paths"] or any(re.fullmatch(pattern, path) for pattern in policy["patterns"])
+        for path in paths) else "full"
+
+
+def paths_digest(paths):
+    return hashlib.sha256(json.dumps(sorted(paths), ensure_ascii=True).encode()).hexdigest()
+
+
+def git_is_ancestor(base, head):
+    return subprocess.run(["git", "merge-base", "--is-ancestor", base, head], check=False).returncode == 0
+
+
+def git_changed_paths(base, head):
+    content = subprocess.check_output(["git", "diff", "--name-only", "--no-renames", "-z", base, head, "--"])
+    return content.decode().rstrip("\0").split("\0") if content else []
+
+
+def selection(manifest, event_name, event, identity, *, sha,
+              is_ancestor=git_is_ancestor, changed_paths=git_changed_paths):
+    if event_name in {"pull_request", "merge_group"}:
+        base = identity["base_sha"]
+    elif event_name == "push":
+        base = event.get("before", "")
+    else:
+        return {"profile": "full"}
+    if not re.fullmatch(r"[a-f0-9]{40}", base) or base == "0" * 40 or not is_ancestor(base, sha):
+        if event_name != "push":
+            raise ValueError("Verification requires the tested target revision")
+        return {"profile": "full"}
+    paths = changed_paths(base, sha)
+    return {"profile": paths_profile(manifest, paths), "comparison_base": base,
+            "changed_paths_sha256": paths_digest(paths)}
+
+
+def checkout_identity(event_name, event, repository, sha):
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    if head != sha:
+        raise ValueError("Checkout does not match the verified revision")
+    parents = subprocess.check_output(["git", "show", "-s", "--format=%P", "HEAD"], text=True).strip().split()
+    return revision_identity(event_name, event, repository=repository, tested_sha=sha,
+                             parents=parents, is_ancestor=git_is_ancestor)
+
+
 def revision_identity(event_name, event, *, repository, tested_sha, parents, is_ancestor=None):
     if event["repository"]["full_name"] != repository:
         raise ValueError("Trigger belongs to a different repository")
@@ -98,10 +155,7 @@ def main():
     if run["event"] != event_name:
         raise ValueError("Workflow belongs to a different trigger")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-    parents = subprocess.check_output(["git", "show", "-s", "--format=%P", "HEAD"], text=True).strip().split()
-    identity = revision_identity(event_name, event, repository=repository, tested_sha=sha, parents=parents,
-                                 is_ancestor=lambda base, head: subprocess.run(
-                                     ["git", "merge-base", "--is-ancestor", base, head], check=False).returncode == 0)
+    identity = checkout_identity(event_name, event, repository, sha)
     jobs = []
     page = 1
     while True:
@@ -115,7 +169,13 @@ def main():
     manifest_path = Path(".github/ci-verification.json")
     manifest = json.loads(manifest_path.read_text())
     prefix = os.environ.get("CI_JOB_PREFIX", "")
-    checked = verify(run, jobs, manifest["required_jobs"], repository=repository,
+    profile = os.environ.get("CI_VERIFICATION_PROFILE", "full")
+    selected = {"profile": profile}
+    if profile == "prose":
+        selected = selection(manifest, event_name, event, identity, sha=sha)
+        if selected["profile"] != "prose":
+            raise ValueError("Changed files require full CI verification")
+    checked = verify(run, jobs, required_jobs(manifest, profile), repository=repository,
                      sha=identity["api_sha"], attempt=attempt, prefix=prefix)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if head != sha:
@@ -127,7 +187,7 @@ def main():
         "version": 2, "repository": repository, "run_id": run_id, "run_attempt": attempt,
         "sha": sha, "tree": tree, "jobs": checked,
         "job_prefix": prefix,
-        "event": event_name, **identity,
+        "event": event_name, **identity, **selected,
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "verified_at": now.isoformat(), "seconds_to_verification": (now - started).total_seconds(),
     }
