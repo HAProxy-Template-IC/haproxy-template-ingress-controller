@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${GOCACHE:-}" == /ci-go-cache/build ]]; then
+    go clean -testcache
+fi
 
 git config --global --add safe.directory "$PWD"
 case "$PILOT_SUITE" in

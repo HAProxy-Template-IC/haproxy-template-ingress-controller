@@ -4,6 +4,7 @@ set -euo pipefail
 git config --global --add safe.directory "$PWD"
 test "$(kind get clusters | wc -l)" -eq 0
 go version
+go clean -testcache
 haproxy -v
 
 case "$PILOT_SUITE" in
