@@ -18,6 +18,9 @@ GO := env -u GOROOT go
 GOLANGCI_LINT_VERSION := v2.14.0
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck
+# renovate: datasource=github-releases depName=rhysd/actionlint
+ACTIONLINT_VERSION := v1.7.12
+ACTIONLINT := $(GO) run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 # renovate: datasource=github-releases depName=losisin/helm-values-schema-json
 HELM_VALUES_SCHEMA_JSON_VERSION := v2.6.0
 HELM_VALUES_SCHEMA_JSON := $(GO) run github.com/losisin/helm-values-schema-json/v2@$(HELM_VALUES_SCHEMA_JSON_VERSION)
@@ -370,8 +373,11 @@ test-support: build-map-identity-check ## Run script, browser, process, playgrou
 	@$(MAKE) test-playground
 	@$(MAKE) test-e2e-helpers
 
-.PHONY: test-github-verification
-test-github-verification: ## Check GitHub verification evidence fails closed
+.PHONY: lint-github-actions test-github-verification
+lint-github-actions: ## Validate GitHub workflow syntax and expressions
+	$(ACTIONLINT)
+
+test-github-verification: lint-github-actions ## Check GitHub verification evidence fails closed
 	python3 -m unittest discover -s .github/tests -v
 
 .PHONY: test-registry-build-retry
@@ -1256,6 +1262,10 @@ test-snapshot-publication: ## Verify image and chart publication in a local regi
 	bash .github/scripts/test-snapshot-publication.sh
 
 .PHONY: prepare-github-release-config publish-github-release smoke-spoa-image
+.PHONY: prepare-spoa-release
+prepare-spoa-release: spoa-prep ## Prepare the immutable bundle for a release branch
+	bash scripts/spoa-release-image.sh prepare
+
 .PHONY: mirror-github-ci-images
 mirror-github-ci-images: ## Preserve pinned CI image digests while copying them to GHCR
 	python3 -m scripts.ci.github_mirror --copy

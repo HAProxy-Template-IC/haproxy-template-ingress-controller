@@ -1,0 +1,66 @@
+name: Prepare immutable release bundle
+'on':
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: spoa-release-publish
+  cancel-in-progress: false
+jobs:
+  prepare:
+    name: prepare-spoa-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify release branch and publication job identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.ci.github_spoa
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        with:
+          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64,arm
+          cache-image: false
+      - name: Authenticate publication registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Prepare the immutable bundle before release verification
+        env:
+          CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+        run: |
+          bash scripts/retry.sh docker pull "$CI_IMAGE"
+          docker run --rm --network host \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "$HOME/.docker:/root/.docker" \
+            --volume "$PWD:$PWD" --workdir "$PWD" \
+            --env CI_REGISTRY_IMAGE --env CI_COMMIT_BRANCH --env CI_JOB_ID \
+            --env CI_PROJECT_URL --env CI_COMMIT_SHA --entrypoint bash "$CI_IMAGE" -euc '
+              git config --global --add safe.directory "$PWD"
+              docker buildx create --driver docker-container --use --name spoa-preparation --bootstrap
+              make prepare-spoa-release
+              cp metadata.json .publication/spoa-preparation.json
+            '
+      - name: Make preparation evidence readable
+        if: always()
+        run: |
+          if [[ -d .publication ]]; then
+            sudo chown -R "$(id -u):$(id -g)" .publication
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: spoa-preparation
+          path: .publication/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
