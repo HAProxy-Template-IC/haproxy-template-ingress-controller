@@ -26,12 +26,16 @@ started=$(date +%s)
 make docker-build-test 2>&1 | tee .pilot/build.log
 docker image inspect haptic:test > .pilot/controller-image.json
 set +e
-SKIP_DOCKER_BUILD=1 make test-chart-upgrade 2>&1 | tee .pilot/test.log
+case "$PILOT_SUITE" in
+    upgrade) SKIP_DOCKER_BUILD=1 make test-chart-upgrade ;;
+    gitops) GITOPS_IMAGE=haptic:test make test-gitops-lifecycle ;;
+    *) printf 'Unknown lifecycle suite: %s\n' "$PILOT_SUITE" >&2; exit 2 ;;
+esac 2>&1 | tee .pilot/test.log
 result=${PIPESTATUS[0]}
 set -e
 elapsed=$(( $(date +%s) - started ))
 printf '{"exit_code":%s,"test_seconds":%s}\n' "$result" "$elapsed" > .pilot/result.json
 docker stats --no-stream > .pilot/docker-stats.txt
 docker ps -a > .pilot/docker-ps.txt
-printf 'Upgrade from **%s**; exit: **%s**; duration: **%s seconds**\n' "$BASELINE_CHART_VERSION" "$result" "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+printf 'Suite: **%s**; exit: **%s**; duration: **%s seconds**\n' "$PILOT_SUITE" "$result" "$elapsed" >> "$GITHUB_STEP_SUMMARY"
 exit "$result"

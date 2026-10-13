@@ -107,7 +107,7 @@ jobs:
       run: bash .github/scripts/run-arm-pilot.sh
     - name: Run native ARM upgrade checks
       if: matrix.suite == 'upgrade'
-      run: bash .github/scripts/run-upgrade-arm.sh
+      run: bash .github/scripts/run-lifecycle-arm.sh
     - name: Run upstream Gateway conformance
       if: matrix.kind == 'gateway'
       run: 'set -euo pipefail
