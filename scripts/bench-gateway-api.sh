@@ -115,6 +115,7 @@ artifact_security_untrusted=false
 live_secret_patterns=""
 live_secret_capture_index=0
 live_secret_scan_index=0
+runtime_config_history_pid=""
 
 info() {
     printf 'benchmark: %s\n' "$*" >&2
@@ -524,6 +525,32 @@ capture_runtime_config_identities() {
     chmod 0600 "$1"
 }
 
+start_runtime_config_history() {
+    python3 "${SCRIPT_DIR}/record-benchmark-config-identities.py" "$WORK_DIR" \
+        2> "${WORK_DIR}/runtime-config-history.stderr" &
+    runtime_config_history_pid=$!
+    local deadline=$((SECONDS + 60))
+    until [[ -f "${WORK_DIR}/runtime-config-history.ready" ]]; do
+        kill -0 "$runtime_config_history_pid" 2>/dev/null || die "HAProxyCfg identity recorder exited before becoming ready"
+        (( SECONDS < deadline )) || die "HAProxyCfg identity recorder did not become ready"
+        sleep 0.1
+    done
+}
+
+capture_runtime_config_history() {
+    python3 - "${WORK_DIR}/runtime-config-history.jsonl" "$1" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+history, destination = map(Path, sys.argv[1:])
+lines = history.read_bytes().split(b"\n")[:-1] if history.exists() else []
+items = [json.loads(line) for line in lines if line]
+destination.write_text(json.dumps({"items": items}) + "\n")
+destination.chmod(0o600)
+PY
+}
+
 capture_live_secret_patterns_once() {
     live_secret_capture_index=$((live_secret_capture_index + 1))
     local capture_id
@@ -536,9 +563,10 @@ capture_live_secret_patterns_once() {
     kubectl get secrets --all-namespaces -o json > "$secrets" || return 1
     chmod 0600 "$secrets" || return 1
     capture_runtime_config_identities "${runtime_configs}.after" || return 1
-    # A retained owner can disappear between the Secret and HAProxyCfg lists.
+    capture_runtime_config_history "${runtime_configs}.history" || return 1
+    # Garbage collection can leave a certificate after its verified owner disappears.
     jq -S -s '{items: ([.[].items[]] | unique_by([.metadata.namespace, .metadata.name, .metadata.uid]))}' \
-        "${runtime_configs}.before" "${runtime_configs}.after" > "$runtime_configs" || return 1
+        "${runtime_configs}.before" "${runtime_configs}.after" "${runtime_configs}.history" > "$runtime_configs" || return 1
     chmod 0600 "$runtime_configs" || return 1
     build_live_secret_patterns "$secrets" "$runtime_configs" "$captured_patterns" || return 1
     local merged="${live_secret_patterns}.tmp"
@@ -893,6 +921,12 @@ cleanup() {
     if [[ "$output_initialized" == "true" && "$live_secret_scan_ready" == "true" &&
         "$live_secret_capture_failed" == "false" && "$artifact_security_untrusted" == "false" ]]; then
         verify_artifact_secrets || [[ $rc -ne 0 ]] || rc=1
+    fi
+
+    if [[ -n "$runtime_config_history_pid" ]]; then
+        kill "$runtime_config_history_pid" 2>/dev/null || true
+        wait "$runtime_config_history_pid" 2>/dev/null || true
+        runtime_config_history_pid=""
     fi
 
     if [[ "$cluster_owned" == "true" && "$BENCH_KEEP_CLUSTER" != "true" ]]; then
@@ -5775,6 +5809,7 @@ main() {
 
     check_cluster_prerequisites
     bootstrap_cluster
+    start_runtime_config_history
     capture_live_secret_patterns || \
         die "failed to capture live Secret patterns after cluster bootstrap"
     configure_haptic

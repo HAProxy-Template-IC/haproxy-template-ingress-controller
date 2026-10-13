@@ -208,19 +208,38 @@ kubectl() {
 }
 capture_live_secret_patterns_once
 '''
+        for deleted_before_capture in (False, True):
+            with self.subTest(deleted_before_capture=deleted_before_capture), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "secrets.json").write_text(json.dumps({"items": [secret, unverified]}))
+                (root / "configs.json").write_text(json.dumps({"items": [config]}))
+                if deleted_before_capture:
+                    (root / "owner-deleted").touch()
+                    (root / "runtime-config-history.jsonl").write_text(json.dumps(config) + '\n{"incomplete":')
+                result = subprocess.run(["/usr/bin/bash", "-c", command, "capture-race", str(RUNNER), directory],
+                                        check=False, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                patterns = json.loads((root / "live-secret-patterns.json").read_text())["patterns"]
+                sources = [entry["source"] for entry in patterns]
+                self.assertNotIn("haptic/certificate/path", sources)
+                for source in ("haptic/certificate/certificate", "haptic/unverified-certificate/certificate",
+                               "haptic/unverified-certificate/path"):
+                    self.assertEqual(sources.count(source), 2)
+
+    def test_runtime_config_history_rejects_corrupt_complete_records(self):
+        command = r'''
+source "$1"
+trap - EXIT INT TERM
+WORK_DIR="$2"
+capture_runtime_config_history "$WORK_DIR/captured.json"
+'''
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "secrets.json").write_text(json.dumps({"items": [secret, unverified]}))
-            (root / "configs.json").write_text(json.dumps({"items": [config]}))
-            result = subprocess.run(["/usr/bin/bash", "-c", command, "capture-race", str(RUNNER), directory],
+            (root / "runtime-config-history.jsonl").write_text('{invalid}\n')
+            result = subprocess.run(["/usr/bin/bash", "-c", command, "capture-history", str(RUNNER), directory],
                                     check=False, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            patterns = json.loads((root / "live-secret-patterns.json").read_text())["patterns"]
-            sources = [entry["source"] for entry in patterns]
-            self.assertNotIn("haptic/certificate/path", sources)
-            for source in ("haptic/certificate/certificate", "haptic/unverified-certificate/certificate",
-                           "haptic/unverified-certificate/path"):
-                self.assertEqual(sources.count(source), 2)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((root / "captured.json").exists())
 
     def test_secret_patterns_exclude_only_owned_haptic_ssl_path_metadata(self):
         def encoded(value):

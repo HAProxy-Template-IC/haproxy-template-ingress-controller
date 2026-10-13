@@ -36,10 +36,11 @@ jobs:
         '
     - name: Profile the unchanged workload with normal artifact gates
       run: "export BENCH_CI_OUTPUT=\"$RUNNER_TEMP/gateway-benchmark\"\nmkdir -p \"$BENCH_CI_OUTPUT\"\nexport HAPTIC_E2E_EXTRA_VALUES=\"$RUNNER_TEMP/benchmark-bootstrap-values.yaml\"\
-        \ncat > \"$HAPTIC_E2E_EXTRA_VALUES\" <<'YAML'\ncontroller:\n  extraEnv:\n    - {name: GOMAXPROCS, value: '2'}\n    - {name: GOGC, value: '300'}\n\
-        \    - {name: TMPDIR, value: /v}\n  extraVolumes:\n    - name: validation-scratch\n      emptyDir: {medium: Memory, sizeLimit: 512Mi}\n  extraVolumeMounts:\n\
-        \    - {name: validation-scratch, mountPath: /v}\nYAML\npython3 .github/scripts/profile-gateway-benchmark.py > \"$RUNNER_TEMP/profile-observer.log\"\
-        \ 2>&1 &\nobserver_pid=$!\ntrap 'kill \"$observer_pid\" 2>/dev/null || true; wait \"$observer_pid\" 2>/dev/null || true' EXIT\nmake bench-gateway-api-ci\n"
+        \ncat > \"$HAPTIC_E2E_EXTRA_VALUES\" <<'YAML'\ncontroller:\n  extraEnv:\n    - {name: GOMAXPROCS, value: '2'}\n    - {name: GOGC, value:\
+        \ '300'}\n    - {name: TMPDIR, value: /v}\n  extraVolumes:\n    - name: validation-scratch\n      emptyDir: {medium: Memory, sizeLimit:\
+        \ 512Mi}\n  extraVolumeMounts:\n    - {name: validation-scratch, mountPath: /v}\nYAML\npython3 .github/scripts/profile-gateway-benchmark.py\
+        \ > \"$RUNNER_TEMP/profile-observer.log\" 2>&1 &\nobserver_pid=$!\ntrap 'kill \"$observer_pid\" 2>/dev/null || true; wait \"$observer_pid\"\
+        \ 2>/dev/null || true' EXIT\nmake bench-gateway-api-ci\nwait \"$observer_pid\"\n"
     - name: Make validated artifacts readable
       if: always()
       run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/gateway-benchmark"
