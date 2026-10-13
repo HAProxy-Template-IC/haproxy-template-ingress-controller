@@ -3,6 +3,11 @@ set -euo pipefail
 
 git config --global --add safe.directory "$PWD"
 case "$PILOT_SUITE" in
+    compile)
+        make build
+        bin/haptic version > .pilot/binary-version.txt
+        sha256sum bin/haptic > .pilot/binary-sha256.txt
+        ;;
     ci-image)
         make build-ci-image HAPROXY_VERSION="$HAPROXY_VERSION"
         image="haptic-ci:$(scripts/ci-image-input-hash.sh)-hp${HAPROXY_VERSION}"
