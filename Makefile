@@ -359,6 +359,7 @@ test-support: ## Run script, browser, process, playground and cluster-helper tes
 		scripts/tests/test_analyze_gateway_api_children.py \
 		scripts/tests/test_analyze_gateway_api_outcomes.py \
 		scripts/tests/test_analyze_gateway_api_resources.py
+	$(MAKE) test-registry-build-retry
 	$(MAKE) test-gateway-benchmark-harness
 	bash scripts/tests/test_chart_haproxy_image.sh
 	$(MAKE) test-release
@@ -372,6 +373,10 @@ test-support: ## Run script, browser, process, playground and cluster-helper tes
 .PHONY: test-github-verification
 test-github-verification: ## Check GitHub verification evidence fails closed
 	python3 -m unittest discover -s .github/tests -v
+
+.PHONY: test-registry-build-retry
+test-registry-build-retry: ## Verify registry retries preserve permanent build failures
+	python3 -m unittest scripts/tests/test_retry_registry_build.py -v
 
 .PHONY: test-gateway-benchmark-harness
 test-gateway-benchmark-harness: ## Verify benchmark setup, workload gates and bundle provenance
@@ -994,7 +999,7 @@ docker-build: check-source-hash ## Build Docker image
 	@echo "  Git tag:         $(GIT_TAG)"
 	@echo "  Source hash:     $(SOURCE_HASH)"
 	@echo "  HAProxy series:  $(HAPROXY_VERSION) (chart-selected patch)"
-	DOCKER_BUILDKIT=1 docker build \
+	DOCKER_BUILDKIT=1 bash scripts/retry-registry-build.sh docker build \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
 		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
