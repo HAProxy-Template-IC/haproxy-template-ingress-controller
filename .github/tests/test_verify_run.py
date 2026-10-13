@@ -51,5 +51,47 @@ class VerifyRunTests(unittest.TestCase):
                 self.check([dict(self.job, **{key: None})])
 
 
+class RevisionIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.event = {"repository": {"full_name": "owner/repo"}, "pull_request": {
+            "number": 43, "merge_commit_sha": None,
+            "head": {"sha": "head", "repo": {"full_name": "fork/repo"}},
+            "base": {"sha": "base", "ref": "main", "repo": {"full_name": "owner/repo"}},
+        }}
+
+    def identity(self, event_name="pull_request", event=None, parents=None, tested_sha="merge"):
+        return VERIFY.revision_identity(event_name, self.event if event is None else event,
+                                        repository="owner/repo", tested_sha=tested_sha,
+                                        parents=["base", "head"] if parents is None else parents)
+
+    def test_pr_binds_api_head_and_tested_merge_without_relying_on_nullable_payload_sha(self):
+        self.assertEqual(self.identity(), {"api_sha": "head", "source_sha": "head", "base_sha": "base",
+                                           "source_repository": "fork/repo", "base_branch": "main", "pull_request": 43})
+
+    def test_pr_rejects_head_checkout_stale_base_and_other_repository(self):
+        for parents in (["base"], ["head", "base"], ["stale", "head"], ["base", "other"], []):
+            with self.subTest(parents=parents), self.assertRaises(ValueError):
+                self.identity(parents=parents)
+        with self.assertRaises(ValueError):
+            self.identity(tested_sha="head")
+        for target in (self.event["repository"], self.event["pull_request"]["base"]["repo"]):
+            target["full_name"] = "other/repo"
+            with self.assertRaises(ValueError):
+                self.identity()
+            target["full_name"] = "owner/repo"
+
+    def test_push_and_scheduled_runs_still_bind_the_exact_checkout(self):
+        self.event["after"] = "merge"
+        for event_name in ("push", "schedule", "workflow_dispatch"):
+            identity = self.identity(event_name=event_name)
+            self.assertEqual(identity["api_sha"], "merge")
+            self.assertEqual(identity["source_sha"], "merge")
+        self.event["after"] = "other"
+        with self.assertRaises(ValueError):
+            self.identity(event_name="push")
+        with self.assertRaises(ValueError):
+            self.identity(event_name="pull_request_target")
+
+
 if __name__ == "__main__":
     unittest.main()

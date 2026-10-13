@@ -47,6 +47,27 @@ def api(path):
         return json.load(response)
 
 
+def revision_identity(event_name, event, *, repository, tested_sha, parents):
+    if event["repository"]["full_name"] != repository:
+        raise ValueError("Trigger belongs to a different repository")
+    if event_name == "pull_request":
+        request = event["pull_request"]
+        if request["base"]["repo"]["full_name"] != repository:
+            raise ValueError("Pull request targets a different repository")
+        head = request["head"]["sha"]
+        base = request["base"]["sha"]
+        if parents != [base, head] or tested_sha in {base, head}:
+            raise ValueError("Checkout is not the pull request merge of the declared head and base")
+        return {"api_sha": head, "source_sha": head, "base_sha": base,
+                "source_repository": request["head"]["repo"]["full_name"],
+                "base_branch": request["base"]["ref"], "pull_request": request["number"]}
+    if event_name not in {"push", "schedule", "workflow_dispatch"}:
+        raise ValueError("Unsupported verification trigger")
+    if event_name == "push" and event["after"] != tested_sha:
+        raise ValueError("Checkout is not the pushed revision")
+    return {"api_sha": tested_sha, "source_sha": tested_sha, "source_repository": repository}
+
+
 def main():
     repository = os.environ["GITHUB_REPOSITORY"]
     sha = os.environ["GITHUB_SHA"]
@@ -54,6 +75,12 @@ def main():
     run_id = int(os.environ["GITHUB_RUN_ID"])
     base = f"repos/{repository}/actions/runs/{run_id}"
     run = api(f"{base}/attempts/{attempt}")
+    event_name = os.environ["GITHUB_EVENT_NAME"]
+    if run["event"] != event_name:
+        raise ValueError("Workflow belongs to a different trigger")
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    parents = subprocess.check_output(["git", "show", "-s", "--format=%P", "HEAD"], text=True).strip().split()
+    identity = revision_identity(event_name, event, repository=repository, tested_sha=sha, parents=parents)
     jobs = []
     page = 1
     while True:
@@ -66,7 +93,8 @@ def main():
         page += 1
     manifest_path = Path(".github/ci-verification.json")
     manifest = json.loads(manifest_path.read_text())
-    checked = verify(run, jobs, manifest["required_jobs"], repository=repository, sha=sha, attempt=attempt)
+    checked = verify(run, jobs, manifest["required_jobs"], repository=repository,
+                     sha=identity["api_sha"], attempt=attempt)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if head != sha:
         raise ValueError("Checkout does not match the verified revision")
@@ -74,8 +102,9 @@ def main():
     now = datetime.datetime.now(datetime.timezone.utc)
     started = datetime.datetime.fromisoformat(run["run_started_at"].replace("Z", "+00:00"))
     receipt = {
-        "version": 1, "repository": repository, "run_id": run_id, "run_attempt": attempt,
+        "version": 2, "repository": repository, "run_id": run_id, "run_attempt": attempt,
         "sha": sha, "tree": tree, "jobs": checked,
+        "event": event_name, **identity,
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "verified_at": now.isoformat(), "seconds_to_verification": (now - started).total_seconds(),
     }
