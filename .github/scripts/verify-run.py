@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from urllib.request import Request, urlopen
 
@@ -50,9 +51,24 @@ def api(path):
         return json.load(response)
 
 
-def revision_identity(event_name, event, *, repository, tested_sha, parents):
+def revision_identity(event_name, event, *, repository, tested_sha, parents, is_ancestor=None):
     if event["repository"]["full_name"] != repository:
         raise ValueError("Trigger belongs to a different repository")
+    if event_name == "merge_group":
+        group = event["merge_group"]
+        branch = group["base_ref"].removeprefix("refs/heads/")
+        if (event["action"] != "checks_requested" or group["head_sha"] != tested_sha or
+                not re.fullmatch(r"[a-f0-9]{40}", group["base_sha"]) or
+                not re.fullmatch(r"[a-f0-9]{40}", tested_sha) or group["base_sha"] == tested_sha):
+            raise ValueError("Checkout is not the requested merge group")
+        if (group["base_ref"] != "refs/heads/" + branch or
+                not (branch == "main" or branch.startswith("maint/")) or
+                not group["head_ref"].startswith("refs/heads/gh-readonly-queue/" + branch + "/")):
+            raise ValueError("Merge group targets an unexpected branch")
+        if is_ancestor is None or not is_ancestor(group["base_sha"], tested_sha):
+            raise ValueError("Merge group does not contain its declared target revision")
+        return {"api_sha": tested_sha, "source_sha": tested_sha, "source_repository": repository,
+                "base_sha": group["base_sha"], "base_branch": branch, "merge_group_ref": group["head_ref"]}
     if event_name == "pull_request":
         request = event["pull_request"]
         if request["base"]["repo"]["full_name"] != repository:
@@ -83,7 +99,9 @@ def main():
         raise ValueError("Workflow belongs to a different trigger")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     parents = subprocess.check_output(["git", "show", "-s", "--format=%P", "HEAD"], text=True).strip().split()
-    identity = revision_identity(event_name, event, repository=repository, tested_sha=sha, parents=parents)
+    identity = revision_identity(event_name, event, repository=repository, tested_sha=sha, parents=parents,
+                                 is_ancestor=lambda base, head: subprocess.run(
+                                     ["git", "merge-base", "--is-ancestor", base, head], check=False).returncode == 0)
     jobs = []
     page = 1
     while True:

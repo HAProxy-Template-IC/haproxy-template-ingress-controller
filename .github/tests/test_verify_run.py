@@ -105,6 +105,36 @@ class RevisionIdentityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.identity(event_name="pull_request_target")
 
+    def test_merge_queue_binds_requested_head_target_and_real_ancestry(self):
+        event = {"repository": {"full_name": "owner/repo"}, "action": "checks_requested", "merge_group": {
+            "head_sha": "a" * 40, "base_sha": "b" * 40, "base_ref": "refs/heads/main",
+            "head_ref": "refs/heads/gh-readonly-queue/main/pr-43-" + "c" * 40,
+        }}
+        arguments = {"repository": "owner/repo", "tested_sha": "a" * 40, "parents": []}
+        visited = []
+
+        def ancestry(base, head):
+            visited.append((base, head))
+            return True
+
+        result = VERIFY.revision_identity("merge_group", event, **arguments, is_ancestor=ancestry)
+        self.assertEqual(result["base_branch"], "main")
+        self.assertEqual(result["base_sha"], "b" * 40)
+        self.assertEqual(visited, [("b" * 40, "a" * 40)])
+        for predicate in (None, lambda base, head: False):
+            with self.subTest(predicate=predicate), self.assertRaises(ValueError):
+                VERIFY.revision_identity("merge_group", event, **arguments, is_ancestor=predicate)
+        for key, value in (("head_sha", "c" * 40), ("base_sha", "a" * 40), ("base_sha", "--all"),
+                           ("base_ref", "refs/heads/feature"), ("base_ref", "main"),
+                           ("head_ref", "refs/heads/main"), ("head_ref", "refs/heads/gh-readonly-queue/other/pr-43")):
+            altered = copy.deepcopy(event)
+            altered["merge_group"][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                VERIFY.revision_identity("merge_group", altered, **arguments, is_ancestor=ancestry)
+        event["action"] = "destroyed"
+        with self.assertRaises(ValueError):
+            VERIFY.revision_identity("merge_group", event, **arguments, is_ancestor=ancestry)
+
 
 if __name__ == "__main__":
     unittest.main()
