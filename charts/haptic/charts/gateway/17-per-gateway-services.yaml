@@ -37,7 +37,7 @@ templateSnippets:
             }
             seenPort[listenerPort] = true
             var targetPort = listenerPort
-            if listenerProtocol == "HTTPS" || listenerProtocol == "HTTP" {
+            if listenerProtocol == "HTTPS" || listenerProtocol == "HTTP" || listenerProtocol == "TLS" {
               hasIsolated = true
               var selectedPort, found = shared.Select("gateway-host-port-scopes", "ports",
                 namespace + "/" + name + ":" + tostring(listenerPort))

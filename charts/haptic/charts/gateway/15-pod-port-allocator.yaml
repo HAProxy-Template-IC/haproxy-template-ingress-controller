@@ -91,7 +91,7 @@ templateSnippets:
           var created = dig_string(candidate, "", "created")
           for _, listener := range toSlice(dig(candidate, "listeners")) {
             var protocol = dig_string(listener, "", "protocol")
-            if protocol != "HTTPS" && protocol != "HTTP" {
+            if protocol != "HTTPS" && protocol != "HTTP" && protocol != "TLS" {
               continue
             }
             var listenerName = dig_string(listener, "", "name")
@@ -240,12 +240,7 @@ templateSnippets:
             values:  int (the allocated container port)
 
           Allocation rules:
-            * Only HTTP and HTTPS Gateway listeners get an allocation.
-              TLS-Terminate listeners on non-default ports already render
-              via `frontends-600-gateway-tls-listener` (per-port mode-tcp
-              frontend) and don't need per-Gateway pod ports.
-              TLS-Passthrough listeners flow through chart-static
-              `frontend ssl-tcp` and don't need pod-port allocation either.
+            * HTTP, HTTPS and TLS listeners get isolated pod ports.
             * Listeners with empty name or non-positive port are skipped
               (defensively — invalid Gateway state shouldn't crash the
               allocator, just leave them out).

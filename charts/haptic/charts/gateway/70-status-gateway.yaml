@@ -258,7 +258,7 @@ templateSnippets:
               if port <= 0 || seenPorts[port] { continue }
               seenPorts[port] = true
               var targetPort = port
-              if listener.Protocol == "HTTP" || listener.Protocol == "HTTPS" {
+              if listener.Protocol == "HTTP" || listener.Protocol == "HTTPS" || listener.Protocol == "TLS" {
                 var selectedPort, found = shared.Select("gateway-host-port-scopes", "ports",
                   namespace + "/" + name + ":" + tostring(port))
                 if !found {
@@ -494,32 +494,12 @@ templateSnippets:
               }
             }
 
-            // Per-Gateway LB IP read-back (phase 5 of the per-Gateway-IP
-            // refactor). When the Gateway has NO spec.addresses but DOES
-            // have at least one HTTP or HTTPS listener, phase 3 emitted a
-            // per-Gateway LoadBalancer Service named
-            // `gw-<gwNs>-<gwName>` in the controller namespace. Read its
-            // realized LB IP back into status.addresses so clients
-            // (including the conformance suite's RoundTripper) connect
-            // to the per-Gateway IP — that's what makes the per-Gateway
-            // bind on the allocated pod port reachable. Without this the
-            // Gateway would report the shared chart-static LB IP, whose
-            // :80 bind isn't scoped to this Gateway's routes, so the
-            // pod-port-keyed host/path maps would 404 (over-isolation).
-            //
-            // Falls through silently when:
-            //   - No HTTP/HTTPS listener (phase 3 didn't emit a Service —
-            //     e.g. TLS-only Gateways use the chart-static path)
-            //   - Service hasn't been allocated an IP yet (MetalLB
-            //     reconciliation lag — gwEffectiveAddresses stays at
-            //     the chart's main LB IP from gatewayAddresses, which
-            //     is fine for the transitional state)
-            //   - ctrlNs / podSelector unset (chart-static deployment)
+            // Wait for the isolated Service address before marking the Gateway programmed.
             var phase5CtrlNs = dig_string(props, "", "controllerNamespace")
             if len(gwSpecAddrs) == 0 && phase5CtrlNs != "" {
               var hasIsolatedListener = false
               for _, listener := range gateway.Spec.Listeners {
-                if listener.Protocol == "HTTPS" || listener.Protocol == "HTTP" {
+                if listener.Protocol == "HTTPS" || listener.Protocol == "HTTP" || listener.Protocol == "TLS" {
                   hasIsolatedListener = true
                   break
                 }

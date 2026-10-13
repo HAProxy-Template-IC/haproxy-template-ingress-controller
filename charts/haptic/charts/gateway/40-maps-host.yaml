@@ -142,7 +142,7 @@ templateSnippets:
           for _, listener := range gateway.Spec.Listeners {
             var listenerPort = toint(listener.Port)
             if listenerPort <= 0 || seenPorts[listenerPort] ||
-              (listener.Protocol != "HTTP" && listener.Protocol != "HTTPS") {
+              (listener.Protocol != "HTTP" && listener.Protocol != "HTTPS" && listener.Protocol != "TLS") {
               continue
             }
             seenPorts[listenerPort] = true

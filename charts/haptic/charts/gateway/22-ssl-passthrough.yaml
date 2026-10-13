@@ -125,9 +125,7 @@ templateSnippets:
                 if len(encoded) >= len(zeroes) { return encoded }
                 return zeroes[:len(zeroes)-len(encoded)] + encoded
               }
-              // One leg per (SNI, listener port): the per-port frontends each
-              // need their own entry, and a listener's mode decides the leg's
-              // backend. The first listener claiming a (SNI, port) wins.
+              // Keep each Gateway attachment even when its SNI and listener port match another.
               var legs = map[string]any{}
             %%}
             {%- for _, parentRef := range route.Spec.ParentRefs %}
@@ -259,7 +257,7 @@ templateSnippets:
                   {%- if inter != "" %}
                     {%- snisForRule[inter] = true %}
                     {%%
-                      var legKey = inter + "\x00" + fixed(lPort)
+                      var legKey = prNs + "/" + prName + "\x00" + inter + "\x00" + fixed(lPort)
                       var routeHostnameRank = toint(HostnameRank(rhStr))
                       existingLeg, alreadySeen := legs[legKey]
                       if !alreadySeen {
@@ -344,7 +342,8 @@ templateSnippets:
                 var precedence = fixed(1000000000 - toint(leg["route_hostname_rank"])) + "/" + ageRank
                 entry["rank"] = "1/tls/" + precedence + nsStr + "/" + route.Metadata.Name + "/" + fixed(ruleIdx)
                 show shared.Publish("backends", "1/tls/" + nsStr + "/" + route.Metadata.Name + "/" +
-                  fixed(ruleIdx) + "/" + tostring(leg["sni"]) + "/" + fixed(toint(leg["port"])), entry)
+                  fixed(ruleIdx) + "/" + tostring(leg["gw_namespace"]) + "/" + tostring(leg["gw_name"]) + "/" +
+                  tostring(leg["sni"]) + "/" + fixed(toint(leg["port"])), entry)
               %%}
             {%- end %}
           {%- end %}

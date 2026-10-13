@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Fixed
 
+- TLS Gateways use isolated service addresses and pod ports to prevent routing to another Gateway's TLSRoutes.
 - Gateway API: TLSRoutes retain their original hostname specificity after listener intersection, with older routes winning ties.
 
 ## [0.5.0] - 2026-10-08
