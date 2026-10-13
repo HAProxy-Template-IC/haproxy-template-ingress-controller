@@ -1290,7 +1290,13 @@ release: ## Prepare a release of controller + chart (usage: make release RELEASE
 build-docs-preview: ## Build the versioned documentation preview artifact
 	bash .github/scripts/build-docs-preview.sh
 
-.PHONY: prepare-github-pages test-github-pages-browser
+.PHONY: prepare-github-pages test-github-pages-browser archive-github-pages restore-github-pages
+archive-github-pages: ## Archive every original website file and its source provenance
+	python3 -m scripts.ci.github_site_archive create --source "$(PAGES_SOURCE)" --archive "$(PAGES_ARCHIVE)" --provenance "$(PAGES_PROVENANCE)"
+
+restore-github-pages: ## Restore the complete pinned GitHub website baseline
+	python3 -m scripts.ci.github_site_archive restore --config .github/pages-baseline.json --output "$(PAGES_OUTPUT)" $(if $(PAGES_ARCHIVE),--archive "$(PAGES_ARCHIVE)")
+
 prepare-github-pages: ## Package a complete website below the GitHub Pages size limit
 	python3 -m scripts.ci.github_pages --source "$(PAGES_SOURCE)" --output "$(PAGES_OUTPUT)"
 

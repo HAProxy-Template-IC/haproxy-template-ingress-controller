@@ -32,6 +32,19 @@ to avoid reusing its previous download implementation from the browser cache.
 Release identities, schemas, templates, and engine bytes retain their original
 digests. Unknown worker implementations fail packaging for review.
 
+The complete migration baseline is archived in a GitHub release. Its URL, size,
+and SHA-256 are pinned in `.github/pages-baseline.json`; the archive contains its
+source provenance and every file's checksum. Restore and verify it with:
+
+```bash
+make restore-github-pages PAGES_OUTPUT=/path/to/new-output
+```
+
+Restoration verifies the archive and complete inventory before making the output
+available. Links are stored as ordinary files, and
+restoration rejects path traversal, links, duplicates, and incomplete inventories.
+`make build-docs-preview` uses this baseline and the repository's own build script.
+
 Existing documentation and playground page URLs remain available. The redundant
 raw `.wasm` and `.wasm.gz` URLs are replaced by `.wasm.br` for engine loading;
 the complete original site export must remain archived. GitLab's old documentation
