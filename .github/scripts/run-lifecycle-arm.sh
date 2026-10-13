@@ -23,7 +23,11 @@ sed -i "s|^version:.*|version: 0.0.0-github.g${PILOT_SOURCE_SHA:0:8}|" charts/ha
 yq -i '.cache.varnish.image = strenv(PILOT_VARNISH_IMAGE)' charts/haptic/values.yaml
 git diff > .pilot/test-values.patch
 started=$(date +%s)
-make docker-build-test 2>&1 | tee .pilot/build.log
+build_target=docker-build-test
+if [[ "${PILOT_NATIVE_BUILD:-0}" == 1 ]]; then
+    build_target=docker-build-test-native
+fi
+make "$build_target" 2>&1 | tee .pilot/build.log
 docker image inspect haptic:test > .pilot/controller-image.json
 set +e
 case "$PILOT_SUITE" in
