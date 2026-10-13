@@ -177,7 +177,7 @@ templateSnippets:
         {{- render_glob "gateway-ssl-passthrough-*" -}}
         {%- var byPort = byPortRaw.(map[int]any) %}
         {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
-        {%- var allBackends = incremental_values("gateway-ssl-passthrough", "backends") %}
+        {%- var allBackends = incremental_values("gateway-ssl-passthrough", "backends") | sort_by([]string{"$.rank"}) %}
         {#- Determine whether the chart-static HTTPS frontend or ssl-tcp
             will bind the chart-static httpsPort. The two flags
             (bindHTTPSDefault + len(passthroughBackends)>0) cover both

@@ -100,7 +100,8 @@ templateSnippets:
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
       {%- if sslBackends != nil %}
-        {%- for _, backend := range incremental_values("gateway-ssl-passthrough", "backends") %}
+        {%- var orderedBackends = incremental_values("gateway-ssl-passthrough", "backends") | sort_by([]string{"$.rank"}) %}
+        {%- for _, backend := range orderedBackends %}
           {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
         {%- end %}
       {%- end %}

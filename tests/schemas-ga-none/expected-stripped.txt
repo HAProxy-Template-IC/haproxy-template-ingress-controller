@@ -273,6 +273,13 @@ test-tlsroute-mixed-termination-protocol-conflict
 test-tlsroute-no-tls-listener
 test-tlsroute-passthrough-basic
 test-tlsroute-passthrough-nondefault-port-frontend
+test-tlsroute-precedence-dedicated-port
+test-tlsroute-precedence-equal-age-name
+test-tlsroute-precedence-equal-host-oldest
+test-tlsroute-precedence-exact-over-wildcard
+test-tlsroute-precedence-multiple-hostnames
+test-tlsroute-precedence-specific-wildcard
+test-tlsroute-precedence-unrestricted-listener
 test-tlsroute-same-sni-on-two-passthrough-ports
 test-tlsroute-section-name-no-match
 test-tlsroute-status-parent-ports

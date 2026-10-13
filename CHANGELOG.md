@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update Go to 1.27.2 and its HTTP/2 dependency to fix HTTP, TLS, and filesystem vulnerabilities.
 
+### Helm chart
+
+#### Fixed
+
+- Gateway API: TLSRoutes retain their original hostname specificity after listener intersection, with older routes winning ties.
+
 ## [0.5.0] - 2026-10-08
 
 HAPTIC 0.5 can restore HAProxy capacity during a controller restart or leader
