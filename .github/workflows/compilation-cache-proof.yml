@@ -18,8 +18,6 @@ jobs:
       matrix:
         shard:
         - command
-        - renderer
-        - rest
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
       PILOT_SUITE: unit-cache

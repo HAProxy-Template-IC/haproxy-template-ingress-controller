@@ -15,10 +15,12 @@ case "$PILOT_SUITE" in
         PKG=$(tr '\n' ' ' < .pilot/unit-packages-selected.txt)
         export PKG
         export GOFLAGS=-p=4
+        if [[ "$SHARD_ID" == command ]]; then
+            go test -list . ./cmd/haptic > .pilot/unit-command-inventory.txt
+        fi
         if [[ "$PILOT_SUITE" == unit-cache ]]; then
             export TEST_RUN_PATTERN='^$'
         elif [[ "$SHARD_ID" == command ]]; then
-            go test -list . ./cmd/haptic > .pilot/unit-command-inventory.txt
             TEST_RUN_PATTERN=$(python3 scripts/shard-go-tests.py --kinds Test Example Fuzz --weights .github/unit-command-weights.json "$SHARD_INDEX" 3 < .pilot/unit-command-inventory.txt)
             export TEST_RUN_PATTERN
             printf '%s\n' "$TEST_RUN_PATTERN" > .pilot/unit-command-selection.txt
