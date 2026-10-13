@@ -30,9 +30,11 @@ def capture_controller(kubectl, name, output):
                     raise RuntimeError(f"Diagnostic port-forward exited for {name}")
                 match = re.search(r"Forwarding from 127\.0\.0\.1:(\d+) -> 8080", log.read_text())
                 if match:
-                    request(["curl", "--fail", "--silent", "--show-error", "--max-time", "60",
-                             f"http://127.0.0.1:{match[1]}/debug/pprof/profile?seconds=30"],
-                            output / (name + "-cpu.prof"))
+                    for endpoint, suffix in (("heap", "heap"), ("goroutine", "goroutine"),
+                                             ("profile?seconds=30", "cpu")):
+                        request(["curl", "--fail", "--silent", "--show-error", "--max-time", "60",
+                                 f"http://127.0.0.1:{match[1]}/debug/pprof/{endpoint}"],
+                                output / (name + "-" + suffix + ".prof"))
                     return
                 time.sleep(0.1)
             raise RuntimeError(f"Diagnostic port-forward was not ready for {name}")
@@ -61,6 +63,8 @@ def capture(kubectl, root, count):
     for pod in pods:
         name = pod["metadata"]["name"]
         endpoints.append((f"/api/v1/namespaces/haptic/pods/{name}:9090/proxy/metrics", name + "-metrics.prom"))
+    for node in sorted({pod["spec"]["nodeName"] for pod in pods}):
+        endpoints.append((f"/api/v1/nodes/{node}/proxy/stats/summary", node + "-stats.json"))
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(endpoints) + len(pods)) as executor:
         futures = [executor.submit(request, kubectl + ["get", "--raw", endpoint], output / filename)
                    for endpoint, filename in endpoints]
@@ -68,11 +72,13 @@ def capture(kubectl, root, count):
                        for pod in pods)
         for future in futures:
             future.result()
-    (output / "complete.json").write_text(json.dumps({"profiles": 3, "pass": True}) + "\n")
+    (output / "complete.json").write_text(json.dumps({
+        "cpu_profiles": 3, "heap_profiles": 2, "goroutine_profiles": 2, "pass": True,
+    }) + "\n")
 
 
 def main():
-    thresholds = iter((1000, 2500))
+    thresholds = iter((1000, 1800, 1900))
     threshold = next(thresholds)
     deadline = time.monotonic() + 3600
     while time.monotonic() < deadline:
@@ -89,7 +95,7 @@ def main():
                     if threshold is None:
                         return
         time.sleep(5)
-    raise RuntimeError("Scale workload did not reach both profiling thresholds")
+    raise RuntimeError("Scale workload did not reach every profiling threshold")
 
 
 if __name__ == "__main__":

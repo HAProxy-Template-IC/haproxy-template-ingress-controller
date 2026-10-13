@@ -36,9 +36,11 @@ class ControllerProfileTests(unittest.TestCase):
                     else:
                         PROFILER.capture_controller(["kubectl", "--kubeconfig", "owned-config"],
                                                     "controller", root)
-                    self.assertEqual(request.call_args.args[0][-1],
-                                     "http://127.0.0.1:12345/debug/pprof/profile?seconds=30")
-                    self.assertEqual(request.call_args.args[1], root / "controller-cpu.prof")
+                    expected = ["heap"] if error else ["heap", "goroutine", "profile?seconds=30"]
+                    self.assertEqual([call.args[0][-1] for call in request.call_args_list],
+                                     ["http://127.0.0.1:12345/debug/pprof/" + name for name in expected])
+                    self.assertEqual(request.call_args.args[1],
+                                     root / ("controller-heap.prof" if error else "controller-cpu.prof"))
                 process.terminate.assert_called_once_with()
                 process.wait.assert_called_once_with(timeout=10)
 
