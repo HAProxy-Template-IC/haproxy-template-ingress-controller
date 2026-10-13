@@ -492,6 +492,7 @@ jobs:
           startup: ''
     env: &id003
       PILOT_GOGC: '300'
+      PILOT_CAPTURE_NETWORK: ${{ startsWith(matrix.name, 'e2e-') && endsWith(matrix.name, '-3') && '1' || '0' }}
       PILOT_GOMAXPROCS: '2'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'

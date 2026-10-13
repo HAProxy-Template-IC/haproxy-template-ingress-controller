@@ -19,6 +19,13 @@ python3 .github/scripts/runner-metrics.py .pilot/metrics.jsonl &
 metrics_pid=$!
 trap 'kill "$metrics_pid" 2>/dev/null || true; wait "$metrics_pid" 2>/dev/null || true' EXIT
 
+if [[ "${PILOT_CAPTURE_NETWORK:-0}" == 1 ]]; then
+    sudo apt-get update -qq
+    sudo apt-get install -y tcpdump
+    python3 .github/scripts/capture-cluster-network.py > .pilot/network-capture.log 2>&1 &
+    network_pid=$!
+fi
+
 test "$(kind get clusters | wc -l)" -eq 0
 chart_version="0.0.0-github.g${PILOT_SOURCE_SHA:0:8}"
 sed -i "s|^version:.*|version: ${chart_version}|" charts/haptic/Chart.yaml
@@ -69,6 +76,7 @@ result=${PIPESTATUS[0]}
 set -e
 elapsed=$(( $(date +%s) - started ))
 touch .pilot/test-finished
+if [[ -n "${network_pid:-}" ]]; then wait "$network_pid"; fi
 startup_result=0
 wait "$startup_pid" || startup_result=$?
 if [[ "$result" == 0 && "$startup_result" != 0 ]]; then result=$startup_result; fi
