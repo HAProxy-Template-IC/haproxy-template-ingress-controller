@@ -56,6 +56,13 @@ class SnapshotPublicationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.plan()
 
+    def test_verified_reuse_publishes_the_merged_commit_version(self):
+        self.receipt.update(version=3, reused_from={"run_id": 41, "sha": "b" * 40})
+        self.assertEqual(self.plan()["app_version"], "main-01234567")
+        self.receipt["version"] = 4
+        with self.assertRaises(ValueError):
+            self.plan()
+
     def test_rejects_incomplete_duplicate_or_extra_platforms(self):
         self.assertEqual(set(check_index(self.index, self.platforms)), set(self.platforms))
         for entries in (self.index["manifests"][:2], self.index["manifests"] * 2,

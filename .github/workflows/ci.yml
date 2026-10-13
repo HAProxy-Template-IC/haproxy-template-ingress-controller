@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       profile: ${{ steps.select.outputs.profile }}
+      source_run_id: ${{ steps.reuse.outputs.source_run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -30,8 +31,14 @@ jobs:
           persist-credentials: false
       - id: select
         run: python3 .github/scripts/select-verification-profile.py
+      - id: reuse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_MERGE_VERIFICATION: ${{ vars.REUSE_MERGE_VERIFICATION }}
+        run: python3 -m scripts.ci.github_reuse select
   full:
     needs: selection
+    if: needs.selection.outputs.source_run_id == ''
     uses: ./.github/workflows/ci-speed-proof.yml
     with:
       verification_job_prefix: 'full / '
@@ -46,4 +53,29 @@ jobs:
         env:
           SELECTION_RESULT: ${{ needs.selection.result }}
           VERIFICATION_RESULT: ${{ needs.full.result }}
-        run: test "$SELECTION_RESULT" = success && test "$VERIFICATION_RESULT" = success
+          SOURCE_RUN: ${{ needs.selection.outputs.source_run_id }}
+        run: |
+          test "$SELECTION_RESULT" = success
+          if [ -n "$SOURCE_RUN" ]; then
+            test "$VERIFICATION_RESULT" = skipped
+          else
+            test "$VERIFICATION_RESULT" = success
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: needs.selection.outputs.source_run_id != ''
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recheck the original merge-queue evidence
+        if: needs.selection.outputs.source_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ needs.selection.outputs.source_run_id }}
+        run: python3 -m scripts.ci.github_reuse verify --run "$SOURCE_RUN"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: needs.selection.outputs.source_run_id != ''
+        with:
+          name: ci-verification
+          path: ci-verification.json
+          retention-days: 1
+          if-no-files-found: error

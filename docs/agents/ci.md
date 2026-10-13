@@ -91,6 +91,33 @@ publication artifacts. Weekly, explicit verification, and release-tag pipelines
 retain full verification. Every code train still runs the full matrix. A missing
 or mismatched receipt stops publication even when reuse is enabled.
 
+## GitHub post-merge reuse
+
+GitHub reuse is disabled unless the repository variable
+`REUSE_MERGE_VERIFICATION` is exactly `true`. Enable it only after a real canonical
+merge-queue run, its required jobs, and the resulting full post-merge run have
+passed. Record their run IDs, attempts, commit IDs, and equal trees before
+changing the variable, then read the setting back.
+
+Only ordinary pushes to `main` or `maint/*` qualify. The pushed commit's first
+parent must match both the previous branch tip and the merge queue's tested base.
+The original canonical `CI` run must contain every required full-matrix job and
+both successful aggregate gates. Its tree and policy must match the merged
+checkout, and its retained artifact must match GitHub's digest and producing job
+attempt. Pull requests, merge groups, manual runs, and scheduled verification keep
+their existing checks.
+
+Discovery examines the latest 100 merge-queue runs created within one day.
+Missing, expired, mismatched, or unavailable evidence runs normal CI. A newer
+failed run of the same tree cannot be replaced by an older passing run. The
+post-merge gate rechecks the selected source before recording reuse; changes at
+that point fail the gate. Publication independently downloads and revalidates the
+original jobs and artifact again. A reused receipt cannot itself supply reuse.
+
+The merged commit supplies publication versions and images; the receipt records
+the separate merge-queue commit that supplied verification. Reuse does not replace
+publication builds or release conformance.
+
 ## Scheduled verification
 
 The nightly schedule uses `SCHEDULE_KIND=nightly` at 02:30 UTC Monday through

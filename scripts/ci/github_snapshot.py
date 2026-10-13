@@ -15,10 +15,11 @@ def snapshot_plan(receipt, values, *, repository, sha, tree, manifest):
     if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repository) or
             not re.fullmatch(r"[0-9a-f]{40}", sha)):
         raise ValueError("Snapshot publication requires a repository and full commit SHA")
-    expected = {"version": 2, "repository": repository, "sha": sha, "tree": tree,
+    expected = {"repository": repository, "sha": sha, "tree": tree,
                 "branch": "main", "source_sha": sha, "source_repository": repository,
                 "manifest_sha256": hashlib.sha256(manifest).hexdigest()}
-    if receipt.get("profile", "full") != "full" or any(receipt.get(key) != value for key, value in expected.items()):
+    if (receipt.get("version") not in {2, 3} or receipt.get("profile", "full") != "full" or
+            any(receipt.get(key) != value for key, value in expected.items())):
         raise ValueError("Snapshot publication requires the complete verified main source")
     destination = "ghcr.io/" + repository.split("/")[0].lower() + "/haptic"
     if (values["controller"]["image"]["repository"] != destination or
