@@ -14,14 +14,24 @@ ROOT = Path(__file__).parents[2]
 class ScheduleTests(unittest.TestCase):
     def test_long_suites_start_first_and_short_suites_fill_free_capacity(self):
         self.assertEqual(lanes({"a": 30, "b": 20, "c": 10}, 2), [["a"], ["b", "c"]])
-        self.assertEqual(lanes({"a": 30, "b": 20}, 2, coverage=["b"], coverage_seconds=20), [["b"], ["a"]])
+        self.assertEqual(lanes({"a": 30, "b": 20}, 2, early=["b"]), [["b"], ["a"]])
 
     def test_invalid_durations_and_unknown_coverage_fail(self):
         for durations, count in (({}, 2), ({"a": 0}, 2), ({"a": 1}, 0)):
             with self.assertRaises(ValueError):
                 lanes(durations, count)
         with self.assertRaises(ValueError):
-            lanes({"a": 1}, 2, coverage=["unknown"])
+            lanes({"a": 1}, 2, early=["unknown"])
+
+    def test_consumers_wait_for_cache_producer_and_retain_their_execution_slot(self):
+        self.assertEqual(lanes({"producer": 20, "consumer": 5, "long": 30, "short": 5}, 2,
+                               early=["producer"], chains=[["producer", "consumer"]]),
+                         [["producer", "consumer", "short"], ["long"]])
+        for chains in ([["a", "a"]], [["a", "missing"]], [["a"]], [["a", "b"], ["b", "c"]]):
+            with self.subTest(chains=chains), self.assertRaises(ValueError):
+                lanes({"a": 30, "b": 20, "c": 10}, 2, chains=chains)
+        with self.assertRaises(ValueError):
+            lanes({"a": 30, "b": 20}, 2, chains=[["a", "b"]], early=["b"])
 
     def test_checked_in_schedule_matches_recorded_measurements(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci-speed-proof.yml").read_text())
@@ -31,6 +41,9 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(rebuilt, workflow)
         self.assertLessEqual(len(selected) + 1, 60)
         self.assertEqual(sum(map(len, selected)), len(weights["jobs"]))
+        roots = {lane[0] for lane in selected}
+        coverage = {workflow["jobs"][key]["name"] for key in workflow["jobs"]["coverage"]["needs"]}
+        self.assertTrue(coverage | {"unit-command-1", "unit-rest"} <= roots)
         del weights["jobs"][selected[0][0]]
         with self.assertRaises(ValueError):
             schedule(rebuilt, weights)

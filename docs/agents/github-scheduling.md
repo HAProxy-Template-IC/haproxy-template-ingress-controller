@@ -10,9 +10,20 @@ all jobs to the same source and run attempt.
 `.github/job-duration-weights.json` records runner durations and their source run
 IDs. `make schedule-github-verification` places long suites first and fills 59
 execution lanes with shorter suites, reserving one of the current plan's 60
-slots for coverage aggregation. Coverage producers get priority for their final
-aggregation step. The aggregate gate still waits for every suite. These weights
-predict scheduling; a completed first-attempt workflow proves lead time.
+slots for coverage aggregation. Coverage producers start immediately, alongside
+the command and general unit-test cache producers. Command shards run sequentially
+on fresh runners, and support tests follow the general unit tests, so consumers
+can reuse their predecessors' compiled packages. Compatibility jobs follow native jobs with the
+same compiler cache. Every suite still executes, including when its predecessor
+fails and no cache is available. The aggregate gate waits for every suite. These
+weights predict scheduling; a completed first-attempt workflow proves lead time.
+
+Run `38479981671` passed all 103 jobs in 24m07s, including all six added suites.
+It exposed late compiler-cache producers and coverage dependencies. Its native
+cache started cold; the earlier 20m53s comparison run used a warm native cache.
+Duration weights retain the earlier warm native timings, use the combined run
+for other jobs, and use the separate cache-transfer proof for command consumers.
+The corrected layout still needs a complete hosted timing verdict.
 
 Native suites share the architecture- and Go-version-specific compiler and
 module cache. The dependency key covers `go.mod`, `go.sum`, and the PGO profile.

@@ -7,19 +7,26 @@ from pathlib import Path
 import yaml
 
 
-def lanes(durations, count, *, coverage=(), coverage_seconds=0, handoff_seconds=4):
+def lanes(durations, count, *, early=(), chains=(), handoff_seconds=4):
     if count < 1 or not durations or any(value <= 0 for value in durations.values()):
         raise ValueError("Scheduling requires positive durations and runner capacity")
-    if not set(coverage) <= set(durations):
-        raise ValueError("Coverage producers must be scheduled suites")
-    result = [[] for _ in range(min(count, len(durations)))]
+    if not set(early) <= set(durations) or len(early) > count:
+        raise ValueError("Early suites must fit the available runner capacity")
+    chained = [name for chain in chains for name in chain]
+    if (any(len(chain) < 2 for chain in chains) or len(chained) != len(set(chained))
+            or not set(chained) <= set(durations)):
+        raise ValueError("Cache reuse chains must contain distinct scheduled suites")
+    if set(early) & {name for chain in chains for name in chain[1:]}:
+        raise ValueError("Early suites cannot wait for another suite")
+    groups = [list(chain) for chain in chains] + [[name] for name in durations if name not in chained]
+    result = [[] for _ in range(min(count, len(groups)))]
     totals = [0] * len(result)
-    ordered = sorted(durations, key=lambda name: (
-        -(durations[name] + (coverage_seconds if name in coverage else 0)), name))
-    for name in ordered:
+    ordered = sorted(groups, key=lambda group: (
+        group[0] not in early, -sum(durations[name] + handoff_seconds for name in group), group))
+    for group in ordered:
         index = min(range(len(result)), key=lambda item: (totals[item], item))
-        result[index].append(name)
-        totals[index] += durations[name] + handoff_seconds
+        result[index].extend(group)
+        totals[index] += sum(durations[name] + handoff_seconds for name in group)
     return result
 
 
@@ -30,8 +37,8 @@ def schedule(workflow, weights):
     if set(suites) != set(durations):
         raise ValueError("Every suite needs exactly one recorded duration")
     coverage = {jobs[key]["name"] for key in jobs["coverage"]["needs"]}
-    selected = lanes(durations, weights["runner_limit"] - 1, coverage=coverage,
-                     coverage_seconds=weights["coverage_seconds"])
+    selected = lanes(durations, weights["runner_limit"] - 1,
+                     early=coverage | set(weights["early_jobs"]), chains=weights["cache_reuse_chains"])
     for lane in selected:
         for index, name in enumerate(lane):
             job = jobs[suites[name]]
