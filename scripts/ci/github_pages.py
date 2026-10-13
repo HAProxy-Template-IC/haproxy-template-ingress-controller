@@ -5,6 +5,7 @@ import hashlib
 import html
 import json
 from pathlib import Path
+import posixpath
 import re
 import shutil
 import subprocess
@@ -71,6 +72,12 @@ def redirect_page(destination):
 
 
 def materialize_redirects(root):
+    def write(target, destination):
+        relative = posixpath.relpath(destination.lstrip("/"), target.parent.relative_to(root).as_posix())
+        if destination.endswith("/"):
+            relative += "/"
+        target.write_text(redirect_page(relative))
+
     path = root / "_redirects"
     rules = path.read_text().splitlines() if path.exists() else []
     for line in rules:
@@ -88,17 +95,17 @@ def materialize_redirects(root):
                 target = root / prefix / "latest" / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if source.suffix == ".html":
-                    target.write_text(redirect_page("/docs/latest/" + relative.as_posix()))
+                    write(target, "/docs/latest/" + relative.as_posix())
                 else:
                     shutil.copyfile(source, target)
         elif (old, new) in {("/latest", "/latest/"), ("/", "/")}:
             target = root / prefix / old.strip("/") / "index.html"
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(redirect_page("/docs/latest/"))
+            write(target, "/docs/latest/")
         else:
             raise ValueError(f"Unsupported Pages redirect: {line}")
     if (root / "docs/latest/index.html").is_file() and not (root / "docs/index.html").exists():
-        (root / "docs/index.html").write_text(redirect_page("/docs/latest/"))
+        write(root / "docs/index.html", "/docs/latest/")
     if path.exists():
         path.unlink()
 

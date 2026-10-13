@@ -86,6 +86,8 @@ class PagesTests(unittest.TestCase):
         (self.source / "_redirects").write_text("/controller/latest/* /docs/latest/:splat 301\n/controller/ /docs/ 301\n")
         prepare(self.source, self.output)
         self.assertIn('/docs/latest/guide.html', (self.output / "controller/latest/guide.html").read_text())
+        self.assertIn('location.replace("../../docs/latest/guide.html"',
+                      (self.output / "controller/latest/guide.html").read_text())
         self.assertEqual((self.output / "controller/latest/style.css").read_text(), "body{}")
         self.assertFalse((self.output / "_redirects").exists())
 

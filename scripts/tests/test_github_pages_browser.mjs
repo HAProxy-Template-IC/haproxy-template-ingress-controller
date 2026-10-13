@@ -21,9 +21,15 @@ const server = createServer(async (request, response) => {
     response.writeHead(404).end();
   }
 });
-await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const base = `http://127.0.0.1:${server.address().port}`;
+let base = process.env.PAGES_URL?.replace(/\/$/, '');
+if (!base) {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  base = `http://127.0.0.1:${server.address().port}`;
+}
 try {
+  const publishedReceipt = await fetch(`${base}/shared/pages-transport.json`);
+  assert.equal(publishedReceipt.status, 200);
+  assert.deepEqual(await publishedReceipt.json(), receipt, 'Published site differs from its verified artifact');
   for (const name of (process.env.PAGES_BROWSERS || 'chromium').split(',')) {
     const browser = await playwright[name].launch({ headless: true });
     try {
@@ -55,18 +61,18 @@ try {
       await page.goto(`${base}/playground/dev/?preset=starter`);
       const engine = 'playground/dev/playground.wasm';
       const expected = { compressed: receipt.published_files[engine + '.br'], decoded: receipt.engines[engine] };
-      const decoderMemory = await page.evaluate(async ({ engine, expected }) => {
+      const decoderMemory = await page.evaluate(async ({ engine, expected, base }) => {
         const native = globalThis.DecompressionStream;
         try {
           globalThis.DecompressionStream = undefined;
-          const { fetchBrotliWasm } = await import('/shared/playground-wasm-loader.mjs');
-          await fetchBrotliWasm('/' + engine + '.br', expected, () => {});
-          const brotli = await import('/shared/brotli-dec-wasm-2.3.2/brotli_dec_wasm.js');
+          const { fetchBrotliWasm } = await import(`${base}/shared/playground-wasm-loader.mjs`);
+          await fetchBrotliWasm(`${base}/${engine}.br`, expected, () => {});
+          const brotli = await import(`${base}/shared/brotli-dec-wasm-2.3.2/brotli_dec_wasm.js`);
           return (await brotli.default()).memory.buffer.byteLength;
         } finally {
           globalThis.DecompressionStream = native;
         }
-      }, { engine, expected });
+      }, { engine, expected, base });
       assert.ok(decoderMemory < 32 * 1024 * 1024, `Decoder retained ${decoderMemory} bytes`);
       console.log(JSON.stringify({ browser: name, case: 'bounded-fallback-memory', bytes: decoderMemory, result: 'passed' }));
       for (const kind of ['truncated', 'corrupted', 'wrong-decoded-digest', 'missing']) {
@@ -78,11 +84,11 @@ try {
         });
         const wanted = structuredClone(expected);
         if (kind === 'wrong-decoded-digest') wanted.decoded.sha256 = '0'.repeat(64);
-        const error = await page.evaluate(async ({ engine, wanted }) => {
-          const { fetchBrotliWasm } = await import('/shared/playground-wasm-loader.mjs');
-          try { await fetchBrotliWasm('/' + engine + '.br', wanted, () => {}); return null; }
+        const error = await page.evaluate(async ({ engine, wanted, base }) => {
+          const { fetchBrotliWasm } = await import(`${base}/shared/playground-wasm-loader.mjs`);
+          try { await fetchBrotliWasm(`${base}/${engine}.br`, wanted, () => {}); return null; }
           catch (error) { return error.message; }
-        }, { engine, wanted });
+        }, { engine, wanted, base });
         assert.match(error || '', /checksum mismatch|incomplete|HTTP 404/, kind);
         console.log(JSON.stringify({ browser: name, case: kind, result: 'rejected' }));
         await page.unroute(`**/${engine}.br`);
@@ -97,5 +103,5 @@ try {
     }
   }
 } finally {
-  await new Promise(resolve => server.close(resolve));
+  if (server.listening) await new Promise(resolve => server.close(resolve));
 }
