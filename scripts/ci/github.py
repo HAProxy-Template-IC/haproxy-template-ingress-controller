@@ -35,6 +35,14 @@ class GitHub:
                 return
             page += 1
 
+    def post(self, path, body):
+        request = urllib.request.Request(self.api_url + "/" + path, method="POST",
+                                         data=json.dumps(body).encode(),
+                                         headers={**self.headers, "Content-Type": "application/json"})
+        with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:
+            content = response.read()
+        return json.loads(content) if content else None
+
     def artifact(self, repository, artifact_id, limit):
         request = urllib.request.Request(
             f"{self.api_url}/repos/{repository}/actions/artifacts/{artifact_id}/zip", headers=self.headers)

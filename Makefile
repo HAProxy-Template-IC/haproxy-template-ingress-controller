@@ -1255,6 +1255,10 @@ test-snapshot-publication: ## Verify image and chart publication in a local regi
 mirror-github-ci-images: ## Preserve pinned CI image digests while copying them to GHCR
 	python3 -m scripts.ci.github_mirror --copy
 
+.PHONY: tag-github-release
+tag-github-release: ## Tag and dispatch a release after canonical source verification
+	python3 -m scripts.ci.github_release_tag
+
 publish-github-release: ## Publish one verified release phase to GitHub
 	bash scripts/publish-github-release.sh "$(PUBLICATION_PHASE)"
 
