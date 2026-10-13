@@ -1,0 +1,30 @@
+name: Native toolchain pin proof
+'on':
+  push:
+    branches:
+      - ci/github-native-tools-proof-20261013
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Resolve the pinned compiler and install native tools
+        run: bash .github/scripts/install-arm-pilot-tools.sh
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+          cache: false
+      - name: Verify the installed versions
+        run: make test-github-native-tools
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: native-toolchain
+          path: ${{ runner.temp }}/haptic-arm-tools/plan.json
+          retention-days: 1
+          if-no-files-found: error

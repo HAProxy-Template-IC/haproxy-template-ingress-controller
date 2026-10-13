@@ -59,25 +59,32 @@ jobs:
       TEST_RUN_PATTERN: TestGatewayAPIReleaseMatrix
     steps:
     - *id001
-    - &id004
-      name: Select native compiler cache
-      run: |
-        mkdir -p .pilot
-        printf '%s\n' host-cache > .pilot/compiler-cache-variant
     - &id002
-      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
-      with:
-        go-version: 1.27.2
-        cache: true
-        cache-dependency-path: |
-          go.sum
-          Makefile
-          Dockerfile
-          cmd/haptic/default.pgo
-          .pilot/compiler-cache-variant
+      name: Select native compiler cache
+      run: 'mkdir -p .pilot
+
+        printf ''%s\n'' host-cache > .pilot/compiler-cache-variant
+
+        '
     - &id003
       name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
+    - &id004
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+        cache: true
+        cache-dependency-path: 'go.sum
+
+          Makefile
+
+          Dockerfile
+
+          cmd/haptic/default.pgo
+
+          .pilot/compiler-cache-variant
+
+          '
     - name: Run native E2E verification
       run: bash .github/scripts/run-arm-pilot.sh
     - name: Retain verification evidence
@@ -121,9 +128,9 @@ jobs:
       TEST_RUN_PATTERN: TestGatewayChurn
     steps:
     - *id001
-    - *id004
     - *id002
     - *id003
+    - *id004
     - name: Run native E2E verification
       run: bash .github/scripts/run-arm-pilot.sh
     - name: Check controller output
@@ -163,9 +170,9 @@ jobs:
       TEST_RUN_PATTERN: TestScale
     steps:
     - *id001
-    - *id004
     - *id002
     - *id003
+    - *id004
     - name: Run native E2E verification
       run: bash .github/scripts/run-arm-pilot.sh
     - name: Check controller output
@@ -217,9 +224,9 @@ jobs:
       PILOT_STARTUP_ONLY: '1'
     steps:
     - *id001
-    - *id004
     - *id002
     - *id003
+    - *id004
     - name: Resolve upstream Gateway API commit
       run: 'revision=$(bash scripts/prepare-gateway-api-canary.sh resolve)
 
@@ -238,9 +245,7 @@ jobs:
       if: always()
       env:
         KUBECONFIG: /tmp/haproxy-e2e-kubeconfig
-      run: |
-        kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot \
-          -o json > .pilot/conformance-snapshots.json
+      run: "kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot \\\n  -o json > .pilot/conformance-snapshots.json\n"
     - name: Retain verification evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

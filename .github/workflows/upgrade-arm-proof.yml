@@ -34,43 +34,63 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
-      with:
-        go-version: 1.27.2
-        cache: true
-        cache-dependency-path: go.sum
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+        cache: true
+        cache-dependency-path: go.sum
     - name: Build the exact candidate image
-      run: |
-        mkdir -p .pilot debug-logs
+      run: 'mkdir -p .pilot debug-logs
+
         git diff --exit-code "$SOURCE_SHA"
+
         test "$(kind get clusters | wc -l)" -eq 0
+
         git rev-parse HEAD > .pilot/source.txt
+
         lscpu > .pilot/host.txt
+
         sed -i "s|^version:.*|version: 0.0.0-github.g${SOURCE_SHA:0:8}|" charts/haptic/Chart.yaml
-        yq -i '.cache.varnish.image = strenv(VARNISH_IMAGE)' charts/haptic/values.yaml
+
+        yq -i ''.cache.varnish.image = strenv(VARNISH_IMAGE)'' charts/haptic/values.yaml
+
         git diff > .pilot/test-values.patch
+
         make docker-build-test 2>&1 | tee .pilot/build.log
+
         docker image inspect haptic:test > .pilot/controller-image.json
+
+        '
     - name: Exercise upgrade, traffic, rejection and repair
-      run: |
-        started=$(date +%s)
+      run: 'started=$(date +%s)
+
         set +e
+
         SKIP_DOCKER_BUILD=1 make test-chart-upgrade 2>&1 | tee .pilot/test.log
+
         result=${PIPESTATUS[0]}
+
         set -e
+
         elapsed=$(( $(date +%s) - started ))
-        printf '{"exit_code":%s,"test_seconds":%s}\n' "$result" "$elapsed" > .pilot/result.json
+
+        printf ''{"exit_code":%s,"test_seconds":%s}\n'' "$result" "$elapsed" > .pilot/result.json
+
         exit "$result"
+
+        '
     - name: Retain verification evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: upgrade-${{ matrix.baseline }}-${{ matrix.kubernetes }}-arm
-        path: |
-          .pilot/
+        path: '.pilot/
+
           debug-logs/
+
+          '
         include-hidden-files: true
         retention-days: 1
         if-no-files-found: error

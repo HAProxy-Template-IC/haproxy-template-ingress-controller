@@ -73,14 +73,14 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
-      with:
-        go-version: 1.27.2
-        cache: true
-        cache-dependency-path: go.sum
-      if: matrix.runner == 'ubuntu-24.04-arm'
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
+      if: matrix.runner == 'ubuntu-24.04-arm'
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+        cache: true
+        cache-dependency-path: go.sum
       if: matrix.runner == 'ubuntu-24.04-arm'
     - name: Run native ARM suite
       if: matrix.runner == 'ubuntu-24.04-arm'
@@ -157,8 +157,7 @@ jobs:
       CONFORMANCE_PARALLEL: '4'
       SCALE_SEED_WORKERS: '4'
       E2E_SHARD_WEIGHTS: .github/e2e-shard-weights.json
-      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && '/tmp/haptic-go-cache' || ''
-        }}
+      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && '/tmp/haptic-go-cache' || '' }}
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
     steps:
@@ -171,24 +170,24 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{
-          matrix.index || '0' }}-${{ github.sha }}
-        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard
-          }}-${{ matrix.index || '0' }}-
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{ matrix.index
+          || '0' }}-${{ github.sha }}
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{
+          matrix.index || '0' }}-
     - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
       if: matrix.suite == 'snapshot' || matrix.suite == 'spoa'
       with:
         image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
         platforms: arm64,arm
         cache-image: false
-    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
-      with:
-        go-version: 1.27.2
-        cache: true
-        cache-dependency-path: go.sum
-      if: matrix.runner == 'ubuntu-24.04-arm'
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
+      if: matrix.runner == 'ubuntu-24.04-arm'
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+        cache: true
+        cache-dependency-path: go.sum
       if: matrix.runner == 'ubuntu-24.04-arm'
     - name: Run native ARM suite
       if: matrix.runner == 'ubuntu-24.04-arm'

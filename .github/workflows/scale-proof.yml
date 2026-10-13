@@ -35,13 +35,13 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
-    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
-      with:
-        go-version: 1.27.2
-        cache: true
-        cache-dependency-path: go.sum
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+        cache: true
+        cache-dependency-path: go.sum
     - name: Run native E2E verification
       run: bash .github/scripts/run-arm-pilot.sh
     - name: Check controller output

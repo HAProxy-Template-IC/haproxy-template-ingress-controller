@@ -386,6 +386,10 @@ test-github-verification: lint-github-actions ## Check GitHub verification evide
 test-github-toolchain-update: ## Verify Dockerfile changes reach the selected GitHub toolchain
 	python3 -m scripts.ci.toolchain_update_check "$(TOOLCHAIN_KIND)"
 
+.PHONY: test-github-native-tools
+test-github-native-tools: ## Check installed ARM tools match the shared build pins
+	python3 -m scripts.ci.github_native_tools verify "$(RUNNER_TEMP)/haptic-arm-tools/plan.json"
+
 .PHONY: test-registry-build-retry
 test-registry-build-retry: ## Verify registry retries preserve permanent build failures
 	python3 -m unittest scripts/tests/test_retry_registry_build.py -v
