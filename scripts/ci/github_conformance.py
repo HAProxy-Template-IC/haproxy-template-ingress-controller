@@ -97,6 +97,33 @@ def bundle(selected, env, directory):
     return name
 
 
+def diagnostics(directory, *, run=subprocess.run):
+    directory.mkdir(parents=True, exist_ok=True)
+    kubectl = ["docker", "exec", "haptic-e2e-control-plane", "kubectl", "--kubeconfig=/etc/kubernetes/admin.conf"]
+    commands = {"containers.txt": ["docker", "ps", "-a"],
+                "pods.json": kubectl + ["get", "pods", "-A", "-o", "json"],
+                "events.json": kubectl + ["get", "events", "-A", "-o", "json"],
+                "pod-details.txt": kubectl + ["describe", "pods", "-A"],
+                "jobs.json": kubectl + ["get", "jobs", "-n", "haptic", "-o", "json"]}
+    for component, container in (("pre-rollout-validation", "preflight"), ("controller", "controller"),
+                                  ("controller", "validators"), ("loadbalancer", "spoa-hub")):
+        for previous in (False, True):
+            name = f"{component}-{container}-{'previous' if previous else 'current'}.log"
+            commands[name] = kubectl + ["logs", "-n", "haptic", "-l", "app.kubernetes.io/component=" + component,
+                                        "-c", container, "--prefix", "--tail=-1", "--max-log-requests=20"]
+            if previous:
+                commands[name].append("--previous")
+    results = {}
+    for name, command in commands.items():
+        with (directory / name).open("w") as stream:
+            try:
+                result = run(command, stdout=stream, stderr=subprocess.STDOUT, timeout=30, check=False)
+                results[name] = {"exit_code": result.returncode}
+            except (OSError, subprocess.TimeoutExpired) as error:
+                results[name] = {"error": str(error)}
+    (directory / "collection.json").write_text(json.dumps(results, indent=2) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", action="store_true")
@@ -106,7 +133,10 @@ def main():
     if args.bundle:
         print(bundle(selected, os.environ, Path("build/gateway-conformance")))
     else:
-        execute(selected, dict(os.environ))
+        try:
+            execute(selected, dict(os.environ))
+        finally:
+            diagnostics(Path("debug-logs/conformance-report"))
 
 
 if __name__ == "__main__":

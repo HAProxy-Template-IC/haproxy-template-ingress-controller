@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 import yaml
 
-from scripts.ci.github_conformance import bundle, execute, plan
+from scripts.ci.github_conformance import bundle, diagnostics, execute, plan
 
 
 ROOT = Path(__file__).parents[2]
@@ -100,6 +100,19 @@ class ConformanceWorkflowTests(unittest.TestCase):
         self.assertEqual(publish["needs"], "report")
         self.assertEqual(publish["steps"][-1]["run"],
                          'gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/gateway-conformance/$ARCHIVE"')
+
+    def test_diagnostics_survive_missing_pods_and_timed_out_commands(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Mock(side_effect=[subprocess.TimeoutExpired("docker", 30)]
+                       + [subprocess.CompletedProcess("kubectl", 1)] * 12)
+            diagnostics(Path(directory), run=run)
+            self.assertEqual(run.call_count, 13)
+            results = json.loads((Path(directory) / "collection.json").read_text())
+            self.assertIn("error", results["containers.txt"])
+            self.assertEqual(results["pods.json"], {"exit_code": 1})
+            for call in run.call_args_list:
+                self.assertNotIn("secrets", call.args[0])
+                self.assertEqual(call.kwargs["timeout"], 30)
 
 
 class ConformanceArchiveTests(unittest.TestCase):
