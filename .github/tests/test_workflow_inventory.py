@@ -15,31 +15,26 @@ class WorkflowInventoryTests(unittest.TestCase):
         self.manifest = json.loads((ROOT / ".github/ci-verification.json").read_text())
 
     def test_gate_requires_every_declared_job_and_preserves_baseline_coverage(self):
-        names = []
-        for job in self.workflow["jobs"].values():
-            matrix = job.get("strategy", {}).get("matrix")
-            if matrix:
-                names.extend(row["name"] for row in matrix["include"])
-            else:
-                names.append(job["name"])
+        names = [job["name"] for job in self.workflow["jobs"].values()]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(set(names), set(self.manifest["required_jobs"]) | {"verified"})
         mapped = {name for group in self.manifest["gitlab_job_mapping"].values() for name in group}
         self.assertEqual(mapped, set(names))
 
-    def test_skipped_jobs_keep_unique_names_before_matrix_expansion(self):
+    def test_skipped_jobs_keep_unique_names_without_matrix_expansion(self):
         names = [job["name"] for job in self.workflow["jobs"].values()]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(set(names), set(self.manifest["required_jobs"]) | {"verified"})
         for job in self.workflow["jobs"].values():
-            if "strategy" in job:
-                self.assertEqual(job["name"], job["strategy"]["matrix"]["include"][0]["name"])
+            self.assertNotIn("strategy", job)
+            if "CI_SUITE" in job.get("env", {}):
+                suite = json.loads(job["env"]["CI_SUITE"])
+                self.assertEqual(job["name"], suite["name"])
+                self.assertEqual(job["runs-on"], suite["runner"])
 
     def test_coverage_has_every_profile_without_waiting_for_unrelated_suites(self):
         jobs = self.workflow["jobs"]
-        rows = [row for group in jobs["coverage"]["needs"]
-                for row in jobs[group]["strategy"]["matrix"]["include"]]
-        self.assertEqual({row["name"] for row in rows}, {
+        self.assertEqual({jobs[group]["name"] for group in jobs["coverage"]["needs"]}, {
             "coverage-rest", "coverage-renderer",
             "integration-3.0", "integration-3.1", "integration-3.2", "integration-3.3", "integration-3.4",
         })
@@ -47,12 +42,11 @@ class WorkflowInventoryTests(unittest.TestCase):
 
     def test_execution_chains_reserve_capacity_for_coverage_aggregation(self):
         jobs = self.workflow["jobs"]
-        suites = {key: job for key, job in jobs.items() if "strategy" in job}
+        suites = {key: job for key, job in jobs.items() if "CI_SUITE" in job.get("env", {})}
         roots = {key for key, job in suites.items() if not job.get("needs")}
         self.assertLessEqual(len(roots) + 1, 60)
         children = collections.Counter()
         for key, job in suites.items():
-            self.assertEqual(len(job["strategy"]["matrix"]["include"]), 1)
             if job.get("needs"):
                 self.assertIn(job["needs"], suites)
                 children[job["needs"]] += 1
@@ -77,24 +71,21 @@ class WorkflowInventoryTests(unittest.TestCase):
             if key == "verified":
                 self.assertEqual(job["if"], "always()")
                 continue
-            names = ([row["name"] for row in job["strategy"]["matrix"]["include"]]
-                     if "strategy" in job else [job["name"]])
-            self.assertEqual(len(names), 1)
-            condition = ("${{ !cancelled() }}" if names[0] in expected else
+            condition = ("${{ !cancelled() }}" if job["name"] in expected else
                          "${{ !cancelled() && inputs.verification_profile != 'prose' }}")
             self.assertEqual(job["if"], condition)
         inputs = self.workflow["on"]["workflow_call"]["inputs"]
         self.assertEqual(inputs["verification_profile"]["default"], "full")
 
-    def test_e2e_matrix_has_every_shard_of_every_supported_version(self):
+    def test_e2e_has_every_shard_of_every_supported_version(self):
         groups = collections.defaultdict(set)
         for job in self.workflow["jobs"].values():
-            for row in job.get("strategy", {}).get("matrix", {}).get("include", []):
-                name = row["name"]
-                if name.startswith(("e2e-hp", "e2e-minimum-kubernetes-")):
-                    self.assertEqual(int(job["env"]["E2E_SHARD_TOTAL"]), 4)
-                    group, index = name.rsplit("-", 1)
-                    groups[group].add(int(index))
+            name = job["name"]
+            if name.startswith(("e2e-hp", "e2e-minimum-kubernetes-")):
+                self.assertEqual(int(job["env"]["E2E_SHARD_TOTAL"]), 4)
+                group, index = name.rsplit("-", 1)
+                self.assertEqual(int(job["env"]["E2E_SHARD_INDEX"]), int(index))
+                groups[group].add(int(index))
         self.assertEqual(set(groups), {"e2e-hp3.0", "e2e-hp3.1", "e2e-hp3.2", "e2e-hp3.3", "e2e-hp3.4",
                                        "e2e-minimum-kubernetes"})
         for group, indexes in groups.items():
