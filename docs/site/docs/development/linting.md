@@ -32,6 +32,12 @@ When changing CI file filters, check that chart inputs still select their tests:
 make test-ci-rules
 ```
 
+For GitHub Actions workflows, validate the workflow syntax and verification rules:
+
+```bash
+make test-github-verification
+```
+
 After a documentation merge, the main pipeline builds the matching playground
 bundle and publishes both sites. A commit marked `[skip ci]` also skips this
 publication; merging it doesn't update the live documentation.
