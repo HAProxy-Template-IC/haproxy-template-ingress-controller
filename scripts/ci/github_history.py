@@ -44,6 +44,7 @@ def successful_job_metrics(api, repository, current_run, *, workflow, branch, jo
         try:
             content = api.artifact(repository, artifact["id"], 2 * 1024 * 1024)
         except urllib.error.HTTPError as error:
+            error.close()
             if error.code in {404, 410}:
                 continue
             raise

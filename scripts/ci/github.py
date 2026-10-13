@@ -42,8 +42,10 @@ class GitHub:
             response = urllib.request.build_opener(NoRedirect()).open(request, timeout=30)
         except urllib.error.HTTPError as error:
             if error.code != 302:
+                error.close()
                 raise
             location = error.headers["Location"]
+            error.close()
             parsed = urllib.parse.urlsplit(location)
             if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
                 raise ValueError("Artifact download requires an HTTPS storage URL") from error
