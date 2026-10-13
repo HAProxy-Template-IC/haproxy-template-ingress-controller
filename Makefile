@@ -1245,7 +1245,13 @@ build-docs-preview: ## Build the versioned documentation preview artifact
 test-snapshot-publication: ## Verify image and chart publication in a local registry
 	bash .github/scripts/test-snapshot-publication.sh
 
-.PHONY: prepare-github-release-config
+.PHONY: prepare-github-release-config publish-github-release smoke-spoa-image
+publish-github-release: ## Publish one verified release phase to GitHub
+	bash scripts/publish-github-release.sh "$(PUBLICATION_PHASE)"
+
+smoke-spoa-image: ## Run the native SPOA smoke suite against an immutable image
+	bash scripts/smoke-spoa-image.sh "$(SPOA_SMOKE_IMAGE)"
+
 prepare-github-release-config: ## Preserve release builds and signatures while targeting GitHub
 	python3 -m scripts.ci.github_release --repository "$(GITHUB_REPOSITORY)" --output .pilot/goreleaser.github.yml
 	goreleaser check --config .pilot/goreleaser.github.yml
