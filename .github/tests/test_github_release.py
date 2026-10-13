@@ -47,6 +47,13 @@ class GitHubReleaseTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 configuration(self.source, value)
 
+    def test_snapshot_binary_version_matches_chart_app_version(self):
+        result = configuration(self.source, "owner/repo", "01234567" + "8" * 32)
+        self.assertEqual(result["snapshot"]["version_template"], "main-01234567")
+        for sha in ("01234567", "g" * 40, "a" * 40 + "\n"):
+            with self.subTest(sha=sha), self.assertRaises(ValueError):
+                configuration(self.source, "owner/repo", sha)
+
 
 if __name__ == "__main__":
     unittest.main()
