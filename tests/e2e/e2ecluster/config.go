@@ -234,4 +234,5 @@ kubeadmConfigPatches:
   - |
     kind: KubeletConfiguration
     containerLogMaxSize: 200Mi
+    syncFrequency: 5s
 `

@@ -102,6 +102,11 @@ enables the chart's matching experimental-field validation tests.
 `KIND_NODE_IMAGE` selects the node image when creating a cluster; it does not
 replace an existing cluster. Omit it to use Kind's bundled default.
 
+The test cluster uses a five-second kubelet sync interval so certificate-rotation
+tests spend less time waiting for mounted Secrets. Projection still happens
+automatically through Kubernetes; the tests retain every rotation and revocation
+check. See [Secret projection](https://kubernetes.io/docs/concepts/configuration/secret/#using-secrets-as-files-from-a-pod).
+
 ## CI
 
 CI enumerates the compiled tests with `go test -list` before creating clusters.
