@@ -995,6 +995,8 @@ redact_secret_matches "$4" "$5" "$6"
                         "uid": "map-uid",
                         "generation": 1,
                         "resourceVersion": "91",
+                        "ownerReferences": [{"apiVersion": "haproxy-haptic.org/v1alpha1", "kind": "HAProxyCfg",
+                                             "name": "config", "uid": "config-uid", "controller": True}],
                         "annotations": {
                             "haproxy-haptic.org/auxiliary-set-id": "set-id"
                         },

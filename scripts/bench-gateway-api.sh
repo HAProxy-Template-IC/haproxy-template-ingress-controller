@@ -3964,6 +3964,7 @@ capture_referenced_map_inventory() {
     local objects="${output%.json}-objects.json"
     local candidate="${output}.candidate"
     local cfg="${output%.json}-cfg.json"
+    local identities="${output%.json}-identities.json"
     kubectl get haproxymapfiles -n "$RELEASE_NAMESPACE" -o json > "$objects" || \
         return "$READINESS_RESULT_EVIDENCE_INVALID"
     kubectl get haproxycfg "$HAPROXYCFG_NAME" -n "$RELEASE_NAMESPACE" -o json > "${cfg}.read" || \
@@ -4004,8 +4005,11 @@ capture_referenced_map_inventory() {
               ((.consecutiveErrors == null) or
                ((.consecutiveErrors | type) == "number" and .consecutiveErrors >= 0))))))
     ' "$objects" >/dev/null || return "$READINESS_RESULT_EVIDENCE_INVALID"
+    "$PROJECT_ROOT/bin/check-map-identities" "$cfg" "$objects" > "$identities" || \
+        return "$READINESS_RESULT_EVIDENCE_INVALID"
     : > "$candidate" || return "$READINESS_RESULT_EVIDENCE_INVALID"
-    jq -S --arg default_namespace "$RELEASE_NAMESPACE" --argjson allow_deployed_lag "$allow_deployed_lag" --slurpfile cfg "$cfg" --slurpfile pods "$pods" '
+    jq -S --arg default_namespace "$RELEASE_NAMESPACE" --argjson allow_deployed_lag "$allow_deployed_lag" \
+        --slurpfile cfg "$cfg" --slurpfile pods "$pods" --slurpfile identities "$identities" '
         $cfg[0] as $parent |
         ($parent.status.auxiliaryFiles.setID // "") as $set_id |
         ($parent.status.auxiliaryFiles.mapFiles // []) as $refs |
@@ -4022,7 +4026,7 @@ capture_referenced_map_inventory() {
         select(($refs | map([(.namespace // $default_namespace), .name] | join("/")) | unique | length) == ($refs | length)) |
         select(($selected | length) == ($refs | length)) |
         select(all($selected[];
-          (.metadata.annotations["haproxy-haptic.org/auxiliary-set-id"] == $set_id and
+          ($identities[0].valid[.metadata.namespace + "/" + .metadata.name] == .metadata.uid and
            (.spec.mapName // "") != "" and (.spec.path // "") != "" and
            (.spec.checksum // "") != "" and
            ((.status.deployedToPods // []) | length) == ($current | length)) and

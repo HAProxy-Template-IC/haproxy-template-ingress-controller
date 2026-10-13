@@ -38,7 +38,7 @@ jobs:
           '
     - name: Make validated artifacts readable
       if: always()
-      run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/gateway-benchmark"
+      run: sudo chown -R "$(id -u):$(id -g)" .git "$RUNNER_TEMP/gateway-benchmark"
     - name: Retain validated benchmark evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

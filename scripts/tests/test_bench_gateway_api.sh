@@ -253,12 +253,14 @@ pod = {"metadata": {"name": "lb-0", "uid": "uid-0"}, "status": {"containerStatus
 pods = {"items": [pod]}
 deployed = [{"podName": "lb-0", "podUID": "uid-0", "podRuntimeID": "rt-0", "checksum": "m1"}]
 map_object = {"metadata": {"name": "map-a", "namespace": "haptic", "uid": "map-uid", "resourceVersion": "5",
+                           "ownerReferences": [{"apiVersion": "haproxy-haptic.org/v1alpha1", "kind": "HAProxyCfg",
+                                                "name": "config", "uid": "cfg-uid", "controller": True}],
                            "annotations": {"haproxy-haptic.org/auxiliary-set-id": "set-2"}},
               "spec": {"mapName": "a", "path": "maps/a.map", "checksum": "m1"},
               "status": {"deployedToPods": deployed}}
 refs = [{"kind": "HAProxyMapFile", "name": "map-a", "namespace": "haptic"}]
 def cfg(annotation, status_set):
-    return {"metadata": {"uid": "cfg-uid", "resourceVersion": "9", "generation": 4,
+    return {"metadata": {"name": "config", "namespace": "haptic", "uid": "cfg-uid", "resourceVersion": "9", "generation": 4,
                          "annotations": {"haproxy-haptic.org/auxiliary-set-id": annotation}},
             "spec": {"checksum": "c2"},
             "status": {"deployedToPods": [{"podName": "lb-0", "podUID": "uid-0", "checksum": "c2"}],

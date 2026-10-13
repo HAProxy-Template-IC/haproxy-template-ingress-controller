@@ -340,7 +340,7 @@ test: ## Run all unit and supporting test suites
 	@$(MAKE) test-unit
 
 .PHONY: test-support
-test-support: ## Run script, browser, process, playground and cluster-helper tests
+test-support: build-map-identity-check ## Run script, browser, process, playground and cluster-helper tests
 	@echo "Running tests..."
 	$(MAKE) test-admission-readiness
 	$(MAKE) test-playground-web
@@ -379,7 +379,7 @@ test-registry-build-retry: ## Verify registry retries preserve permanent build f
 	python3 -m unittest scripts/tests/test_retry_registry_build.py -v
 
 .PHONY: test-gateway-benchmark-harness
-test-gateway-benchmark-harness: ## Verify benchmark setup, workload gates and bundle provenance
+test-gateway-benchmark-harness: build-map-identity-check ## Verify benchmark setup, workload gates and bundle provenance
 	bash scripts/tests/test_bench_gateway_api.sh
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 
@@ -863,12 +863,16 @@ bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=Benchmar
 bench-render-comparison: ## Compare clean HEAD with BENCH_BASE_REF on the same host
 	bash scripts/bench-render-comparison.sh
 
-bench-gateway-api: ## Run pinned Gateway API benchmark programs against HAPTIC
+bench-gateway-api: build-map-identity-check ## Run pinned Gateway API benchmark programs against HAPTIC
 	bash scripts/bench-gateway-api.sh
 
 .PHONY: bench-gateway-api-ci
-bench-gateway-api-ci: ## Run the hosted benchmark profile and validate its artifacts
+bench-gateway-api-ci: build-map-identity-check ## Run the hosted benchmark profile and validate its artifacts
 	bash scripts/bench-gateway-api-ci.sh
+
+.PHONY: build-map-identity-check
+build-map-identity-check: ## Build the benchmark's published-map identity verifier
+	$(GO) build -o bin/check-map-identities ./cmd/check-map-identities
 
 ## Schema extraction (for offline validate)
 
