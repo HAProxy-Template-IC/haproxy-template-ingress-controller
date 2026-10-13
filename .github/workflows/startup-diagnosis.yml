@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         sample: [1, 2, 3]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
       CONFORMANCE_SOURCE_SHA: ${{ github.sha }}
@@ -23,6 +23,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Install pinned native tools
+        run: bash .github/scripts/install-arm-pilot-tools.sh
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+          cache: false
       - name: Run complete startup validation on a fresh runner
         run: bash .github/scripts/run-conformance-report.sh startup
       - name: Retain startup timeline and diagnostics

@@ -95,7 +95,7 @@ class ToolchainSelectionTests(unittest.TestCase):
             reference = job.get("env", {}).get("PILOT_CI_IMAGE")
             if reference:
                 self.assertIn(reference, self.inventory["images"])
-        for name in ("run-build-pilot.sh", "run-remaining-pilot.sh", "run-conformance-report.sh",
+        for name in ("run-build-pilot.sh", "run-remaining-pilot.sh",
                      "run-release-publication.sh", "run-snapshot-publication.sh"):
             self.assertIn("python3 -m scripts.ci.github_toolchain", (ROOT / ".github/scripts" / name).read_text())
         for name in ("release-tag.yml", "prepare-spoa-release.yml", "benchmarks.yml"):

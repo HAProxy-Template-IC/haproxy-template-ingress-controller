@@ -142,6 +142,27 @@ class ConformanceWorkflowTests(unittest.TestCase):
         self.assertEqual(publish["steps"][-1]["run"],
                          'gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/gateway-conformance/$ARCHIVE"')
 
+    def test_conformance_and_its_startup_diagnosis_use_the_native_arm_toolchain(self):
+        wrapper = (ROOT / ".github/scripts/run-conformance-report.sh").read_text()
+        self.assertIn('test "$(uname -m)" = aarch64', wrapper)
+        self.assertLess(wrapper.index("make test-github-native-tools"), wrapper.index('make "$CONFORMANCE_TARGET"'))
+        self.assertNotIn("docker run", wrapper)
+        for filename, job_name in (("conformance-report.yml", "report"), ("startup-diagnosis.yml", "startup")):
+            with self.subTest(workflow=filename):
+                workflow = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())
+                job = workflow["jobs"][job_name]
+                self.assertEqual(job["runs-on"], "ubuntu-24.04-arm")
+                steps = job["steps"]
+                install = next(i for i, step in enumerate(steps)
+                               if step.get("run") == "bash .github/scripts/install-arm-pilot-tools.sh")
+                compiler = next(i for i, step in enumerate(steps)
+                                if step.get("uses", "").startswith("actions/setup-go@"))
+                run = next(i for i, step in enumerate(steps)
+                           if step.get("run", "").startswith("bash .github/scripts/run-conformance-report.sh"))
+                self.assertLess(install, compiler)
+                self.assertLess(compiler, run)
+                self.assertEqual(steps[compiler]["with"]["go-version"], "${{ env.HAPTIC_NATIVE_GO_VERSION }}")
+
     def test_diagnostics_survive_missing_pods_and_timed_out_commands(self):
         with tempfile.TemporaryDirectory() as directory:
             run = Mock(side_effect=[subprocess.TimeoutExpired("docker", 30)]

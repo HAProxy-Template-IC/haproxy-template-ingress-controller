@@ -24,7 +24,7 @@ env:
   CONFORMANCE_MODE: ${{ inputs.release && 'release' || 'candidate' }}
 jobs:
   report:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     permissions:
       contents: read
@@ -39,6 +39,12 @@ jobs:
           ref: ${{ env.CONFORMANCE_SOURCE_SHA }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Install pinned native tools
+        run: bash .github/scripts/install-arm-pilot-tools.sh
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+          cache: false
       - name: Authenticate published image downloads
         if: inputs.release
         env:
