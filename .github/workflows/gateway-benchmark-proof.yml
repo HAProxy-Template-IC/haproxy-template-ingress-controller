@@ -27,23 +27,29 @@ jobs:
       run: |
         export BENCH_CI_OUTPUT="$RUNNER_TEMP/gateway-benchmark"
         mkdir -p "$BENCH_CI_OUTPUT"
+        export HAPTIC_E2E_EXTRA_VALUES="$RUNNER_TEMP/benchmark-bootstrap-values.yaml"
+        cat > "$HAPTIC_E2E_EXTRA_VALUES" <<'YAML'
+        controller:
+          extraEnv:
+            - {name: GOMAXPROCS, value: '2'}
+            - {name: GOGC, value: '300'}
+            - {name: TMPDIR, value: /v}
+          extraVolumes:
+            - name: validation-scratch
+              emptyDir: {medium: Memory, sizeLimit: 512Mi}
+          extraVolumeMounts:
+            - {name: validation-scratch, mountPath: /v}
+        YAML
         bash scripts/retry.sh docker pull "$PILOT_CI_IMAGE"
         docker run --rm --network host \
           --volume /var/run/docker.sock:/var/run/docker.sock \
           --volume "$PWD:$PWD" --workdir "$PWD" \
           --volume "$BENCH_CI_OUTPUT:$BENCH_CI_OUTPUT" \
+          --volume "$HAPTIC_E2E_EXTRA_VALUES:$HAPTIC_E2E_EXTRA_VALUES:ro" \
           --env BENCH_CI_OUTPUT --env HAPTIC_E2E_CONTROLLER_STARTUP --env HAPTIC_E2E_EXTRA_SET \
+          --env HAPTIC_E2E_EXTRA_VALUES \
           --entrypoint bash "$PILOT_CI_IMAGE" -euc '
             git config --global --add safe.directory "$PWD"
-            yq -i '\''
-              .controller.extraEnv += [
-                {"name": "GOMAXPROCS", "value": "2"},
-                {"name": "GOGC", "value": "300"},
-                {"name": "TMPDIR", "value": "/v"}
-              ] |
-              .controller.extraVolumes += [{"name": "validation-scratch", "emptyDir": {"medium": "Memory", "sizeLimit": "512Mi"}}] |
-              .controller.extraVolumeMounts += [{"name": "validation-scratch", "mountPath": "/v"}]
-            '\'' scripts/dev-env-assets/conformance-values.yaml
             make bench-gateway-api-ci
           '
     - name: Make validated artifacts readable

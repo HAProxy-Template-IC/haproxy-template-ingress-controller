@@ -848,6 +848,9 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		return ctx, fmt.Errorf("gateway API Helm channel: %w", err)
 	}
 	args = append(args, gatewayAPIArgs...)
+	if valuesPath := os.Getenv("HAPTIC_E2E_EXTRA_VALUES"); valuesPath != "" {
+		args = append(args, "--values", valuesPath)
+	}
 	args = append(args, extraHelmSetArgs()...)
 	identity, err := expectedControllerIdentity()
 	if err != nil {

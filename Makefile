@@ -754,6 +754,7 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test docker-
 	@echo "  SKIP_CLUSTER_CREATE - CI mode: assume cluster already exists; skip kind create"
 	@echo "  SKIP_DOCKER_BUILD   - CI mode: assume haptic:test-haproxyX.Y already loaded"
 	@echo "  TEST_RUN_PATTERN    - Run specific tests matching pattern"
+	@echo "  HAPTIC_E2E_EXTRA_VALUES - Additional Helm values file, after the selected test profile"
 	@echo "  HAPTIC_E2E_EXTRA_SET - Extra helm --set pairs, ';'-separated. Match CI's shape"
 	@echo "                        locally with controller.resources.limits.cpu=4: GOMAXPROCS"
 	@echo "                        sizes the validationTests gate, so a big box hides gaps"
