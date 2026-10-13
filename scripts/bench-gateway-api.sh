@@ -759,6 +759,10 @@ capture_failure_state() {
             --all-namespaces -o json
     best_effort_failure_capture "$output/events.json" \
         kubectl get events --all-namespaces -o json
+    best_effort_failure_capture "$output/network.log" \
+        kubectl logs -n kube-system -l app=kindnet --all-containers --prefix --tail=-1 --timestamps=true
+    best_effort_failure_capture "$output/previous-network.log" \
+        kubectl logs -n kube-system -l app=kindnet --all-containers --previous --prefix --tail=-1 --timestamps=true
     best_effort_failure_capture "$output/controller.log" \
         kubectl logs -n "$RELEASE_NAMESPACE" \
             -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
@@ -1533,6 +1537,43 @@ apply_verified_gateway_api_bundle() {
         kubectl apply --server-side -f "$manifest" || apply_rc=$?
     [[ $apply_rc -eq 0 ]] || die "verified Gateway API bundle apply failed"
     record_event gateway-api-verified-bundle-applied
+}
+
+network_pod_identity() {
+    jq -eS '
+        [.items[] | select(.metadata.deletionTimestamp == null)] |
+        if length != 1 then error("expected one benchmark network Pod") else . end |
+        map(select(.status.phase == "Running" and (.status.containerStatuses | length) == 1) |
+            {uid: .metadata.uid, containers: [.status.containerStatuses[]? |
+                select(.ready == true and .restartCount == 0 and .state.running != null) |
+                {name, containerID}]}) |
+        if length != 1 or (.[0].uid // "") == "" or
+           (.[0].containers | length) != 1 or (.[0].containers[0].containerID // "") == ""
+        then error("benchmark network Pod is unready or restarted") else . end
+    '
+}
+
+capture_network_health() {
+    local phase="$1" output="${BENCH_OUTPUT_DIR}/cluster/network-${1}"
+    kubectl get pods -n kube-system -l app=kindnet -o json > "${output}-pods.json" || \
+        die "could not inspect the benchmark network daemon"
+    network_pod_identity < "${output}-pods.json" > "${output}-identity.json" || \
+        die "benchmark network daemon is unready or restarted; inspect cluster/network-${phase}-pods.json"
+    if [[ "$phase" != baseline ]]; then
+        cmp -s "${BENCH_OUTPUT_DIR}/cluster/network-baseline-identity.json" "${output}-identity.json" || \
+            die "benchmark network daemon changed identity during the workload"
+    fi
+}
+
+prepare_network_capacity() {
+    kubectl get daemonset kindnet -n kube-system -o json > "${BENCH_OUTPUT_DIR}/cluster/network-before.json"
+    kubectl set resources daemonset kindnet -n kube-system --containers=kindnet-cni --limits=memory=256Mi
+    kubectl rollout status daemonset/kindnet -n kube-system --timeout=120s
+    kubectl get daemonset kindnet -n kube-system -o json > "${BENCH_OUTPUT_DIR}/cluster/network-configured.json"
+    jq -e '[.spec.template.spec.containers[] | select(.name == "kindnet-cni") |
+        .resources.limits.memory] == ["256Mi"]' "${BENCH_OUTPUT_DIR}/cluster/network-configured.json" >/dev/null || \
+        die "benchmark network daemon memory allowance was not applied"
+    capture_network_health baseline
 }
 
 bootstrap_cluster() {
@@ -5558,6 +5599,7 @@ run_scale() {
 
     local next_report=$SECONDS
     while workload_container_running "$active_workload_container"; do
+        capture_network_health scale-current
         local count
         count="$(total_route_count)"
         printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" "$count" >> "$scenario_dir/route-counts.txt"
@@ -5809,6 +5851,7 @@ main() {
 
     check_cluster_prerequisites
     bootstrap_cluster
+    prepare_network_capacity
     start_runtime_config_history
     capture_live_secret_patterns || \
         die "failed to capture live Secret patterns after cluster bootstrap"
@@ -5827,11 +5870,13 @@ main() {
     local scenario
     for scenario in "${SCENARIOS[@]}"; do
         capture_kind_cluster_inventory "before-${scenario}" present
+        capture_network_health "before-${scenario}"
         case "$scenario" in
             probe) run_probe ;;
             routechange) run_routechange ;;
             scale) run_scale ;;
         esac
+        capture_network_health "after-${scenario}"
     done
 
     capture_kind_cluster_inventory final present

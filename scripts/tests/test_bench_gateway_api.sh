@@ -18,6 +18,49 @@ assert_eq 1 "$(bash -c 'source "$1"; duration_seconds 1s' bash "$runner")"
 assert_eq 120 "$(bash -c 'source "$1"; duration_seconds 2m' bash "$runner")"
 assert_eq 3600 "$(bash -c 'source "$1"; duration_seconds 1h' bash "$runner")"
 
+cat > "$tmp/network-pod.json" <<'EOF'
+{"items":[{"metadata":{"uid":"network-pod"},"status":{"phase":"Running","containerStatuses":[{"name":"kindnet-cni","containerID":"containerd://network","ready":true,"restartCount":0,"state":{"running":{}}}]}}]}
+EOF
+bash -c 'source "$1"; network_pod_identity' bash "$runner" < "$tmp/network-pod.json" > "$tmp/network-identity.json"
+assert_eq network-pod "$(jq -r '.[0].uid' "$tmp/network-identity.json")"
+for mutation in \
+    '.items = []' \
+    '.items += .items' \
+    '.items[0].metadata.uid = ""' \
+    '.items[0].metadata.deletionTimestamp = "2026-10-13T15:00:00Z"' \
+    '.items[0].status.phase = "Pending"' \
+    '.items[0].status.containerStatuses = []' \
+    '.items[0].status.containerStatuses += .items[0].status.containerStatuses' \
+    '.items[0].status.containerStatuses[0].containerID = ""' \
+    '.items[0].status.containerStatuses[0].ready = false' \
+    '.items[0].status.containerStatuses[0].restartCount = 1' \
+    '.items[0].status.containerStatuses[0].state = {terminated: {reason: "OOMKilled"}}'; do
+    jq "$mutation" "$tmp/network-pod.json" > "$tmp/network-invalid.json"
+    if bash -c 'source "$1"; network_pod_identity' bash "$runner" < "$tmp/network-invalid.json" >/dev/null 2>&1; then
+        echo "network identity accepted invalid state: $mutation" >&2
+        exit 1
+    fi
+done
+
+mkdir -p "$tmp/network-check/cluster"
+network_health_check() {
+    bash -c '
+        source "$1"
+        BENCH_OUTPUT_DIR="$2"
+        kubectl() { cat "$network_fixture"; }
+        network_fixture="$3"
+        capture_network_health baseline
+        network_fixture="$4"
+        capture_network_health after
+    ' bash "$runner" "$tmp/network-check" "$tmp/network-pod.json" "$1"
+}
+network_health_check "$tmp/network-pod.json"
+jq '.items[0].metadata.uid = "replacement"' "$tmp/network-pod.json" > "$tmp/network-replacement.json"
+if network_health_check "$tmp/network-replacement.json" > "$tmp/network-replacement.log" 2>&1; then
+    echo "network health accepted a replacement Pod" >&2
+    exit 1
+fi
+
 cat > "$tmp/pods.json" <<'EOF'
 {"items":[{"metadata":{"name":"preflight","annotations":{"private":"secret-marker"}},"spec":{"containers":[{"name":"preflight","env":[{"name":"PASSWORD","value":"secret-marker"}],"resources":{"limits":{"memory":"1Gi"}}}]},"status":{"phase":"Failed","containerStatuses":[{"name":"preflight","restartCount":0,"state":{"terminated":{"reason":"OOMKilled","exitCode":137,"message":"secret-marker"}},"lastState":{"terminated":{"reason":"Error","exitCode":1,"message":"secret-marker"}}}]}}]}
 EOF
