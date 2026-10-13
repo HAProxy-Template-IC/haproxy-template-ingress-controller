@@ -3,6 +3,7 @@ name: Gateway scale diagnosis
   push:
     branches:
     - ci/github-gateway-profile-20261013
+    - ci/github-gateway-network-proof-20261013
 permissions:
   contents: read
 concurrency:
