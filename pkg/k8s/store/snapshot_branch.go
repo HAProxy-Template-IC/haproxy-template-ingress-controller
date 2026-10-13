@@ -48,6 +48,9 @@ type branchEntry struct {
 	identity resourceIdentity
 	keys     []string
 	origin   stores.Revision
+	source   stores.RevisionSource
+	version  uint64
+	indexBy  []string
 	value    any
 	encoded  []byte
 	lazy     *cachedReadSnapshot
@@ -96,7 +99,7 @@ func NewSnapshotBranch(numKeys int) *SnapshotBranch {
 
 // Changes captures replacements without fetching on-demand resource bodies.
 func (b *SnapshotBranch) Changes(ctx context.Context, snapshot stores.ReadSnapshot, indexBy []string) ([]BranchChange, error) {
-	observed, err := branchEntries(ctx, snapshot, indexBy)
+	observed, err := branchEntries(ctx, snapshot, indexBy, b)
 	if err != nil {
 		return nil, err
 	}
@@ -112,11 +115,14 @@ func (b *SnapshotBranch) Changes(ctx context.Context, snapshot stores.ReadSnapsh
 	}
 	iterator := b.entries.Root().Iterator()
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		key, entry, found := iterator.Next()
 		if !found {
 			break
 		}
-		if _, exists := observed[string(key)]; !exists {
+		if !snapshotContainsIdentity(snapshot, key) {
 			changes = append(changes, BranchChange{identity: entry.identity})
 		}
 	}
@@ -333,14 +339,14 @@ func (e *branchEntry) read(ctx context.Context) (any, error) {
 	return value, err
 }
 
-func branchEntries(ctx context.Context, snapshot stores.ReadSnapshot, indexBy []string) (map[string]*branchEntry, error) {
+func branchEntries(ctx context.Context, snapshot stores.ReadSnapshot, indexBy []string, previous *SnapshotBranch) (map[string]*branchEntry, error) {
 	switch value := snapshot.(type) {
 	case *memoryReadSnapshot:
-		return memoryBranchEntries(ctx, value, indexBy)
+		return memoryBranchEntries(ctx, value, indexBy, previous)
 	case *cachedReadSnapshot:
-		return cachedBranchEntries(ctx, value)
+		return cachedBranchEntries(ctx, value, previous)
 	case *SnapshotBranch:
-		entries := make(map[string]*branchEntry, value.entries.Len())
+		entries := make(map[string]*branchEntry)
 		iterator := value.entries.Root().Iterator()
 		for {
 			if err := ctx.Err(); err != nil {
@@ -350,10 +356,29 @@ func branchEntries(ctx context.Context, snapshot stores.ReadSnapshot, indexBy []
 			if !found {
 				break
 			}
+			if old, found := previous.entries.Get(key); found && old.origin == entry.origin {
+				continue
+			}
 			entries[string(key)] = entry
 		}
 		return entries, nil
 	default:
 		return nil, fmt.Errorf("snapshot type %T cannot retain exact resource revisions: %w", snapshot, stores.ErrSnapshotUnsupported)
+	}
+}
+
+func snapshotContainsIdentity(snapshot stores.ReadSnapshot, key []byte) bool {
+	switch value := snapshot.(type) {
+	case *memoryReadSnapshot:
+		_, found := value.root.locations.Get(key)
+		return found
+	case *cachedReadSnapshot:
+		_, found := value.root.locations.Get(key)
+		return found
+	case *SnapshotBranch:
+		_, found := value.entries.Get(key)
+		return found
+	default:
+		return false
 	}
 }
