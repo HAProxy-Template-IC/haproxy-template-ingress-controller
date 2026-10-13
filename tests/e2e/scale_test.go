@@ -885,20 +885,12 @@ func (s *scaleMetricsSink) flush() (path string, wrote bool, err error) {
 	return path, true, nil
 }
 
-// hostCPUModel returns the first "model name" in /proc/cpuinfo, or "" where
-// there is none. The nightly trend check only compares runs on the same model.
 func hostCPUModel() string {
 	data, err := os.ReadFile("/proc/cpuinfo")
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, found := strings.Cut(line, ":")
-		if found && strings.TrimSpace(key) == "model name" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+	return testutil.CPUModel(data)
 }
 
 // durationPercentile returns the nearest-rank percentile of the samples.
