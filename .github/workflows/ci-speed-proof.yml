@@ -103,8 +103,11 @@ jobs:
       run: bash .github/scripts/install-arm-pilot-tools.sh
       if: matrix.runner == 'ubuntu-24.04-arm'
     - name: Run native ARM suite
-      if: matrix.runner == 'ubuntu-24.04-arm'
+      if: matrix.runner == 'ubuntu-24.04-arm' && matrix.suite != 'upgrade'
       run: bash .github/scripts/run-arm-pilot.sh
+    - name: Run native ARM upgrade checks
+      if: matrix.suite == 'upgrade'
+      run: bash .github/scripts/run-upgrade-arm.sh
     - name: Run upstream Gateway conformance
       if: matrix.kind == 'gateway'
       run: 'set -euo pipefail
@@ -914,8 +917,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.4.0-current
           suite: upgrade
           baseline: 0.4.0
@@ -966,8 +969,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.4.1-current
           suite: upgrade
           baseline: 0.4.1
@@ -1044,8 +1047,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.5.0-current
           suite: upgrade
           baseline: 0.5.0
@@ -1070,8 +1073,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.4.1-minimum
           suite: upgrade
           baseline: 0.4.1
@@ -1096,8 +1099,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.5.0-minimum
           suite: upgrade
           baseline: 0.5.0
@@ -1122,8 +1125,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.2.2-minimum
           suite: upgrade
           baseline: 0.2.2
@@ -1148,8 +1151,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.2.1-minimum
           suite: upgrade
           baseline: 0.2.1
@@ -1174,8 +1177,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.4.0-minimum
           suite: upgrade
           baseline: 0.4.0
@@ -1200,8 +1203,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.2.0-minimum
           suite: upgrade
           baseline: 0.2.0
@@ -1226,8 +1229,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.2.1-current
           suite: upgrade
           baseline: 0.2.1
@@ -1269,6 +1272,8 @@ jobs:
           image: ''
           baseline: ''
   suite_upgrade_0_3_0_current:
+    needs: suite_upgrade_0_2_1_minimum
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1278,8 +1283,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.3.0-current
           suite: upgrade
           baseline: 0.3.0
@@ -1304,8 +1309,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.2.0-alpha.3-minimum
           suite: upgrade
           baseline: 0.2.0-alpha.3
@@ -1330,8 +1335,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.2.0-alpha.3-current
           suite: upgrade
           baseline: 0.2.0-alpha.3
@@ -1399,6 +1404,8 @@ jobs:
           image: ''
           baseline: ''
   suite_unit_command_1:
+    needs: suite_coverage_rest
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1424,8 +1431,6 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_unit_renderer
-    if: ${{ !cancelled() }}
   suite_upgrade_0_3_0_minimum:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -1436,8 +1441,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.3.0-minimum
           suite: upgrade
           baseline: 0.3.0
@@ -1462,8 +1467,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.1.0-current
           suite: upgrade
           baseline: 0.1.0
@@ -1488,8 +1493,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.1.0-minimum
           suite: upgrade
           baseline: 0.1.0
@@ -1531,6 +1536,8 @@ jobs:
           image: ''
           startup: ''
   suite_unit_command_3:
+    needs: suite_upgrade_0_4_1_current
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1556,9 +1563,9 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_upgrade_0_2_0_alpha_3_minimum
-    if: ${{ !cancelled() }}
   suite_unit_command_2:
+    needs: suite_upgrade_0_4_1_minimum
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1584,8 +1591,6 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_coverage_rest
-    if: ${{ !cancelled() }}
   suite_upgrade_0_2_2_current:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -1596,8 +1601,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.2.2-current
           suite: upgrade
           baseline: 0.2.2
@@ -1648,8 +1653,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: upgrade
           name: upgrade-0.2.0-current
           suite: upgrade
           baseline: 0.2.0
@@ -1785,6 +1790,8 @@ jobs:
           suite: ''
           image: ''
   suite_acceptance:
+    needs: suite_ingress_3
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1810,8 +1817,6 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_ingress_2
-    if: ${{ !cancelled() }}
   suite_ingress_3:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -1838,9 +1843,9 @@ jobs:
           settings: ''
           suite: ''
           image: ''
+  suite_e2e_cache:
     needs: suite_ingress_1
     if: ${{ !cancelled() }}
-  suite_e2e_cache:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1866,9 +1871,9 @@ jobs:
           suite: ''
           image: ''
           startup: ''
+  suite_e2e_rate_limit:
     needs: suite_upgrade_0_1_0_minimum
     if: ${{ !cancelled() }}
-  suite_e2e_rate_limit:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1894,9 +1899,9 @@ jobs:
           suite: ''
           image: ''
           startup: ''
-    needs: suite_ingress_4
-    if: ${{ !cancelled() }}
   suite_lint:
+    needs: suite_upgrade_0_2_0_current
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1922,9 +1927,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_4_0_current
-    if: ${{ !cancelled() }}
   suite_gateway_1:
+    needs: suite_upgrade_0_5_0_current
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1950,9 +1955,9 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-    needs: suite_upgrade_0_4_1_minimum
-    if: ${{ !cancelled() }}
   suite_gateway_4:
+    needs: suite_upgrade_0_1_0_current
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1978,9 +1983,9 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-    needs: suite_upgrade_0_2_1_current
-    if: ${{ !cancelled() }}
   suite_integration_3_3:
+    needs: suite_upgrade_0_2_0_alpha_3_minimum
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1997,9 +2002,9 @@ jobs:
           haproxy: '3.3'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
           shard: ''
-    needs: suite_chart
-    if: ${{ !cancelled() }}
   suite_integration_3_1:
+    needs: suite_helm_3_0
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2016,9 +2021,9 @@ jobs:
           haproxy: '3.1'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
           shard: ''
-    needs: suite_upgrade_0_1_0_current
-    if: ${{ !cancelled() }}
   suite_gateway_2:
+    needs: suite_ingress_2
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2044,9 +2049,9 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-    needs: suite_e2e_hp3_4_2
-    if: ${{ !cancelled() }}
   suite_integration_3_4:
+    needs: suite_upgrade_0_2_1_current
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2063,9 +2068,9 @@ jobs:
           haproxy: '3.4'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
           shard: ''
-    needs: suite_snapshot
-    if: ${{ !cancelled() }}
   suite_wasm:
+    needs: suite_upgrade_0_2_0_alpha_3_current
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2091,9 +2096,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_5_0_current
-    if: ${{ !cancelled() }}
   suite_e2e_api_gateway:
+    needs: suite_upgrade_0_2_0_minimum
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2119,9 +2124,9 @@ jobs:
           suite: ''
           image: ''
           startup: ''
-    needs: suite_upgrade_0_2_1_minimum
-    if: ${{ !cancelled() }}
   suite_gateway_3:
+    needs: suite_chart_minimum
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2147,9 +2152,9 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-    needs: suite_upgrade_0_2_0_current
-    if: ${{ !cancelled() }}
   suite_integration_3_2:
+    needs: suite_ingress_4
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2166,9 +2171,9 @@ jobs:
           haproxy: '3.2'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
           shard: ''
-    needs: suite_upgrade_0_2_0_alpha_3_current
-    if: ${{ !cancelled() }}
   suite_integration_3_0:
+    needs: suite_unit_renderer
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2185,9 +2190,9 @@ jobs:
           haproxy: '3.0'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
           shard: ''
-    needs: suite_chart_minimum
-    if: ${{ !cancelled() }}
   suite_defaults:
+    needs: suite_upgrade_0_4_0_minimum
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2213,9 +2218,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
+  suite_install_without_gateway_minimum:
     needs: suite_upgrade_0_2_2_minimum
     if: ${{ !cancelled() }}
-  suite_install_without_gateway_minimum:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2241,9 +2246,9 @@ jobs:
           haproxy: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_3_0_current
-    if: ${{ !cancelled() }}
   suite_test_support:
+    needs: suite_upgrade_0_4_0_current
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2269,9 +2274,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_4_1_current
-    if: ${{ !cancelled() }}
   suite_install_without_gateway_current:
+    needs: suite_upgrade_0_2_2_current
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2297,9 +2302,9 @@ jobs:
           haproxy: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_2_0_minimum
-    if: ${{ !cancelled() }}
   suite_unit_rest:
+    needs: suite_gitops_argo_external
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2325,9 +2330,9 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_e2e_hp3_4_3
-    if: ${{ !cancelled() }}
   suite_agent_3_4:
+    needs: suite_upgrade_0_5_0_minimum
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2353,9 +2358,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_e2e_minimum_kubernetes_3
-    if: ${{ !cancelled() }}
   suite_agent_3_0:
+    needs: suite_upgrade_0_3_0_minimum
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2381,9 +2386,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_upgrade_0_3_0_minimum
-    if: ${{ !cancelled() }}
   suite_coverage_renderer:
+    needs: suite_e2e_minimum_kubernetes_1
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2400,9 +2405,9 @@ jobs:
           shard: renderer
           haproxy: ''
           image: ''
-    needs: suite_e2e_minimum_kubernetes_1
-    if: ${{ !cancelled() }}
   suite_vector:
+    needs: suite_e2e_hp3_4_2
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2428,9 +2433,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_5_0_minimum
-    if: ${{ !cancelled() }}
   suite_ci_image_3_3:
+    needs: suite_e2e_minimum_kubernetes_2
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2456,9 +2461,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_gitops_flux_external
-    if: ${{ !cancelled() }}
   suite_ci_image_3_4:
+    needs: suite_snapshot
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2484,9 +2489,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_e2e_hp3_4_1
-    if: ${{ !cancelled() }}
   suite_ci_image_3_1:
+    needs: suite_e2e_hp3_4_3
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2512,9 +2517,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_e2e_minimum_kubernetes_4
-    if: ${{ !cancelled() }}
   suite_ci_image_3_0:
+    needs: suite_e2e_minimum_kubernetes_3
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2540,9 +2545,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_upgrade_0_4_0_minimum
-    if: ${{ !cancelled() }}
   suite_spoa:
+    needs: suite_chart
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2568,9 +2573,9 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_e2e_minimum_kubernetes_2
-    if: ${{ !cancelled() }}
   suite_ci_image_3_2:
+    needs: suite_e2e_hp3_4_1
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2596,9 +2601,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_upgrade_0_2_2_current
-    if: ${{ !cancelled() }}
   suite_docs:
+    needs: suite_e2e_hp3_1_2
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2624,9 +2629,9 @@ jobs:
           haproxy: ''
           node: ''
           baseline: ''
-    needs: suite_gitops_argo_external
-    if: ${{ !cancelled() }}
   suite_docs_image:
+    needs: suite_e2e_hp3_0_3
+    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2652,8 +2657,6 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_e2e_hp3_0_1
-    if: ${{ !cancelled() }}
   coverage:
     name: coverage-combined
     needs:

@@ -4,7 +4,7 @@
   "parallel": false
  },
  "TestAgentCertificateExpiryRecovery": {
-  "seconds": 175.1,
+  "seconds": 23.11,
   "parallel": false
  },
  "TestAgentCertificateRenewal": {
@@ -12,7 +12,7 @@
   "parallel": false
  },
  "TestAgentTLSRotation": {
-  "seconds": 404.0,
+  "seconds": 73.72,
   "parallel": false
  },
  "TestApplyRollbackOnCorruptCertificate": {
