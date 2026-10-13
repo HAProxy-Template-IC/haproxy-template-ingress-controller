@@ -55,7 +55,7 @@ jobs:
           fi
           export BENCH_COMPARISON_OUTPUT="$RUNNER_TEMP/render-comparison/result"
           mkdir -p "$RUNNER_TEMP/render-comparison"
-          bash scripts/retry.sh docker pull "$CI_IMAGE"
+          CI_IMAGE=$(python3 -m scripts.ci.github_toolchain "$CI_IMAGE")
           docker run --rm \
             --volume "$PWD:$PWD" --workdir "$PWD" \
             --volume "$RUNNER_TEMP/render-comparison:$RUNNER_TEMP/render-comparison" \

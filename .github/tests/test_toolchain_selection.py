@@ -98,7 +98,7 @@ class ToolchainSelectionTests(unittest.TestCase):
         for name in ("run-build-pilot.sh", "run-remaining-pilot.sh", "run-conformance-report.sh",
                      "run-release-publication.sh", "run-snapshot-publication.sh"):
             self.assertIn("python3 -m scripts.ci.github_toolchain", (ROOT / ".github/scripts" / name).read_text())
-        for name in ("release-tag.yml", "prepare-spoa-release.yml"):
+        for name in ("release-tag.yml", "prepare-spoa-release.yml", "benchmarks.yml"):
             self.assertIn("python3 -m scripts.ci.github_toolchain", (ROOT / ".github/workflows" / name).read_text())
 
 
