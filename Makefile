@@ -520,12 +520,15 @@ INGRESS_CONFORMANCE_IMAGE ?= haptic-ingress-conformance-test:latest
 INGRESS_CONFORMANCE_REPO ?= https://github.com/kubernetes-sigs/ingress-controller-conformance.git
 INGRESS_CONFORMANCE_SHA ?= d920ed36a0076e169a9a329a850844ab3a695ae8
 
-.PHONY: test-gateway-conformance-report github-conformance-report
+.PHONY: test-gateway-conformance-report github-conformance-report github-conformance-startup
 test-gateway-conformance-report: ## Run the complete suite and verify its report and controller identity
 	bash scripts/gateway-conformance-report.sh $(if $(CONFORMANCE_RELEASE_EVIDENCE),--release-evidence)
 
 github-conformance-report: ## Prepare fresh GitHub conformance evidence for a candidate or published release
 	python3 -m scripts.ci.github_conformance
+
+github-conformance-startup: ## Diagnose fresh candidate startup without producing release evidence
+	python3 -m scripts.ci.github_conformance --startup-only
 
 test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sibling container on the kind network
 	@echo "Running Gateway API conformance suite against the $(CONFORMANCE_KIND_CLUSTER) cluster..."

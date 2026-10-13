@@ -1,4 +1,5 @@
 import copy
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -6,11 +7,11 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import yaml
 
-from scripts.ci.github_conformance import bundle, diagnostics, execute, plan
+from scripts.ci.github_conformance import bundle, diagnostics, execute, plan, sample_startup
 
 
 ROOT = Path(__file__).parents[2]
@@ -18,6 +19,9 @@ ROOT = Path(__file__).parents[2]
 
 class ConformanceWorkflowTests(unittest.TestCase):
     def setUp(self):
+        observer = patch("scripts.ci.github_conformance.observe_startup", return_value=contextlib.nullcontext())
+        observer.start()
+        self.addCleanup(observer.stop)
         self.sha = "a" * 40
         self.env = {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": self.sha,
                     "CONFORMANCE_SOURCE_SHA": self.sha, "CONFORMANCE_MODE": "candidate",
@@ -86,6 +90,43 @@ class ConformanceWorkflowTests(unittest.TestCase):
             with self.subTest(step=step), self.assertRaises(subprocess.CalledProcessError):
                 execute(selected, self.env, run=run, output=Mock(return_value=""))
             self.assertEqual(run.call_count, step + 1)
+
+    def test_startup_diagnosis_keeps_real_setup_and_cannot_replace_release_conformance(self):
+        selected = plan(self.env, self.sha, "0.5.0")
+        run = Mock()
+        execute(selected, self.env, startup_only=True, run=run, output=Mock(return_value=""))
+        self.assertEqual([call.args[0] for call in run.call_args_list], [
+            ["make", "docker-build-test-native", "GIT_TAG=ci-" + self.sha[:12]], ["make", "test-e2e"]])
+        self.assertEqual(run.call_args_list[-1].kwargs["env"]["HAPTIC_E2E_CONTROLLER_STARTUP"], "parallel")
+        run.reset_mock()
+        with self.assertRaisesRegex(ValueError, "complete report"):
+            execute(self.release(), self.env, startup_only=True, run=run, output=Mock())
+        run.assert_not_called()
+
+    def test_startup_sampler_records_missing_cluster_and_continues_collecting(self):
+        run = Mock(side_effect=[subprocess.TimeoutExpired("docker", 5),
+                               subprocess.CompletedProcess("kubectl", 1, "", "cluster not ready"),
+                               subprocess.CompletedProcess("kubectl", 0, '{"items": []}', ""),
+                               subprocess.CompletedProcess("docker", 0, "oom_kill 0\n", "")])
+        result = sample_startup(run=run)
+        self.assertIn("error", result["pods"])
+        self.assertEqual(result["events"]["exit_code"], 1)
+        self.assertEqual(result["usage"], {"items": []})
+        self.assertEqual(result["node_cgroup"], "oom_kill 0\n")
+        for call in run.call_args_list:
+            self.assertNotIn("secrets", call.args[0])
+            self.assertEqual(call.kwargs["timeout"], 5)
+
+    def test_startup_sampler_keeps_restart_and_scheduling_state_without_pod_environment(self):
+        pod = {"metadata": {"namespace": "haptic", "name": "controller", "creationTimestamp": "created"},
+               "status": {"phase": "Pending", "conditions": [{"reason": "Unschedulable"}],
+                          "containerStatuses": [{"restartCount": 1, "lastState": {"reason": "OOMKilled"}}]},
+               "spec": {"containers": [{"env": [{"name": "private", "value": "excluded"}]}]}}
+        run = Mock(side_effect=[subprocess.CompletedProcess("kubectl", 0, json.dumps({"items": [pod]}), "")]
+                   + [subprocess.CompletedProcess("docker", 1, "", "unavailable")] * 3)
+        result = sample_startup(run=run)
+        self.assertEqual(result["pods"][0]["status"], pod["status"])
+        self.assertNotIn("excluded", json.dumps(result))
 
     def test_release_workflow_keeps_the_report_after_image_and_chart_publication(self):
         release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
