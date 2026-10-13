@@ -20,6 +20,19 @@ def result(name, passed=1116):
 
 
 class StartupVerificationTests(unittest.TestCase):
+    def test_runtime_environment_matches_for_every_replica(self):
+        pods = {"items": [pod("a"), pod("b")]}
+        for item in pods["items"]:
+            item["spec"] = {"containers": [{"name": "controller", "env": [{"name": "GOMAXPROCS", "value": "2"}]}]}
+        VERIFY.verify_environment(pods, {"GOMAXPROCS": "2"})
+        for environment in ([], [{"name": "GOMEMLIMIT", "value": "1000"}],
+                            [{"name": "GOMAXPROCS", "value": "4"}],
+                            [{"name": "GOMAXPROCS", "value": "2"}, {"name": "GOMAXPROCS", "value": "2"}]):
+            with self.subTest(environment=environment):
+                pods["items"][1]["spec"]["containers"][0]["env"] = environment
+                with self.assertRaises(ValueError):
+                    VERIFY.verify_environment(pods, {"GOMAXPROCS": "2"})
+
     def test_complete_first_startup_passes_for_both_replicas(self):
         self.assertEqual(len(VERIFY.verify(result("a") + result("b"), {"items": [pod("a"), pod("b")]})), 2)
 

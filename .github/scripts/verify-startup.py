@@ -40,6 +40,18 @@ def verify(log, pods):
     return {pod["metadata"]["name"]: first[pod["metadata"]["name"]] for pod in controllers}
 
 
+def verify_environment(pods, expected):
+    for pod in pods["items"]:
+        controllers = [container for container in pod["spec"]["containers"] if container["name"] == "controller"]
+        if len(controllers) != 1:
+            raise ValueError("Expected one controller container per pod")
+        environment = controllers[0].get("env", [])
+        for name, value in expected.items():
+            matches = [entry.get("value") for entry in environment if entry["name"] == name]
+            if matches != [value]:
+                raise ValueError(f"{pod['metadata']['name']}: expected {name}={value}, found {matches}")
+
+
 def main():
     result = verify(Path(".pilot/current-controller-logs.txt").read_text(),
                     json.loads(Path(".pilot/pods.json").read_text()))

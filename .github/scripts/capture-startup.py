@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -55,6 +56,11 @@ def main():
     (ROOT / "controller-logs.txt").write_text(logs)
     (ROOT / "pods.json").write_text(json.dumps(pods, indent=2) + "\n")
     verdict = VERIFY.verify(logs, pods)
+    expected = {"GOMAXPROCS": os.environ["PILOT_GOMAXPROCS"], "GOGC": os.environ["PILOT_GOGC"]}
+    if os.environ.get("PILOT_VALIDATION_TMPFS") == "1":
+        expected["TMPDIR"] = "/v"
+    VERIFY.verify_environment(pods, expected)
+    (ROOT / "verified-environment.json").write_text(json.dumps(expected, indent=2) + "\n")
     Path(".pilot/first-startup-verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")
     print(json.dumps(verdict))
 
