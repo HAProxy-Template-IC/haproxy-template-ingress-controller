@@ -50,7 +50,7 @@ jobs:
       CONFORMANCE_PARALLEL: '4'
       SCALE_SEED_WORKERS: '4'
       E2E_SHARD_WEIGHTS: .github/e2e-shard-weights.json
-      PILOT_GO_CACHE_DIR: ${{ contains(fromJSON('["unit-shard", "helm", "lint", "agent", "test-support", "chart", "chart-minimum"]'), matrix.suite) && format('{0}/.ci-go-cache', github.workspace) || '' }}
+      PILOT_GO_CACHE_DIR: ${{ contains(fromJSON('["unit-shard", "helm", "lint", "agent", "test-support", "chart", "chart-minimum"]'), matrix.suite) && format('{0}/../haptic-go-cache', github.workspace) || '' }}
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
@@ -1758,7 +1758,7 @@ jobs:
       PILOT_CI_IMAGE: ${{ matrix.image || 'registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad'
         }}
       SHARD_ID: ${{ matrix.shard || '' }}
-      PILOT_GO_CACHE_DIR: ${{ github.workspace }}/.ci-go-cache
+      PILOT_GO_CACHE_DIR: ${{ github.workspace }}/../haptic-go-cache
     steps: &id004
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:

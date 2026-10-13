@@ -21,7 +21,7 @@ jobs:
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
       PILOT_SUITE: unit-cache
-      PILOT_GO_CACHE_DIR: ${{ github.workspace }}/.ci-go-cache
+      PILOT_GO_CACHE_DIR: ${{ github.workspace }}/../haptic-go-cache
       PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       SHARD_ID: ${{ matrix.shard }}
     steps:
