@@ -564,3 +564,23 @@ func deepCopyDerivedTestMap(t *testing.T, source map[string]any) map[string]any 
 	require.NoError(t, json.Unmarshal(encoded, &copied))
 	return copied
 }
+
+func TestDerivedResourceViewResolverProjectionIsIndependent(t *testing.T) {
+	source := map[string]any{
+		"metadata": map[string]any{"namespace": "default", "name": "object"},
+		"spec":     map[string]any{"weight": int64(9007199254740993)},
+	}
+	entry := newDerivedTestEntry(t, source, source)
+	view := NewDerivedResourceViewWithResolver(DerivedResourceResolverFunc(func(
+		DerivedResourceIdentity,
+	) (DerivedResource, bool, error) {
+		return entry, true, nil
+	}))
+	view.Freeze()
+	first, err := view.Project("objects", []any{source})
+	require.NoError(t, err)
+	first[0].(map[string]any)["spec"].(map[string]any)["weight"] = "mutated"
+	second, err := view.Project("objects", []any{source})
+	require.NoError(t, err)
+	assert.Equal(t, source, second[0])
+}
