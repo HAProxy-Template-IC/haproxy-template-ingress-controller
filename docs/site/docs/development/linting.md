@@ -39,6 +39,7 @@ make test-github-verification
 ```
 
 The tests reject missing checks and publication evidence from another revision.
+Controller and chart publication require the full suite.
 
 After a documentation merge, the main pipeline builds the matching playground
 bundle and publishes both sites. A commit marked `[skip ci]` also skips this
