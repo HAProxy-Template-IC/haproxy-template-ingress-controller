@@ -157,7 +157,7 @@ jobs:
       CONFORMANCE_PARALLEL: '4'
       SCALE_SEED_WORKERS: '4'
       E2E_SHARD_WEIGHTS: .github/e2e-shard-weights.json
-      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && format('{0}/../haptic-go-cache', github.workspace) || ''
+      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && '/tmp/haptic-go-cache' || ''
         }}
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
