@@ -14,9 +14,15 @@ TREND = importlib.import_module("scripts.scale-trend")
 
 def main():
     current = json.loads(Path(TREND.METRICS_FILE).read_text())
+    api = GitHub(os.environ["GH_TOKEN"])
+    repository = os.environ["GITHUB_REPOSITORY"]
+    run_id = os.environ["GITHUB_RUN_ID"]
+    run = api.get(f"repos/{repository}/actions/runs/{run_id}")
+    if run["id"] != int(run_id) or run["head_sha"] != os.environ["GITHUB_SHA"]:
+        raise ValueError("Scale history workflow does not match the current revision")
     history = successful_job_metrics(
-        GitHub(os.environ["GH_TOKEN"]), os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"],
-        workflow="nightly.yml", branch="main", job_name=TREND.JOB_NAME,
+        api, repository, run_id,
+        workflow=str(run["workflow_id"]), branch="main", job_name=TREND.JOB_NAME,
         artifact_name="nightly-scale-metrics", metrics_name=TREND.METRICS_FILE,
         max_runs=TREND.MAX_RUNS, max_workflows=TREND.MAX_PIPELINES)
     lines, failed = TREND.evaluate(current, history)
