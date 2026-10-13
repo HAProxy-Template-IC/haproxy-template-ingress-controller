@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Select several validation tests in one run by repeating `haptic validate --test`.
+
 ### Changed
 
 - Reduce reconciliation allocations by reusing unchanged watched-resource revisions during input isolation.

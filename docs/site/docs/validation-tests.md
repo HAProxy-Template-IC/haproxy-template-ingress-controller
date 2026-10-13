@@ -186,6 +186,11 @@ haptic validate -f config.yaml --schema-dir ./schemas
 # Run specific test
 haptic validate -f config.yaml --schema-dir ./schemas --test test-basic-routing
 
+# Run several bundled Ingress tests with one template compilation
+haptic validate -f config.yaml --schema-dir ./schemas \
+  --test test-ingress-host-map-incremental-order-and-duplicates \
+  --test test-ingress-host-map-incremental-empty
+
 # Output formats
 haptic validate -f config.yaml --schema-dir ./schemas --output json
 haptic validate -f config.yaml --schema-dir ./schemas --output yaml

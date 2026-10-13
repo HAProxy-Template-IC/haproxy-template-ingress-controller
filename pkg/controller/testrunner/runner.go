@@ -110,36 +110,26 @@ func automaticWorkers(parallelism int, memoryLimit int64) int {
 	return max(1, int(min(2*int64(parallelism), memoryLimit/memoryPerWorker)))
 }
 
-// RunTests executes all validation tests (or a specific test if filtered).
-//
-// This method:
-//  1. Filters tests if a specific test name was requested
-//  2. For each test:
-//     - Creates resource stores from fixtures
-//     - Renders HAProxy configuration
-//     - Runs all assertions
-//  3. Aggregates and returns results
-//
-// Parameters:
-//   - ctx: Context for cancellation and timeouts
-//
-// Returns:
-//   - TestResults containing results for all executed tests
-//   - error if a fatal error occurred (not test failures)
+// RunTests runs one named test, or all tests when testName is empty.
 func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, error) {
+	var names []string
+	if testName != "" {
+		names = []string{testName}
+	}
+	return r.RunNamedTests(ctx, names)
+}
+
+// RunNamedTests runs every selected test once; an empty selection runs all tests.
+func (r *Runner) RunNamedTests(ctx context.Context, names []string) (*TestResults, error) {
 	startTime := time.Now()
 
 	results := &TestResults{
 		TestResults: make([]TestResult, 0),
 	}
 
-	// Filter tests if specific test requested
-	testsToRun := r.config.ValidationTests
-	if testName != "" {
-		testsToRun = r.filterTests(r.config.ValidationTests, testName)
-		if len(testsToRun) == 0 {
-			return nil, fmt.Errorf("test %q not found", testName)
-		}
+	testsToRun, err := r.filterTests(names)
+	if err != nil {
+		return nil, err
 	}
 
 	// Separate tests into runnable and skipped based on HAProxy version requirements
@@ -320,13 +310,19 @@ func (r *Runner) testWorker(ctx context.Context, workerID int, tests <-chan test
 	}
 }
 
-// filterTests filters validation tests by name.
-func (r *Runner) filterTests(tests map[string]config.ValidationTest, name string) map[string]config.ValidationTest {
-	filtered := make(map[string]config.ValidationTest)
-	if test, exists := tests[name]; exists {
+func (r *Runner) filterTests(names []string) (map[string]config.ValidationTest, error) {
+	if len(names) == 0 {
+		return r.config.ValidationTests, nil
+	}
+	filtered := make(map[string]config.ValidationTest, len(names))
+	for _, name := range names {
+		test, exists := r.config.ValidationTests[name]
+		if !exists {
+			return nil, fmt.Errorf("test %q not found", name)
+		}
 		filtered[name] = test
 	}
-	return filtered
+	return filtered, nil
 }
 
 // shouldSkipTest checks whether a test should be skipped based on version requirements.
