@@ -182,6 +182,54 @@ helm template haptic "$chart" \
     --set 'vector.resources.limits=null' > "$tmp/manifest.yaml"
 no_limit_workloads
 
+no_limit_pods() {
+    yq -o=json -I=0 '.' "$tmp/manifest.yaml" | jq -s '
+        {items: [.[] | select(.kind == "Deployment") |
+          {metadata: .spec.template.metadata, spec: .spec.template.spec}]}
+    ' > "$tmp/measured-pods.json"
+    bash -c 'source "$1"; assert_no_limit_pods "$2" "$3"' bash "$runner" "$tmp/measured-pods.json" "$tmp/defaults.json"
+}
+no_limit_pods
+cp "$tmp/manifest.yaml" "$tmp/product-default-manifest.yaml"
+for container in controller haproxy validators spoa-hub agent vector; do
+    for variable in GOMEMLIMIT GOMAXPROCS GOGC TMPDIR; do
+        cp "$tmp/product-default-manifest.yaml" "$tmp/manifest.yaml"
+        CONTAINER="$container" VARIABLE="$variable" yq -i '
+            (select(.kind == "Deployment") | .spec.template.spec |
+             (.containers[], .initContainers[]?) | select(.name == strenv(CONTAINER)) | .env) +=
+            [{"name": strenv(VARIABLE), "value": "override"}]
+        ' "$tmp/manifest.yaml"
+        if no_limit_workloads || no_limit_pods; then
+            echo "benchmark profile accepted $variable tuning in $container" >&2
+            exit 1
+        fi
+    done
+    for resource in cpu memory; do
+        cp "$tmp/product-default-manifest.yaml" "$tmp/manifest.yaml"
+        CONTAINER="$container" RESOURCE="$resource" yq -i '
+            (select(.kind == "Deployment") | .spec.template.spec |
+             (.containers[], .initContainers[]?) | select(.name == strenv(CONTAINER)) |
+             .resources.limits[strenv(RESOURCE)]) = "1"
+        ' "$tmp/manifest.yaml"
+        if no_limit_workloads || no_limit_pods; then
+            echo "benchmark profile accepted a $resource limit in $container" >&2
+            exit 1
+        fi
+    done
+done
+for gc_value in 100 null; do
+    cp "$tmp/product-default-manifest.yaml" "$tmp/manifest.yaml"
+    GC_VALUE="$gc_value" yq -i '
+        (select(.kind == "Deployment") | .spec.template.spec.initContainers[]? |
+         select(.name == "validators" or .name == "spoa-hub") | .env) =
+        [{"name": "GOGC", "value": strenv(GC_VALUE)}]
+    ' "$tmp/manifest.yaml"
+    if no_limit_workloads || no_limit_pods; then
+        echo "benchmark profile accepted sidecar GC settings that differ from chart defaults" >&2
+        exit 1
+    fi
+done
+
 # extract_upstream_backend_manifest must lift the program's backendTemplate
 # constant byte-for-byte and accept only the Deployment + Service pair.
 mkdir -p "$tmp/upstream/tests/probe"

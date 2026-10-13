@@ -1745,16 +1745,14 @@ wait_for_config_valid() {
 assert_no_limit_workloads() {
     local manifest="$1"
     local defaults="$2"
-    yq -o=json -I=0 '.' "$manifest" | jq -se --slurpfile defaults "$defaults" '
+    yq -o=json -I=0 '.' "$manifest" | jq -L "${PROJECT_ROOT}/scripts/lib" -se --slurpfile defaults "$defaults" '
+        include "benchmark-runtime";
         $defaults[0].controller.resources.requests as $controller_requests |
         [.[] | select(.kind == "Deployment" and
           (.metadata.name == "haptic-controller" or .metadata.name == "haptic-haproxy"))] as $deployments |
         ($deployments | map(.metadata.name) | sort) == ["haptic-controller", "haptic-haproxy"] and
-        all($deployments[]; all(.spec.template.spec.containers[];
-          ((.resources.limits.memory? // "") == "") and
-          ((.resources.limits.cpu? // "") == "") and
-          all(.env[]?; .name != "GOMEMLIMIT" and .name != "GOMAXPROCS" and
-                       .name != "GOGC" and .name != "TMPDIR"))) and
+        all($deployments[]; all(.spec.template.spec | measured_containers;
+          benchmark_runtime_matches($defaults[0]))) and
         any($deployments[]; .metadata.name == "haptic-controller" and
           any(.spec.template.spec.containers[]; .name == "controller" and
             .resources.requests == $controller_requests and
@@ -1763,6 +1761,20 @@ assert_no_limit_workloads() {
         any($deployments[]; .metadata.name == "haptic-haproxy" and
           ((.spec.template.spec.shareProcessNamespace // false) == false))
     ' >/dev/null
+}
+
+assert_no_limit_pods() {
+    local pods="$1"
+    local defaults="$2"
+    jq -L "${PROJECT_ROOT}/scripts/lib" -e --slurpfile defaults "$defaults" '
+        include "benchmark-runtime";
+        [.items[] |
+          select(.metadata.labels["app.kubernetes.io/component"] == "controller" or
+                 .metadata.labels["app.kubernetes.io/component"] == "loadbalancer")] as $pods |
+        any($pods[]; .metadata.labels["app.kubernetes.io/component"] == "controller") and
+        any($pods[]; .metadata.labels["app.kubernetes.io/component"] == "loadbalancer") and
+        all($pods[]; all(.spec | measured_containers; benchmark_runtime_matches($defaults[0])))
+    ' "$pods" >/dev/null
 }
 
 assert_effective_profile() {
@@ -2020,18 +2032,8 @@ configure_haptic() {
 
     kubectl get pods -n "$RELEASE_NAMESPACE" -l app.kubernetes.io/instance=haptic -o json \
         > "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json"
-    jq -e '
-        [.items[] |
-          select(.metadata.labels["app.kubernetes.io/component"] == "controller" or
-                 .metadata.labels["app.kubernetes.io/component"] == "loadbalancer")] as $pods |
-        ($pods | length) > 0 and
-        all($pods[]; all(((.spec.initContainers[]? | select(.restartPolicy == "Always")), .spec.containers[]);
-                         ((.resources.limits.memory? // "") == "") and
-                                             ((.resources.limits.cpu? // "") == "") and
-                                             all(.env[]?; .name != "GOMEMLIMIT" and .name != "GOMAXPROCS" and
-                                                          .name != "GOGC" and .name != "TMPDIR")))
-    ' "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" >/dev/null || \
-        die "measured HAPTIC pods retain resource limits or Go/temporary-directory overrides"
+    assert_no_limit_pods "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" "$chart_defaults" || \
+        die "measured HAPTIC pods differ from the no-limit product-default runtime profile"
 
     jq '
         [.items[] |
@@ -2040,7 +2042,8 @@ configure_haptic() {
           {namespace: .metadata.namespace, pod: .metadata.name,
            component: .metadata.labels["app.kubernetes.io/component"],
            containers: [((.spec.initContainers[]? | select(.restartPolicy == "Always")), .spec.containers[]) |
-             {name, resources, env: [.env[]? | select(.name == "GOMEMLIMIT")]}]}]
+             {name, resources, env: [.env[]? | select(.name == "GOMEMLIMIT" or .name == "GOMAXPROCS" or
+                                                    .name == "GOGC" or .name == "TMPDIR")]}]}]
     ' "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" > "${BENCH_OUTPUT_DIR}/cluster/resource-methodology.json"
     verify_controller_runtime_identity
     record_event haptic-configured
