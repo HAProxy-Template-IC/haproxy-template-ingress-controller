@@ -33,8 +33,7 @@ jobs:
       E2E_SHARD_INDEX: ${{ matrix.index || matrix.shard || '1' }}
       HAPTIC_E2E_PROFILE: ${{ matrix.profile || '' }}
       HAPTIC_E2E_GWAPI_CHANNEL: ${{ matrix.channel || 'standard' }}
-      KIND_NODE_IMAGE: ${{ matrix.node || 'kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5'
-        }}
+      KIND_NODE_IMAGE: ${{ matrix.node || 'kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5' }}
       HAPTIC_E2E_EXTRA_SET: ${{ matrix.settings || 'controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi'
         }}
       PILOT_SUITE: ${{ matrix.suite }}
@@ -64,17 +63,19 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-${{ github.sha
-          }}
-        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard
+          }}-${{ github.sha }}
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard
+          }}-
     - name: Restore shared command compilation
       if: matrix.suite == 'unit-shard' && matrix.shard == 'command' && matrix.index != 1
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-${{ github.sha
-          }}
-        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard
+          }}-${{ github.sha }}
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard
+          }}-
     - name: Restore and maintain shared Helm compilation
       if: matrix.suite == 'helm' && matrix.haproxy == '3.4'
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
@@ -103,10 +104,10 @@ jobs:
       run: bash .github/scripts/install-arm-pilot-tools.sh
       if: matrix.runner == 'ubuntu-24.04-arm'
     - name: Run native ARM suite
-      if: matrix.runner == 'ubuntu-24.04-arm' && matrix.suite != 'upgrade'
+      if: matrix.runner == 'ubuntu-24.04-arm' && matrix.suite != 'upgrade' && matrix.suite != 'gitops'
       run: bash .github/scripts/run-arm-pilot.sh
-    - name: Run native ARM upgrade checks
-      if: matrix.suite == 'upgrade'
+    - name: Run native ARM lifecycle checks
+      if: matrix.suite == 'upgrade' || matrix.suite == 'gitops'
       run: bash .github/scripts/run-lifecycle-arm.sh
     - name: Run upstream Gateway conformance
       if: matrix.kind == 'gateway'
@@ -133,9 +134,7 @@ jobs:
       if: always() && matrix.kind == 'gateway'
       env:
         KUBECONFIG: /tmp/haproxy-e2e-kubeconfig
-      run: |
-        kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot \
-          -o json > .pilot/conformance-snapshots.json
+      run: "kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot \\\n  -o json > .pilot/conformance-snapshots.json\n"
     - name: Run upstream Ingress conformance
       if: matrix.kind == 'ingress'
       run: bash .github/scripts/run-ingress-arm-pilot.sh
@@ -163,8 +162,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: lifecycle
           name: gitops-argo-cert-manager
           suite: gitops
           provider: argo
@@ -475,8 +474,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: lifecycle
           name: gitops-flux-cert-manager
           suite: gitops
           provider: flux
@@ -865,8 +864,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: lifecycle
           name: gitops-argo-external
           suite: gitops
           provider: argo
@@ -1255,8 +1254,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
+        - runner: ubuntu-24.04-arm
+          kind: lifecycle
           name: gitops-flux-external
           suite: gitops
           provider: flux
@@ -1272,8 +1271,6 @@ jobs:
           image: ''
           baseline: ''
   suite_upgrade_0_3_0_current:
-    needs: suite_upgrade_0_2_1_minimum
-    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1403,9 +1400,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-  suite_unit_command_1:
-    needs: suite_coverage_rest
+    needs: suite_upgrade_0_1_0_current
     if: ${{ !cancelled() }}
+  suite_unit_command_1:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1431,6 +1428,8 @@ jobs:
           settings: ''
           image: ''
           startup: ''
+    needs: suite_upgrade_0_2_0_current
+    if: ${{ !cancelled() }}
   suite_upgrade_0_3_0_minimum:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -1535,9 +1534,9 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-  suite_unit_command_3:
-    needs: suite_upgrade_0_4_1_current
+    needs: suite_upgrade_0_4_0_current
     if: ${{ !cancelled() }}
+  suite_unit_command_3:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1563,9 +1562,9 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-  suite_unit_command_2:
-    needs: suite_upgrade_0_4_1_minimum
+    needs: suite_upgrade_0_3_0_current
     if: ${{ !cancelled() }}
+  suite_unit_command_2:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1591,6 +1590,8 @@ jobs:
           settings: ''
           image: ''
           startup: ''
+    needs: suite_helm_3_1
+    if: ${{ !cancelled() }}
   suite_upgrade_0_2_2_current:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -1643,6 +1644,8 @@ jobs:
           settings: ''
           image: ''
           startup: ''
+    needs: suite_upgrade_0_2_0_alpha_3_minimum
+    if: ${{ !cancelled() }}
   suite_upgrade_0_2_0_current:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
@@ -1790,8 +1793,6 @@ jobs:
           suite: ''
           image: ''
   suite_acceptance:
-    needs: suite_ingress_3
-    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1844,8 +1845,6 @@ jobs:
           suite: ''
           image: ''
   suite_e2e_cache:
-    needs: suite_ingress_1
-    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1871,9 +1870,9 @@ jobs:
           suite: ''
           image: ''
           startup: ''
-  suite_e2e_rate_limit:
-    needs: suite_upgrade_0_1_0_minimum
+    needs: suite_gateway_4
     if: ${{ !cancelled() }}
+  suite_e2e_rate_limit:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1899,9 +1898,9 @@ jobs:
           suite: ''
           image: ''
           startup: ''
-  suite_lint:
-    needs: suite_upgrade_0_2_0_current
+    needs: suite_upgrade_0_2_0_alpha_3_current
     if: ${{ !cancelled() }}
+  suite_lint:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1927,9 +1926,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-  suite_gateway_1:
-    needs: suite_upgrade_0_5_0_current
+    needs: suite_upgrade_0_2_1_current
     if: ${{ !cancelled() }}
+  suite_gateway_1:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1955,9 +1954,9 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-  suite_gateway_4:
-    needs: suite_upgrade_0_1_0_current
+    needs: suite_ingress_1
     if: ${{ !cancelled() }}
+  suite_gateway_4:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -1984,8 +1983,6 @@ jobs:
           suite: ''
           image: ''
   suite_integration_3_3:
-    needs: suite_upgrade_0_2_0_alpha_3_minimum
-    if: ${{ !cancelled() }}
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2002,9 +1999,9 @@ jobs:
           haproxy: '3.3'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
           shard: ''
-  suite_integration_3_1:
-    needs: suite_helm_3_0
+    needs: suite_upgrade_0_1_0_minimum
     if: ${{ !cancelled() }}
+  suite_integration_3_1:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2021,9 +2018,9 @@ jobs:
           haproxy: '3.1'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
           shard: ''
-  suite_gateway_2:
-    needs: suite_ingress_2
+    needs: suite_ingress_4
     if: ${{ !cancelled() }}
+  suite_gateway_2:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2049,9 +2046,9 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-  suite_integration_3_4:
-    needs: suite_upgrade_0_2_1_current
+    needs: suite_upgrade_0_2_0_minimum
     if: ${{ !cancelled() }}
+  suite_integration_3_4:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2068,9 +2065,9 @@ jobs:
           haproxy: '3.4'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
           shard: ''
-  suite_wasm:
-    needs: suite_upgrade_0_2_0_alpha_3_current
+    needs: suite_acceptance
     if: ${{ !cancelled() }}
+  suite_wasm:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2096,9 +2093,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-  suite_e2e_api_gateway:
-    needs: suite_upgrade_0_2_0_minimum
+    needs: suite_upgrade_0_4_0_minimum
     if: ${{ !cancelled() }}
+  suite_e2e_api_gateway:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2124,9 +2121,9 @@ jobs:
           suite: ''
           image: ''
           startup: ''
-  suite_gateway_3:
-    needs: suite_chart_minimum
+    needs: suite_coverage_rest
     if: ${{ !cancelled() }}
+  suite_gateway_3:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2152,9 +2149,9 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-  suite_integration_3_2:
-    needs: suite_ingress_4
+    needs: suite_ingress_2
     if: ${{ !cancelled() }}
+  suite_integration_3_2:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2171,9 +2168,9 @@ jobs:
           haproxy: '3.2'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
           shard: ''
-  suite_integration_3_0:
-    needs: suite_unit_renderer
+    needs: suite_helm_3_0
     if: ${{ !cancelled() }}
+  suite_integration_3_0:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2190,9 +2187,9 @@ jobs:
           haproxy: '3.0'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
           shard: ''
-  suite_defaults:
-    needs: suite_upgrade_0_4_0_minimum
+    needs: suite_ingress_3
     if: ${{ !cancelled() }}
+  suite_defaults:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2218,9 +2215,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-  suite_install_without_gateway_minimum:
-    needs: suite_upgrade_0_2_2_minimum
+    needs: suite_upgrade_0_2_1_minimum
     if: ${{ !cancelled() }}
+  suite_install_without_gateway_minimum:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2246,9 +2243,9 @@ jobs:
           haproxy: ''
           image: ''
           baseline: ''
-  suite_test_support:
-    needs: suite_upgrade_0_4_0_current
+    needs: suite_upgrade_0_2_2_current
     if: ${{ !cancelled() }}
+  suite_test_support:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2274,9 +2271,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-  suite_install_without_gateway_current:
-    needs: suite_upgrade_0_2_2_current
+    needs: suite_upgrade_0_5_0_minimum
     if: ${{ !cancelled() }}
+  suite_install_without_gateway_current:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2302,9 +2299,9 @@ jobs:
           haproxy: ''
           image: ''
           baseline: ''
-  suite_unit_rest:
-    needs: suite_gitops_argo_external
+    needs: suite_upgrade_0_4_1_current
     if: ${{ !cancelled() }}
+  suite_unit_rest:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2330,9 +2327,9 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-  suite_agent_3_4:
-    needs: suite_upgrade_0_5_0_minimum
+    needs: suite_upgrade_0_2_2_minimum
     if: ${{ !cancelled() }}
+  suite_agent_3_4:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2358,9 +2355,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-  suite_agent_3_0:
-    needs: suite_upgrade_0_3_0_minimum
+    needs: suite_upgrade_0_4_1_minimum
     if: ${{ !cancelled() }}
+  suite_agent_3_0:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2386,9 +2383,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-  suite_coverage_renderer:
-    needs: suite_e2e_minimum_kubernetes_1
+    needs: suite_helm_3_2
     if: ${{ !cancelled() }}
+  suite_coverage_renderer:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2405,9 +2402,9 @@ jobs:
           shard: renderer
           haproxy: ''
           image: ''
-  suite_vector:
-    needs: suite_e2e_hp3_4_2
+    needs: suite_upgrade_0_5_0_current
     if: ${{ !cancelled() }}
+  suite_vector:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2433,9 +2430,9 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-  suite_ci_image_3_3:
-    needs: suite_e2e_minimum_kubernetes_2
+    needs: suite_upgrade_0_3_0_minimum
     if: ${{ !cancelled() }}
+  suite_ci_image_3_3:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2461,9 +2458,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-  suite_ci_image_3_4:
-    needs: suite_snapshot
+    needs: suite_gitops_flux_external
     if: ${{ !cancelled() }}
+  suite_ci_image_3_4:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2489,9 +2486,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-  suite_ci_image_3_1:
-    needs: suite_e2e_hp3_4_3
+    needs: suite_e2e_minimum_kubernetes_2
     if: ${{ !cancelled() }}
+  suite_ci_image_3_1:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2517,9 +2514,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-  suite_ci_image_3_0:
-    needs: suite_e2e_minimum_kubernetes_3
+    needs: suite_gitops_argo_cert_manager
     if: ${{ !cancelled() }}
+  suite_ci_image_3_0:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2545,9 +2542,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-  suite_spoa:
-    needs: suite_chart
+    needs: suite_gitops_flux_cert_manager
     if: ${{ !cancelled() }}
+  suite_spoa:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2573,9 +2570,9 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-  suite_ci_image_3_2:
-    needs: suite_e2e_hp3_4_1
+    needs: suite_gitops_argo_external
     if: ${{ !cancelled() }}
+  suite_ci_image_3_2:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2601,9 +2598,9 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-  suite_docs:
-    needs: suite_e2e_hp3_1_2
+    needs: suite_e2e_hp3_4_2
     if: ${{ !cancelled() }}
+  suite_docs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2629,9 +2626,9 @@ jobs:
           haproxy: ''
           node: ''
           baseline: ''
-  suite_docs_image:
-    needs: suite_e2e_hp3_0_3
+    needs: suite_e2e_hp3_2_2
     if: ${{ !cancelled() }}
+  suite_docs_image:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -2657,6 +2654,8 @@ jobs:
           node: ''
           image: ''
           baseline: ''
+    needs: suite_e2e_hp3_1_2
+    if: ${{ !cancelled() }}
   coverage:
     name: coverage-combined
     needs:
@@ -2686,8 +2685,7 @@ jobs:
 
         mkdir -p .pilot/coverage-inputs
 
-        gh run download "$GITHUB_RUN_ID" --pattern ''ci-evidence-coverage-*'' --pattern ''ci-evidence-integration-*'' --dir
-        .pilot/coverage-inputs
+        gh run download "$GITHUB_RUN_ID" --pattern ''ci-evidence-coverage-*'' --pattern ''ci-evidence-integration-*'' --dir .pilot/coverage-inputs
 
         '
     - name: Merge the complete package coverage
