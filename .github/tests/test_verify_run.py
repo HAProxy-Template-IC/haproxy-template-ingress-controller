@@ -50,6 +50,19 @@ class VerifyRunTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 self.check([dict(self.job, **{key: None})])
 
+    def test_reusable_workflow_requires_its_own_jobs(self):
+        nested = dict(self.job, name="full / unit", id=124)
+        arguments = {"repository": "owner/repo", "sha": "abc", "attempt": 2, "prefix": "full / "}
+        self.assertEqual(VERIFY.verify(self.run, [self.job, nested], ["unit"], **arguments),
+                         [{"name": "full / unit", "id": 124}])
+        with self.assertRaises(ValueError):
+            VERIFY.verify(self.run, [self.job], ["unit"], **arguments)
+        with self.assertRaises(ValueError):
+            VERIFY.verify(self.run, [self.job, dict(nested, conclusion="failure")], ["unit"], **arguments)
+        arguments["prefix"] = "full"
+        with self.assertRaises(ValueError):
+            VERIFY.verify(self.run, [nested], ["unit"], **arguments)
+
 
 class RevisionIdentityTests(unittest.TestCase):
     def setUp(self):

@@ -4,11 +4,17 @@ name: CI migration speed proof
     branches:
     - ci/github-speed-proof-20261012
   workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      verification_job_prefix:
+        type: string
+        required: false
+        default: ''
 permissions:
   contents: read
   actions: read
 concurrency:
-  group: speed-proof-${{ github.ref }}
+  group: verification-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   suite_gitops_argo_cert_manager:
@@ -2777,6 +2783,7 @@ jobs:
     - name: Require every check from this exact run and source
       env:
         GH_TOKEN: ${{ github.token }}
+        CI_JOB_PREFIX: ${{ inputs.verification_job_prefix || '' }}
       run: python3 .github/scripts/verify-run.py
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:

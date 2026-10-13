@@ -20,12 +20,13 @@ class HistoryTests(unittest.TestCase):
         self.job = {"id": 9, "run_id": 42, "run_attempt": 2, "head_sha": "abc", "name": "nightly-scale",
                     "status": "completed", "conclusion": "success",
                     "started_at": "2026-10-13T01:00:00Z", "completed_at": "2026-10-13T01:05:00Z"}
+        self.churn = dict(self.job, id=10, name="nightly-gateway-churn")
         self.artifact = {"id": 19, "name": "nightly-scale-metrics", "expired": False,
                          "created_at": "2026-10-13T01:04:00Z",
                          "workflow_run": {"id": 42, "head_sha": "abc", "head_branch": "main"}}
         self.api = mock.Mock(spec=GitHub)
         self.api.all.side_effect = lambda path, field, **params: iter({
-            "workflow_runs": [self.run], "jobs": [self.job], "artifacts": [self.artifact]}[field])
+            "workflow_runs": [self.run], "jobs": [self.job, self.churn], "artifacts": [self.artifact]}[field])
         self.api.artifact.return_value = self.archive()
         self.artifact["digest"] = "sha256:" + hashlib.sha256(self.api.artifact.return_value).hexdigest()
 
@@ -47,7 +48,7 @@ class HistoryTests(unittest.TestCase):
 
     def test_ineligible_runs_and_failed_jobs_are_not_baselines(self):
         original = copy.deepcopy(self.run)
-        for key, value in (("id", 43), ("head_branch", "feature"), ("event", "pull_request"), ("status", "in_progress")):
+        for key, value in (("id", 43), ("id", 44), ("head_branch", "feature"), ("event", "pull_request"), ("status", "in_progress")):
             with self.subTest(key=key):
                 self.run.update(original)
                 self.run[key] = value
@@ -117,6 +118,12 @@ class HistoryTests(unittest.TestCase):
         for conclusion in ("cancelled", "skipped"):
             self.job["conclusion"] = conclusion
             self.assertTrue(required(self.api, "owner/repo", current, branch="main"))
+
+    def test_manual_scale_alone_does_not_suppress_the_complete_nightly(self):
+        current = dict(self.run, id=43)
+        self.run["event"] = "workflow_dispatch"
+        self.churn["conclusion"] = "skipped"
+        self.assertTrue(required(self.api, "owner/repo", current, branch="main"))
 
     def test_nightly_selection_rejects_non_main_and_pr_contexts(self):
         for current in (dict(self.run, head_branch="feature"), dict(self.run, event="pull_request")):

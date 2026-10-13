@@ -19,8 +19,9 @@ def required(api, repository, current, *, branch, force=False):
             continue
         if run["event"] not in {"schedule", "workflow_dispatch"} or run["conclusion"] in {"cancelled", "skipped"}:
             continue
-        scale = next((job for job in jobs_for_run(api, repository, run) if job["name"] == "nightly-scale"), None)
-        if scale and scale["conclusion"] not in {"cancelled", "skipped"}:
+        suites = {job["name"]: job for job in jobs_for_run(api, repository, run)}
+        executed = {name for name, job in suites.items() if job["conclusion"] not in {"cancelled", "skipped"}}
+        if {"nightly-scale", "nightly-gateway-churn"} <= executed:
             return run["head_sha"] != current["head_sha"]
     return True
 

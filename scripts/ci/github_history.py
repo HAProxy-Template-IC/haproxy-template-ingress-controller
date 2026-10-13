@@ -17,7 +17,7 @@ def successful_job_metrics(api, repository, current_run, *, workflow, branch, jo
     path = f"repos/{repository}/actions/workflows/{urllib.parse.quote(workflow, safe='')}/runs"
     history = []
     for run in itertools.islice(api.all(path, "workflow_runs", branch=branch), max_workflows):
-        if str(run["id"]) == str(current_run) or run["head_branch"] != branch:
+        if int(run["id"]) >= int(current_run) or run["head_branch"] != branch:
             continue
         if run["event"] not in {"schedule", "workflow_dispatch"}:
             continue

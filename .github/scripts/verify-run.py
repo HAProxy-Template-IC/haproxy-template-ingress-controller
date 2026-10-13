@@ -9,13 +9,16 @@ import subprocess
 from urllib.request import Request, urlopen
 
 
-def verify(run, jobs, required, *, repository, sha, attempt):
+def verify(run, jobs, required, *, repository, sha, attempt, prefix=""):
     if run["repository"]["full_name"] != repository or run["head_sha"] != sha:
         raise ValueError("Workflow belongs to a different repository or revision")
     if run["run_attempt"] != attempt:
         raise ValueError("Workflow belongs to a different attempt")
     if not required or len(required) != len(set(required)):
         raise ValueError("Required job inventory is empty or duplicated")
+    if prefix and not prefix.endswith(" / "):
+        raise ValueError("Reusable workflow job prefix must include its separator")
+    required = [prefix + name for name in required]
     selected = {}
     for job in jobs:
         if job["run_id"] != run["id"] or job["head_sha"] != sha or job["run_attempt"] != attempt:
@@ -93,8 +96,9 @@ def main():
         page += 1
     manifest_path = Path(".github/ci-verification.json")
     manifest = json.loads(manifest_path.read_text())
+    prefix = os.environ.get("CI_JOB_PREFIX", "")
     checked = verify(run, jobs, manifest["required_jobs"], repository=repository,
-                     sha=identity["api_sha"], attempt=attempt)
+                     sha=identity["api_sha"], attempt=attempt, prefix=prefix)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if head != sha:
         raise ValueError("Checkout does not match the verified revision")
@@ -104,6 +108,7 @@ def main():
     receipt = {
         "version": 2, "repository": repository, "run_id": run_id, "run_attempt": attempt,
         "sha": sha, "tree": tree, "jobs": checked,
+        "job_prefix": prefix,
         "event": event_name, **identity,
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "verified_at": now.isoformat(), "seconds_to_verification": (now - started).total_seconds(),

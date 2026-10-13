@@ -1,0 +1,237 @@
+name: Nightly and weekly verification
+'on':
+  schedule:
+  - cron: 30 2 * * 1-6
+  - cron: 30 3 * * 0
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        default: nightly
+        options:
+        - nightly
+        - weekly
+        - scale
+        - canary
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.select.outputs.run }}
+      mode: ${{ steps.select.outputs.mode }}
+    steps:
+    - &id001
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - id: select
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 -m scripts.ci.github_nightly
+  compatibility:
+    name: nightly-gwapi-${{ matrix.release }}
+    needs: plan
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","weekly"]'), needs.plan.outputs.mode)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    env:
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_GOGC: '300'
+      PILOT_GOMAXPROCS: '2'
+      PILOT_STARTUP_PROFILE: '0'
+      PILOT_VALIDATION_TMPFS: '1'
+      HAPTIC_E2E_CONTROLLER_STARTUP: parallel
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: '3.4'
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      SCALE_SEED_WORKERS: '4'
+      HAPTIC_E2E_GWAPI_VERSION: ${{ matrix.release }}
+      TEST_RUN_PATTERN: TestGatewayAPIReleaseMatrix
+    steps:
+    - *id001
+    - &id002
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      with:
+        go-version: 1.27.2
+        cache: true
+        cache-dependency-path: go.sum
+    - &id003
+      name: Install pinned native tools
+      run: bash .github/scripts/install-arm-pilot-tools.sh
+    - name: Run native E2E verification
+      run: bash .github/scripts/run-arm-pilot.sh
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: nightly-gwapi-${{ matrix.release }}
+        path: '.pilot/
+
+          debug-logs/'
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error
+    strategy:
+      fail-fast: false
+      matrix:
+        release:
+        - v1.1.0
+        - v1.4.0
+        - v1.5.1
+  churn:
+    name: nightly-gateway-churn
+    needs: plan
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","weekly"]'), needs.plan.outputs.mode)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_GOGC: '300'
+      PILOT_GOMAXPROCS: '2'
+      PILOT_STARTUP_PROFILE: '0'
+      PILOT_VALIDATION_TMPFS: '1'
+      HAPTIC_E2E_CONTROLLER_STARTUP: parallel
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: '3.4'
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      SCALE_SEED_WORKERS: '4'
+      HAPTIC_E2E_CHURN: '1'
+      TEST_RUN_PATTERN: TestGatewayChurn
+    steps:
+    - *id001
+    - *id002
+    - *id003
+    - name: Run native E2E verification
+      run: bash .github/scripts/run-arm-pilot.sh
+    - name: Check controller output
+      run: KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: nightly-gateway-churn
+        path: '.pilot/
+
+          debug-logs/'
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error
+  scale:
+    name: nightly-scale
+    needs: plan
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.mode != 'canary'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    env:
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_GOGC: '300'
+      PILOT_GOMAXPROCS: '2'
+      PILOT_STARTUP_PROFILE: '0'
+      PILOT_VALIDATION_TMPFS: '1'
+      HAPTIC_E2E_CONTROLLER_STARTUP: parallel
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: '3.4'
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      SCALE_SEED_WORKERS: '4'
+      HAPTIC_E2E_SCALE: '1'
+      HAPTIC_E2E_AGENT_DEBUG: '1'
+      TEST_RUN_PATTERN: TestScale
+    steps:
+    - *id001
+    - *id002
+    - *id003
+    - name: Run native E2E verification
+      run: bash .github/scripts/run-arm-pilot.sh
+    - name: Check controller output
+      run: KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
+    - name: Compare scale history
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 -m scripts.ci.github_scale
+    - name: Retain scale metrics
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: nightly-scale-metrics
+        path: scale-metrics.json
+        retention-days: 30
+        if-no-files-found: error
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: nightly-scale
+        path: '.pilot/
+
+          debug-logs/'
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error
+  canary:
+    name: nightly-gwapi-canary
+    needs: plan
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.mode != 'scale'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_GOGC: '300'
+      PILOT_GOMAXPROCS: '2'
+      PILOT_STARTUP_PROFILE: '0'
+      PILOT_VALIDATION_TMPFS: '1'
+      HAPTIC_E2E_CONTROLLER_STARTUP: parallel
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      HAPROXY_VERSION: '3.4'
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+      SCALE_SEED_WORKERS: '4'
+      HAPTIC_E2E_PROFILE: conformance
+      HAPTIC_E2E_GWAPI_CHANNEL: experimental
+      PILOT_STARTUP_ONLY: '1'
+    steps:
+    - *id001
+    - *id002
+    - *id003
+    - name: Resolve upstream Gateway API commit
+      run: 'revision=$(bash scripts/prepare-gateway-api-canary.sh resolve)
+
+        printf ''HAPTIC_E2E_GWAPI_VERSION=%s\n'' "$revision" >> "$GITHUB_ENV"
+
+        '
+    - name: Boot conformance cluster
+      run: bash .github/scripts/run-arm-pilot.sh
+    - name: Run full upstream conformance
+      run: 'bash scripts/prepare-gateway-api-canary.sh prepare "$HAPTIC_E2E_GWAPI_VERSION"
+
+        make test-gateway-conformance
+
+        '
+    - name: Retain verification evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: nightly-gwapi-canary
+        path: '.pilot/
+
+          debug-logs/'
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error
+    continue-on-error: true
+  full:
+    needs: plan
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.mode == 'weekly'
+    uses: ./.github/workflows/ci-speed-proof.yml
+    with:
+      verification_job_prefix: 'full / '
