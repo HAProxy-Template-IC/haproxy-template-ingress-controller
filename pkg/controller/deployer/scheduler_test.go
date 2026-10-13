@@ -859,11 +859,6 @@ func countScheduledEvents(eventChan <-chan busevents.Event, window time.Duration
 	}
 }
 
-// TestScheduler_NoBurstUnderConcurrentReconciles is the headline regression test
-// for the reload-storm fix. One deploy is in flight at a time and every later
-// render lands in the single pending slot, so N concurrent scheduleOrQueue calls
-// produce EXACTLY ONE DeploymentScheduledEvent. The OLD phase machine spawned a
-// rate-limit goroutine per schedule and would burst ~N events.
 func TestScheduler_NoBurstUnderConcurrentReconciles(t *testing.T) {
 	bus := testutil.NewTestBus()
 	eventChan := bus.SubscribeTypes("burst-watcher", 200, events.EventTypeDeploymentScheduled)
@@ -874,10 +869,13 @@ func TestScheduler_NoBurstUnderConcurrentReconciles(t *testing.T) {
 	defer cancel()
 	startLoopForTest(t, scheduler, ctx)
 
+	scheduleExact(scheduler, ctx, "initial", nil, "first", "corr-initial")
+	first := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, eventChan, 250*time.Millisecond)
+
 	const n = 50
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			reason := "reconcile-" + strconv.Itoa(i)
@@ -887,32 +885,39 @@ func TestScheduler_NoBurstUnderConcurrentReconciles(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Observe well past the interval (≈2.5×). The loop coalesces all 50 into ONE
-	// deploy, publishes it, then blocks in awaitCompletion (no completion is ever
-	// signalled), so no further events can appear.
-	got := countScheduledEvents(eventChan, 250*time.Millisecond)
-	require.Len(t, got, 1,
-		"the single deploy loop must coalesce all %d concurrent schedules into exactly one "+
-			"DeploymentScheduledEvent — more than one means concurrent rate-limit timers (the "+
-			"reload storm) have returned", n)
-
-	// The loop is now parked in awaitCompletion holding deployInFlight. Drive a
-	// completion and assert it's ready for the next deploy.
+	require.Empty(t, countScheduledEvents(eventChan, 250*time.Millisecond),
+		"concurrent reconciles must not dispatch while the first deployment is in flight")
 	scheduler.schedulerMutex.Lock()
-	inFlight := scheduler.state.deployInFlight
+	activeID := scheduler.state.activeDeploymentID
+	pending := scheduler.state.pending
 	scheduler.schedulerMutex.Unlock()
-	assert.True(t, inFlight, "after emitting the coalesced deploy the loop must be in-flight")
+	require.Equal(t, first.EventID(), activeID)
+	require.NotNil(t, pending)
 
 	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler, &events.DeploymentResult{
-		Total:      1,
-		Succeeded:  1,
-		DurationMs: 10,
+		Total: 1, Succeeded: 1, DurationMs: 10,
 	}))
 
+	got := countScheduledEvents(eventChan, 250*time.Millisecond)
+	require.Len(t, got, 1, "all concurrent reconciles must coalesce into exactly one follow-up deployment")
+	assert.NotEqual(t, first.EventID(), got[0].EventID())
+	assert.Equal(t, pending.correlationID, got[0].CorrelationID())
+	assert.Equal(t, "config", got[0].Config)
+
+	scheduler.schedulerMutex.Lock()
+	activeID = scheduler.state.activeDeploymentID
+	pending = scheduler.state.pending
+	scheduler.schedulerMutex.Unlock()
+	require.Equal(t, got[0].EventID(), activeID)
+	require.Nil(t, pending)
+
+	scheduler.handleDeploymentCompleted(completionForActiveDeployment(scheduler, &events.DeploymentResult{
+		Total: 1, Succeeded: 1, DurationMs: 10,
+	}))
 	scheduler.schedulerMutex.Lock()
 	defer scheduler.schedulerMutex.Unlock()
-	assert.False(t, scheduler.state.deployInFlight,
-		"completion must clear deployInFlight so the loop is ready for the next deploy")
+	assert.False(t, scheduler.state.deployInFlight, "the final completion must leave the scheduler idle")
+	assert.Empty(t, scheduler.state.activeDeploymentID)
 }
 
 // TestScheduler_LatestWinsCoalescing verifies that renders arriving while a
