@@ -315,6 +315,7 @@ audit: vendor ## Run security vulnerability scanning
 	@echo "Running govulncheck..."
 	$(GOVULNCHECK) ./...
 	npm --prefix .gitlab/ci/images/ci audit
+	npm --prefix scripts/pages audit
 
 ## Combined checks
 
@@ -1288,6 +1289,13 @@ release: ## Prepare a release of controller + chart (usage: make release RELEASE
 .PHONY: build-docs-preview test-snapshot-publication
 build-docs-preview: ## Build the versioned documentation preview artifact
 	bash .github/scripts/build-docs-preview.sh
+
+.PHONY: prepare-github-pages test-github-pages-browser
+prepare-github-pages: ## Package a complete website below the GitHub Pages size limit
+	python3 -m scripts.ci.github_pages --source "$(PAGES_SOURCE)" --output "$(PAGES_OUTPUT)"
+
+test-github-pages-browser: ## Verify every packaged playground engine in a real browser
+	node scripts/tests/test_github_pages_browser.mjs "$(PAGES_OUTPUT)"
 
 test-snapshot-publication: ## Verify image and chart publication in a local registry
 	bash .github/scripts/test-snapshot-publication.sh

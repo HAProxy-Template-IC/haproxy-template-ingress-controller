@@ -1,5 +1,9 @@
 # Playground hosting — cross-repo publish contract
 
+The GitHub migration uses [GitHub Pages packaging](github-pages.md) to retain all
+versions below the Pages size limit. The contract below describes the existing
+GitLab publisher until that migration is activated.
+
 The browser playground (`cmd/playground/`) is built **here** (in `haproxy-haptic/haptic`)
 and published **there** (in `haproxy-haptic/haproxy-haptic.gitlab.io`, the docs/landing
 Pages site). This doc is the contract between the two: what this repo produces, and what

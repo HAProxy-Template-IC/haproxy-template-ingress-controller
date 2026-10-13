@@ -1,0 +1,25 @@
+{
+  "package": "brotli-dec-wasm",
+  "version": "2.3.2",
+  "source": "https://github.com/ustclug-dev/brotli-dec-wasm",
+  "archive": "https://registry.npmjs.org/brotli-dec-wasm/-/brotli-dec-wasm-2.3.2.tgz",
+  "integrity": "sha512-5H+k8eVLIJY6B4olN2HP9QzJAxcplf0jV7mWnkpxvOSeUE9Npg3dQ2pgLn30a9MUFHNro1iSmtdu6VNdlb+TIw==",
+  "files": {
+    "brotli_dec_wasm.js": {
+      "size": 9355,
+      "sha256": "19cf5d13fa62df4ebdf3fcefddeefa54b41fd7cca83be2b553dd5a1e9c81b2d0"
+    },
+    "brotli_dec_wasm_bg.wasm": {
+      "size": 208439,
+      "sha256": "79b29cb1790560f0a0f32b4a31d935e2782875e4a367fde23c81d986b327ec3f"
+    },
+    "LICENSE-MIT.txt": {
+      "size": 1081,
+      "sha256": "e896322d037d6154296c5b3d1876a90977770704dd74799751f52f27e0483905"
+    },
+    "LICENSE-Apache.txt": {
+      "size": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    }
+  }
+}
