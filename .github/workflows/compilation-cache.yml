@@ -1,8 +1,5 @@
 name: Refresh shared compilation caches
 'on':
-  push:
-    branches:
-    - main
   workflow_dispatch: {}
 permissions:
   contents: read
