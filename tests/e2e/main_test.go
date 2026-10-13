@@ -50,6 +50,7 @@ import (
 	devassets "gitlab.com/haproxy-haptic/haptic/scripts/dev-env-assets"
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
 	"gitlab.com/haproxy-haptic/haptic/tests/process"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
@@ -563,10 +564,9 @@ func waitCRDsEstablished(ctx context.Context, nameSubstr string) error {
 	if len(crds) == 0 {
 		return fmt.Errorf("no CRDs matching %q found after install", nameSubstr)
 	}
-	waitArgs := append([]string{"wait", kubeconfigFlag, kubeconfigPath,
-		"--for=condition=Established", "--timeout=60s"}, crds...)
-	if out, err := exec.CommandContext(ctx, "kubectl", waitArgs...).CombinedOutput(); err != nil {
-		return fmt.Errorf("wait for CRDs established (%s): %w (output: %s)", nameSubstr, err, out)
+	client := kubeexec.Client{Runner: process.Executor{}, Kubeconfig: kubeconfigPath, Context: "kind-" + ClusterName}
+	if err := client.WaitCRDsEstablished(ctx, crds, time.Minute); err != nil {
+		return fmt.Errorf("wait for CRDs established (%s): %w", nameSubstr, err)
 	}
 	return nil
 }

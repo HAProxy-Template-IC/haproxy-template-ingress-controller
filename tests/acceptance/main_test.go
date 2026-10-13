@@ -119,12 +119,7 @@ func initializeClusterResources(ctx context.Context, cluster *kindutil.Cluster) 
 	if result, err := client.Run(ctx, nil, "apply", "-f", CRDDirectory); err != nil {
 		return fmt.Errorf("install CRDs: %w: %s", err, result.Combined)
 	}
-	for _, crd := range RequiredCRDs {
-		if result, err := client.Run(ctx, nil, "wait", "--for=condition=Established", crd, "--timeout=60s"); err != nil {
-			return fmt.Errorf("establish %s: %w: %s", crd, err, result.Combined)
-		}
-	}
-	return nil
+	return client.WaitCRDsEstablished(ctx, RequiredCRDs, time.Minute)
 }
 
 func setupForLocalDevelopment() {
