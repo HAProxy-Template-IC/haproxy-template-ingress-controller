@@ -29,45 +29,48 @@ class WorkflowInventoryTests(unittest.TestCase):
 
     def test_coverage_has_every_profile_without_waiting_for_unrelated_suites(self):
         jobs = self.workflow["jobs"]
-        self.assertEqual(set(jobs["coverage"]["needs"]), {"coverage-inputs", "coverage-seed"})
-        rows = [row for group in ("coverage-inputs", "coverage-seed")
+        rows = [row for group in jobs["coverage"]["needs"]
                 for row in jobs[group]["strategy"]["matrix"]["include"]]
         self.assertEqual({row["name"] for row in rows}, {
             "coverage-rest", "coverage-renderer",
             "integration-3.0", "integration-3.1", "integration-3.2", "integration-3.3", "integration-3.4",
         })
-        self.assertEqual(set(jobs["verified"]["needs"]), {
-            "verification", "verification-short", "coverage-inputs", "coverage-seed", "coverage",
-        })
+        self.assertEqual(set(jobs["verified"]["needs"]), set(jobs) - {"verified"})
 
-    def test_long_suites_fit_initial_capacity_before_short_jobs_are_released(self):
+    def test_execution_chains_reserve_capacity_for_coverage_aggregation(self):
         jobs = self.workflow["jobs"]
-        initial = [row for job in jobs.values() if not job.get("needs")
-                   for row in job.get("strategy", {}).get("matrix", {}).get("include", [])]
-        self.assertLessEqual(len(initial), 60)
-        initial_names = {row["name"] for row in initial}
-        for name in self.manifest["required_jobs"]:
-            if name.startswith(("e2e-", "gateway-", "ingress-", "helm-", "unit-", "gitops-")) or name == "snapshot":
-                self.assertIn(name, initial_names)
-        self.assertEqual(jobs["verification-short"]["needs"], "coverage-seed")
-        self.assertEqual(jobs["verification-short"]["if"], "${{ !cancelled() }}")
-        seed = jobs["coverage-seed"]["strategy"]["matrix"]["include"]
-        self.assertEqual([row["name"] for row in seed], ["coverage-renderer"])
+        suites = {key: job for key, job in jobs.items() if "strategy" in job}
+        roots = {key for key, job in suites.items() if not job.get("needs")}
+        self.assertLessEqual(len(roots) + 1, 60)
+        children = collections.Counter()
+        for key, job in suites.items():
+            self.assertEqual(len(job["strategy"]["matrix"]["include"]), 1)
+            if job.get("needs"):
+                self.assertIn(job["needs"], suites)
+                self.assertEqual(job["if"], "${{ !cancelled() }}")
+                children[job["needs"]] += 1
+            visited = set()
+            current = key
+            while current not in roots:
+                self.assertNotIn(current, visited, "Execution chains must not contain cycles")
+                visited.add(current)
+                current = suites[current]["needs"]
+        self.assertTrue(all(count == 1 for count in children.values()), "A lane must not fork")
 
     def test_e2e_matrix_has_every_shard_of_every_supported_version(self):
-        job = self.workflow["jobs"]["verification"]
-        total = int(job["env"]["E2E_SHARD_TOTAL"])
         groups = collections.defaultdict(set)
-        for row in job["strategy"]["matrix"]["include"]:
-            name = row["name"]
-            if name.startswith(("e2e-hp", "e2e-minimum-kubernetes-")):
-                group, index = name.rsplit("-", 1)
-                groups[group].add(int(index))
+        for job in self.workflow["jobs"].values():
+            for row in job.get("strategy", {}).get("matrix", {}).get("include", []):
+                name = row["name"]
+                if name.startswith(("e2e-hp", "e2e-minimum-kubernetes-")):
+                    self.assertEqual(int(job["env"]["E2E_SHARD_TOTAL"]), 4)
+                    group, index = name.rsplit("-", 1)
+                    groups[group].add(int(index))
         self.assertEqual(set(groups), {"e2e-hp3.0", "e2e-hp3.1", "e2e-hp3.2", "e2e-hp3.3", "e2e-hp3.4",
                                        "e2e-minimum-kubernetes"})
         for group, indexes in groups.items():
             with self.subTest(group=group):
-                self.assertEqual(indexes, set(range(1, total + 1)))
+                self.assertEqual(indexes, {1, 2, 3, 4})
 
 
 if __name__ == "__main__":

@@ -11,486 +11,11 @@ concurrency:
   group: speed-proof-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  verification:
+  suite_gitops_argo_cert_manager:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      max-parallel: 60
-      matrix:
-        include:
-        - name: e2e-hp3.1-3
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.1'
-          shard: '3'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.1-4
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.1'
-          shard: '4'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.2-3
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.2'
-          shard: '3'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.2-4
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.2'
-          shard: '4'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.3-3
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.3'
-          shard: '3'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.3-4
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.3'
-          shard: '4'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: helm-3.4
-          kind: build
-          runner: ubuntu-24.04
-          suite: helm
-          haproxy: '3.4'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.1-1
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.1'
-          shard: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.0-3
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.0'
-          shard: '3'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.0-4
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.0'
-          shard: '4'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: chart
-          suite: chart
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.0-1
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.0'
-          shard: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.3-1
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.3'
-          shard: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.2-1
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.2'
-          shard: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.4-3
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: '3'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.4-4
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: '4'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-minimum-kubernetes-3
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: minimum-kubernetes-3
-          index: '3'
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-minimum-kubernetes-4
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: minimum-kubernetes-4
-          index: '4'
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.3-2
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.3'
-          shard: '2'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.4-1
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-minimum-kubernetes-1
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: minimum-kubernetes-1
-          index: '1'
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.2-2
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.2'
-          shard: '2'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.1-2
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.1'
-          shard: '2'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-minimum-kubernetes-2
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: minimum-kubernetes-2
-          index: '2'
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.0-2
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.0'
-          shard: '2'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: helm-3.2
-          kind: build
-          runner: ubuntu-24.04
-          suite: helm
-          haproxy: '3.2'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-hp3.4-2
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: '2'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: helm-3.3
-          kind: build
-          runner: ubuntu-24.04
-          suite: helm
-          haproxy: '3.3'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: helm-3.1
-          kind: build
-          runner: ubuntu-24.04
-          suite: helm
-          haproxy: '3.1'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: unit-command-3
-          suite: unit-shard
-          shard: command
-          index: '3'
-          kind: x64
-          runner: ubuntu-24.04
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: unit-command-2
-          suite: unit-shard
-          shard: command
-          index: '2'
-          kind: x64
-          runner: ubuntu-24.04
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: helm-3.0
-          kind: build
-          runner: ubuntu-24.04
-          suite: helm
-          haproxy: '3.0'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: ingress-2
-          runner: ubuntu-24.04-arm
-          kind: ingress
-          shard: '2'
-          profile: conformance
-          channel: experimental
-          startup: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: unit-renderer
-          suite: unit-shard
-          shard: renderer
-          kind: x64
-          runner: ubuntu-24.04
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: ingress-1
-          runner: ubuntu-24.04-arm
-          kind: ingress
-          shard: '1'
-          profile: conformance
-          channel: experimental
-          startup: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: ingress-4
-          runner: ubuntu-24.04-arm
-          kind: ingress
-          shard: '4'
-          profile: conformance
-          channel: experimental
-          startup: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: unit-command-1
-          suite: unit-shard
-          shard: command
-          index: '1'
-          kind: x64
-          runner: ubuntu-24.04
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: ingress-3
-          runner: ubuntu-24.04-arm
-          kind: ingress
-          shard: '3'
-          profile: conformance
-          channel: experimental
-          startup: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-rate-limit
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: rate-limit
-          profile: rate-limit
-          settings: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi;spoaHub.resources.requests.cpu=200m;rateLimit.shared.managedStore.resources.requests.cpu=100m
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-cache
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: cache
-          profile: cache
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: gateway-3
-          runner: ubuntu-24.04-arm
-          kind: gateway
-          shard: '3'
-          profile: conformance
-          channel: experimental
-          startup: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: gateway-4
-          runner: ubuntu-24.04-arm
-          kind: gateway
-          shard: '4'
-          profile: conformance
-          channel: experimental
-          startup: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: gateway-1
-          runner: ubuntu-24.04-arm
-          kind: gateway
-          shard: '1'
-          profile: conformance
-          channel: experimental
-          startup: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: e2e-api-gateway
-          runner: ubuntu-24.04-arm
-          kind: arm
-          haproxy: '3.4'
-          shard: api-gateway
-          profile: api-gateway
-          channel: experimental
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: gateway-2
-          runner: ubuntu-24.04-arm
-          kind: gateway
-          shard: '2'
-          profile: conformance
-          channel: experimental
-          startup: '1'
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: snapshot
-          kind: build
-          runner: ubuntu-24.04
-          suite: snapshot
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: unit-rest
-          suite: unit-shard
-          shard: rest
-          kind: x64
-          runner: ubuntu-24.04
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - name: spoa
-          kind: build
-          runner: ubuntu-24.04
-          suite: spoa
-          baseline: ''
-          certificates: ''
-          provider: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: gitops-flux-cert-manager
-          suite: gitops
-          provider: flux
-          certificates: cert-manager
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: gitops-argo-external
-          suite: gitops
-          provider: argo
-          certificates: external
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: gitops-flux-external
-          suite: gitops
-          provider: flux
-          certificates: external
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: gitops-argo-cert-manager
-          suite: gitops
-          provider: argo
-          certificates: cert-manager
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-    env: &id003
+    env: &id001
       PILOT_GOGC: '300'
       PILOT_CAPTURE_NETWORK: ${{ startsWith(matrix.name, 'e2e-') && endsWith(matrix.name, '-3') && '1' || '0' }}
       PILOT_GOMAXPROCS: '2'
@@ -520,11 +45,10 @@ jobs:
       CONFORMANCE_PARALLEL: '4'
       SCALE_SEED_WORKERS: '4'
       E2E_SHARD_WEIGHTS: .github/e2e-shard-weights.json
-      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && format('{0}/.ci-go-cache', github.workspace) || ''
-        }}
+      PILOT_GO_CACHE_DIR: ${{ matrix.suite == 'unit-shard' && format('{0}/.ci-go-cache', github.workspace) || '' }}
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
-    steps: &id004
+    steps: &id002
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         fetch-depth: 0
@@ -534,10 +58,10 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{
-          matrix.index || '0' }}-${{ github.sha }}
-        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard
-          }}-${{ matrix.index || '0' }}-
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{ matrix.index
+          || '0' }}-${{ github.sha }}
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{
+          matrix.index || '0' }}-
     - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
       if: matrix.suite == 'snapshot' || matrix.suite == 'spoa'
       with:
@@ -600,11 +124,1567 @@ jobs:
         include-hidden-files: true
         retention-days: 1
         if-no-files-found: error
-  coverage-seed:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-argo-cert-manager
+          suite: gitops
+          provider: argo
+          certificates: cert-manager
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          haproxy: ''
+          image: ''
+          baseline: ''
+  suite_e2e_hp3_2_4:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    env: &id001
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.2-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '4'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_1_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.1-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '4'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_3_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.3-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '4'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_4_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.4-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '4'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_helm_3_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: helm-3.2
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.2'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          shard: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          startup: ''
+  suite_e2e_hp3_3_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.3-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '2'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_0_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.0-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '4'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_helm_3_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: helm-3.3
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.3'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          shard: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          startup: ''
+  suite_e2e_hp3_1_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.1-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '2'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_4_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.4-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '3'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_0_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.0-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '3'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_gitops_flux_cert_manager:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-flux-cert-manager
+          suite: gitops
+          provider: flux
+          certificates: cert-manager
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          haproxy: ''
+          image: ''
+          baseline: ''
+  suite_e2e_hp3_3_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.3-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_1_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.1-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_2_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.2-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '3'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_3_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.3-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.3'
+          shard: '3'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_1_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.1-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.1'
+          shard: '3'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_2_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.2-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '2'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_helm_3_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: helm-3.4
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.4'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          shard: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          startup: ''
+  suite_e2e_hp3_0_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.0-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '2'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_helm_3_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: helm-3.1
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.1'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          shard: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          startup: ''
+  suite_e2e_hp3_0_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.0-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.0'
+          shard: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_minimum_kubernetes_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-minimum-kubernetes-3
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-3
+          index: '3'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          baseline: ''
+          certificates: ''
+          provider: ''
+          profile: ''
+          channel: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_helm_3_0:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: helm-3.0
+          kind: build
+          runner: ubuntu-24.04
+          suite: helm
+          haproxy: '3.0'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          shard: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          startup: ''
+  suite_e2e_minimum_kubernetes_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-minimum-kubernetes-4
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-4
+          index: '4'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          baseline: ''
+          certificates: ''
+          provider: ''
+          profile: ''
+          channel: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_2_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.2-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.2'
+          shard: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_gitops_argo_external:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-argo-external
+          suite: gitops
+          provider: argo
+          certificates: external
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          haproxy: ''
+          image: ''
+          baseline: ''
+  suite_e2e_minimum_kubernetes_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-minimum-kubernetes-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-1
+          index: '1'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          baseline: ''
+          certificates: ''
+          provider: ''
+          profile: ''
+          channel: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_upgrade_0_4_0_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.0-current
+          suite: upgrade
+          baseline: 0.4.0
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_e2e_minimum_kubernetes_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-minimum-kubernetes-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: minimum-kubernetes-2
+          index: '2'
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          baseline: ''
+          certificates: ''
+          provider: ''
+          profile: ''
+          channel: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_upgrade_0_4_1_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.1-current
+          suite: upgrade
+          baseline: 0.4.1
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_e2e_hp3_4_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.4-2
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '2'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_e2e_hp3_4_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-hp3.4-1
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+  suite_upgrade_0_5_0_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.5.0-current
+          suite: upgrade
+          baseline: 0.5.0
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_4_1_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.1-minimum
+          suite: upgrade
+          baseline: 0.4.1
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_5_0_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.5.0-minimum
+          suite: upgrade
+          baseline: 0.5.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_2_2_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.2-minimum
+          suite: upgrade
+          baseline: 0.2.2
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_2_1_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.1-minimum
+          suite: upgrade
+          baseline: 0.2.1
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_4_0_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.4.0-minimum
+          suite: upgrade
+          baseline: 0.4.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_2_0_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-minimum
+          suite: upgrade
+          baseline: 0.2.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_2_1_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.1-current
+          suite: upgrade
+          baseline: 0.2.1
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_gitops_flux_external:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: gitops-flux-external
+          suite: gitops
+          provider: flux
+          certificates: external
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          haproxy: ''
+          image: ''
+          baseline: ''
+  suite_upgrade_0_3_0_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.3.0-current
+          suite: upgrade
+          baseline: 0.3.0
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_2_0_alpha_3_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-alpha.3-minimum
+          suite: upgrade
+          baseline: 0.2.0-alpha.3
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_2_0_alpha_3_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-alpha.3-current
+          suite: upgrade
+          baseline: 0.2.0-alpha.3
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_snapshot:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: snapshot
+          kind: build
+          runner: ubuntu-24.04
+          suite: snapshot
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          shard: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          image: ''
+          startup: ''
+  suite_chart_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: chart-minimum
+          kind: build
+          runner: ubuntu-24.04
+          suite: chart-minimum
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          node: ''
+          image: ''
+          baseline: ''
+  suite_unit_command_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: unit-command-1
+          suite: unit-shard
+          shard: command
+          index: '1'
+          kind: x64
+          runner: ubuntu-24.04
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          image: ''
+          startup: ''
+  suite_upgrade_0_3_0_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.3.0-minimum
+          suite: upgrade
+          baseline: 0.3.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_1_0_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.1.0-current
+          suite: upgrade
+          baseline: 0.1.0
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_upgrade_0_1_0_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.1.0-minimum
+          suite: upgrade
+          baseline: 0.1.0
+          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_chart:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: chart
+          suite: chart
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          shard: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          image: ''
+          startup: ''
+  suite_unit_command_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: unit-command-3
+          suite: unit-shard
+          shard: command
+          index: '3'
+          kind: x64
+          runner: ubuntu-24.04
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          image: ''
+          startup: ''
+  suite_unit_command_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: unit-command-2
+          suite: unit-shard
+          shard: command
+          index: '2'
+          kind: x64
+          runner: ubuntu-24.04
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          image: ''
+          startup: ''
+  suite_upgrade_0_2_2_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.2-current
+          suite: upgrade
+          baseline: 0.2.2
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_unit_renderer:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: unit-renderer
+          suite: unit-shard
+          shard: renderer
+          kind: x64
+          runner: ubuntu-24.04
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          image: ''
+          startup: ''
+  suite_upgrade_0_2_0_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: upgrade-0.2.0-current
+          suite: upgrade
+          baseline: 0.2.0
+          node: ''
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          image: ''
+  suite_ingress_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: ingress-2
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '2'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+  suite_ingress_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: ingress-4
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '4'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+    needs: suite_ingress_2
+    if: ${{ !cancelled() }}
+  suite_coverage_rest:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: &id003
       PILOT_SOURCE_SHA: ${{ github.sha }}
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: ${{ matrix.haproxy || '3.4' }}
@@ -612,7 +1692,7 @@ jobs:
       PILOT_CI_IMAGE: ${{ matrix.image || 'registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad'
         }}
       SHARD_ID: ${{ matrix.shard || '' }}
-    steps: &id002
+    steps: &id004
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         fetch-depth: 0
@@ -635,336 +1715,53 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - name: coverage-renderer
-          kind: x64
-          runner: ubuntu-24.04
-          suite: coverage-shard
-          shard: renderer
-          haproxy: ''
-          image: ''
-  coverage-inputs:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      max-parallel: 60
-      matrix:
-        include:
         - name: coverage-rest
           kind: x64
           runner: ubuntu-24.04
           suite: coverage-shard
           shard: rest
-        - name: integration-3.0
-          kind: x64
-          runner: ubuntu-24.04
-          suite: integration-coverage
-          haproxy: '3.0'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
-        - name: integration-3.4
-          kind: x64
-          runner: ubuntu-24.04
-          suite: integration-coverage
-          haproxy: '3.4'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
-        - name: integration-3.2
-          kind: x64
-          runner: ubuntu-24.04
-          suite: integration-coverage
-          haproxy: '3.2'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
-        - name: integration-3.1
-          kind: x64
-          runner: ubuntu-24.04
-          suite: integration-coverage
-          haproxy: '3.1'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
-        - name: integration-3.3
-          kind: x64
-          runner: ubuntu-24.04
-          suite: integration-coverage
-          haproxy: '3.3'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
-    env: *id001
-    steps: *id002
-  verification-short:
+          haproxy: ''
+          image: ''
+    needs: suite_upgrade_0_2_0_current
+    if: ${{ !cancelled() }}
+  suite_ingress_1:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    env: *id003
-    steps: *id004
-    needs: coverage-seed
-    if: ${{ !cancelled() }}
+    env: *id001
+    steps: *id002
     strategy:
       fail-fast: false
-      max-parallel: 60
       matrix:
         include:
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.3.0-current
-          suite: upgrade
-          baseline: 0.3.0
+        - name: ingress-1
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '1'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
           node: ''
-          channel: ''
-          index: ''
-          profile: ''
           settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.5.0-minimum
-          suite: upgrade
-          baseline: 0.5.0
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.4.1-current
-          suite: upgrade
-          baseline: 0.4.1
-          node: ''
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.2.1-minimum
-          suite: upgrade
-          baseline: 0.2.1
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.4.0-minimum
-          suite: upgrade
-          baseline: 0.4.0
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.4.0-current
-          suite: upgrade
-          baseline: 0.4.0
-          node: ''
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.2.0-current
-          suite: upgrade
-          baseline: 0.2.0
-          node: ''
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.2.2-current
-          suite: upgrade
-          baseline: 0.2.2
-          node: ''
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.3.0-minimum
-          suite: upgrade
-          baseline: 0.3.0
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.2.0-alpha.3-current
-          suite: upgrade
-          baseline: 0.2.0-alpha.3
-          node: ''
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.5.0-current
-          suite: upgrade
-          baseline: 0.5.0
-          node: ''
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.2.2-minimum
-          suite: upgrade
-          baseline: 0.2.2
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.1.0-current
-          suite: upgrade
-          baseline: 0.1.0
-          node: ''
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.2.0-minimum
-          suite: upgrade
-          baseline: 0.2.0
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.1.0-minimum
-          suite: upgrade
-          baseline: 0.1.0
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.2.0-alpha.3-minimum
-          suite: upgrade
-          baseline: 0.2.0-alpha.3
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.2.1-current
-          suite: upgrade
-          baseline: 0.2.1
-          node: ''
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: upgrade-0.4.1-minimum
-          suite: upgrade
-          baseline: 0.4.1
-          node: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - name: chart-minimum
-          kind: build
-          runner: ubuntu-24.04
-          suite: chart-minimum
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
+          suite: ''
+          image: ''
+    needs: suite_unit_renderer
+    if: ${{ !cancelled() }}
+  suite_acceptance:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - runner: ubuntu-24.04
           kind: x64
           name: acceptance
@@ -977,6 +1774,275 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
+          haproxy: ''
+          node: ''
+          image: ''
+          baseline: ''
+    needs: suite_upgrade_0_2_2_current
+    if: ${{ !cancelled() }}
+  suite_ingress_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: ingress-3
+          runner: ubuntu-24.04-arm
+          kind: ingress
+          shard: '3'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+    needs: suite_unit_command_2
+    if: ${{ !cancelled() }}
+  suite_e2e_cache:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-cache
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: cache
+          profile: cache
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          channel: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+    needs: suite_unit_command_3
+    if: ${{ !cancelled() }}
+  suite_e2e_rate_limit:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-rate-limit
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: rate-limit
+          profile: rate-limit
+          settings: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi;spoaHub.resources.requests.cpu=200m;rateLimit.shared.managedStore.resources.requests.cpu=100m
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          channel: ''
+          node: ''
+          suite: ''
+          image: ''
+          startup: ''
+    needs: suite_chart
+    if: ${{ !cancelled() }}
+  suite_lint:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: lint
+          suite: lint
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          node: ''
+          image: ''
+          baseline: ''
+    needs: suite_upgrade_0_1_0_minimum
+    if: ${{ !cancelled() }}
+  suite_gateway_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: gateway-1
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '1'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+    needs: suite_upgrade_0_1_0_current
+    if: ${{ !cancelled() }}
+  suite_gateway_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: gateway-4
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '4'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+    needs: suite_upgrade_0_3_0_minimum
+    if: ${{ !cancelled() }}
+  suite_integration_3_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id003
+    steps: *id004
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: integration-3.3
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.3'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
+          shard: ''
+    needs: suite_chart_minimum
+    if: ${{ !cancelled() }}
+  suite_integration_3_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id003
+    steps: *id004
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: integration-3.1
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.1'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
+          shard: ''
+    needs: suite_unit_command_1
+    if: ${{ !cancelled() }}
+  suite_gateway_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: gateway-2
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '2'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+    needs: suite_snapshot
+    if: ${{ !cancelled() }}
+  suite_integration_3_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id003
+    steps: *id004
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: integration-3.4
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.4'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+          shard: ''
+    needs: suite_upgrade_0_2_0_alpha_3_current
+    if: ${{ !cancelled() }}
+  suite_wasm:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - name: wasm
           kind: build
           runner: ubuntu-24.04
@@ -989,6 +2055,144 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
+          haproxy: ''
+          node: ''
+          image: ''
+          baseline: ''
+    needs: suite_upgrade_0_2_0_alpha_3_minimum
+    if: ${{ !cancelled() }}
+  suite_e2e_api_gateway:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: e2e-api-gateway
+          runner: ubuntu-24.04-arm
+          kind: arm
+          haproxy: '3.4'
+          shard: api-gateway
+          profile: api-gateway
+          channel: experimental
+          baseline: ''
+          certificates: ''
+          provider: ''
+          index: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+          startup: ''
+    needs: suite_upgrade_0_3_0_current
+    if: ${{ !cancelled() }}
+  suite_gateway_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: gateway-3
+          runner: ubuntu-24.04-arm
+          kind: gateway
+          shard: '3'
+          profile: conformance
+          channel: experimental
+          startup: '1'
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          node: ''
+          settings: ''
+          suite: ''
+          image: ''
+    needs: suite_gitops_flux_external
+    if: ${{ !cancelled() }}
+  suite_integration_3_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id003
+    steps: *id004
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: integration-3.2
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.2'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
+          shard: ''
+    needs: suite_upgrade_0_2_1_current
+    if: ${{ !cancelled() }}
+  suite_integration_3_0:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id003
+    steps: *id004
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: integration-3.0
+          kind: x64
+          runner: ubuntu-24.04
+          suite: integration-coverage
+          haproxy: '3.0'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
+          shard: ''
+    needs: suite_upgrade_0_2_0_minimum
+    if: ${{ !cancelled() }}
+  suite_defaults:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - runner: ubuntu-24.04
+          kind: x64
+          name: defaults
+          suite: defaults
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          node: ''
+          image: ''
+          baseline: ''
+    needs: suite_upgrade_0_4_0_minimum
+    if: ${{ !cancelled() }}
+  suite_install_without_gateway_minimum:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - runner: ubuntu-24.04
           kind: x64
           name: install-without-gateway-minimum
@@ -1002,6 +2206,49 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
+          haproxy: ''
+          image: ''
+          baseline: ''
+    needs: suite_upgrade_0_2_1_minimum
+    if: ${{ !cancelled() }}
+  suite_test_support:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: test-support
+          suite: test-support
+          kind: x64
+          runner: ubuntu-24.04
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          node: ''
+          image: ''
+          baseline: ''
+    needs: suite_upgrade_0_2_2_minimum
+    if: ${{ !cancelled() }}
+  suite_install_without_gateway_current:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - runner: ubuntu-24.04
           kind: x64
           name: install-without-gateway-current
@@ -1015,42 +2262,49 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: lint
-          suite: lint
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - runner: ubuntu-24.04
-          kind: x64
-          name: defaults
-          suite: defaults
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - name: test-support
-          suite: test-support
+          haproxy: ''
+          image: ''
+          baseline: ''
+    needs: suite_upgrade_0_5_0_minimum
+    if: ${{ !cancelled() }}
+  suite_unit_rest:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: unit-rest
+          suite: unit-shard
+          shard: rest
           kind: x64
           runner: ubuntu-24.04
-          channel: ''
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
           index: ''
           profile: ''
+          channel: ''
+          node: ''
           settings: ''
-          shard: ''
+          image: ''
           startup: ''
-          provider: ''
-          certificates: ''
+    needs: suite_upgrade_0_4_1_minimum
+    if: ${{ !cancelled() }}
+  suite_agent_3_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - name: agent-3.4
           kind: x64
           runner: ubuntu-24.04
@@ -1065,6 +2319,20 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
+          node: ''
+          baseline: ''
+    needs: suite_upgrade_0_5_0_current
+    if: ${{ !cancelled() }}
+  suite_agent_3_0:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - name: agent-3.0
           kind: x64
           runner: ubuntu-24.04
@@ -1079,6 +2347,39 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
+          node: ''
+          baseline: ''
+    needs: suite_e2e_hp3_4_1
+    if: ${{ !cancelled() }}
+  suite_coverage_renderer:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id003
+    steps: *id004
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: coverage-renderer
+          kind: x64
+          runner: ubuntu-24.04
+          suite: coverage-shard
+          shard: renderer
+          haproxy: ''
+          image: ''
+    needs: suite_e2e_hp3_4_2
+    if: ${{ !cancelled() }}
+  suite_vector:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - runner: ubuntu-24.04
           kind: x64
           name: vector
@@ -1091,6 +2392,22 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
+          haproxy: ''
+          node: ''
+          image: ''
+          baseline: ''
+    needs: suite_upgrade_0_4_1_current
+    if: ${{ !cancelled() }}
+  suite_ci_image_3_3:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - name: ci-image-3.3
           kind: build
           runner: ubuntu-24.04
@@ -1105,48 +2422,20 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
-        - name: ci-image-3.1
-          kind: build
-          runner: ubuntu-24.04
-          suite: ci-image
-          haproxy: '3.1'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - name: ci-image-3.0
-          kind: build
-          runner: ubuntu-24.04
-          suite: ci-image
-          haproxy: '3.0'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
-        - name: ci-image-3.2
-          kind: build
-          runner: ubuntu-24.04
-          suite: ci-image
-          haproxy: '3.2'
-          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
-          channel: ''
-          index: ''
-          profile: ''
-          settings: ''
-          shard: ''
-          startup: ''
-          provider: ''
-          certificates: ''
+          node: ''
+          baseline: ''
+    needs: suite_e2e_minimum_kubernetes_2
+    if: ${{ !cancelled() }}
+  suite_ci_image_3_4:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - name: ci-image-3.4
           kind: build
           runner: ubuntu-24.04
@@ -1161,10 +2450,26 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
-        - name: docs-image
+          node: ''
+          baseline: ''
+    needs: suite_upgrade_0_4_0_current
+    if: ${{ !cancelled() }}
+  suite_ci_image_3_1:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: ci-image-3.1
           kind: build
           runner: ubuntu-24.04
-          suite: docs-image
+          suite: ci-image
+          haproxy: '3.1'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
           channel: ''
           index: ''
           profile: ''
@@ -1173,6 +2478,104 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
+          node: ''
+          baseline: ''
+    needs: suite_e2e_minimum_kubernetes_1
+    if: ${{ !cancelled() }}
+  suite_ci_image_3_0:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: ci-image-3.0
+          kind: build
+          runner: ubuntu-24.04
+          suite: ci-image
+          haproxy: '3.0'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          node: ''
+          baseline: ''
+    needs: suite_gitops_argo_external
+    if: ${{ !cancelled() }}
+  suite_spoa:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: spoa
+          kind: build
+          runner: ubuntu-24.04
+          suite: spoa
+          baseline: ''
+          certificates: ''
+          provider: ''
+          haproxy: ''
+          index: ''
+          shard: ''
+          profile: ''
+          channel: ''
+          node: ''
+          settings: ''
+          image: ''
+          startup: ''
+    needs: suite_e2e_hp3_2_1
+    if: ${{ !cancelled() }}
+  suite_ci_image_3_2:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: ci-image-3.2
+          kind: build
+          runner: ubuntu-24.04
+          suite: ci-image
+          haproxy: '3.2'
+          image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          node: ''
+          baseline: ''
+    needs: suite_e2e_minimum_kubernetes_4
+    if: ${{ !cancelled() }}
+  suite_docs:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
         - name: docs
           kind: build
           runner: ubuntu-24.04
@@ -1186,11 +2589,49 @@ jobs:
           startup: ''
           provider: ''
           certificates: ''
+          haproxy: ''
+          node: ''
+          baseline: ''
+    needs: suite_helm_3_0
+    if: ${{ !cancelled() }}
+  suite_docs_image:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env: *id001
+    steps: *id002
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - name: docs-image
+          kind: build
+          runner: ubuntu-24.04
+          suite: docs-image
+          channel: ''
+          index: ''
+          profile: ''
+          settings: ''
+          shard: ''
+          startup: ''
+          provider: ''
+          certificates: ''
+          haproxy: ''
+          node: ''
+          image: ''
+          baseline: ''
+    needs: suite_e2e_minimum_kubernetes_3
+    if: ${{ !cancelled() }}
   coverage:
     name: coverage-combined
     needs:
-    - coverage-inputs
-    - coverage-seed
+    - suite_coverage_renderer
+    - suite_coverage_rest
+    - suite_integration_3_0
+    - suite_integration_3_4
+    - suite_integration_3_2
+    - suite_integration_3_1
+    - suite_integration_3_3
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -1210,8 +2651,8 @@ jobs:
 
         mkdir -p .pilot/coverage-inputs
 
-        gh run download "$GITHUB_RUN_ID" --pattern ''ci-evidence-coverage-*'' --pattern ''ci-evidence-integration-*''
-        --dir .pilot/coverage-inputs
+        gh run download "$GITHUB_RUN_ID" --pattern ''ci-evidence-coverage-*'' --pattern ''ci-evidence-integration-*'' --dir
+        .pilot/coverage-inputs
 
         '
     - name: Merge the complete package coverage
@@ -1229,10 +2670,101 @@ jobs:
   verified:
     name: verified
     needs:
-    - verification
-    - verification-short
-    - coverage-inputs
-    - coverage-seed
+    - suite_gitops_argo_cert_manager
+    - suite_e2e_hp3_2_4
+    - suite_e2e_hp3_1_4
+    - suite_e2e_hp3_3_4
+    - suite_e2e_hp3_4_4
+    - suite_helm_3_2
+    - suite_e2e_hp3_3_2
+    - suite_e2e_hp3_0_4
+    - suite_helm_3_3
+    - suite_e2e_hp3_1_2
+    - suite_e2e_hp3_4_3
+    - suite_e2e_hp3_0_3
+    - suite_gitops_flux_cert_manager
+    - suite_e2e_hp3_3_1
+    - suite_e2e_hp3_1_1
+    - suite_e2e_hp3_2_3
+    - suite_e2e_hp3_3_3
+    - suite_e2e_hp3_1_3
+    - suite_e2e_hp3_2_2
+    - suite_helm_3_4
+    - suite_e2e_hp3_0_2
+    - suite_helm_3_1
+    - suite_e2e_hp3_0_1
+    - suite_e2e_minimum_kubernetes_3
+    - suite_helm_3_0
+    - suite_e2e_minimum_kubernetes_4
+    - suite_e2e_hp3_2_1
+    - suite_gitops_argo_external
+    - suite_e2e_minimum_kubernetes_1
+    - suite_upgrade_0_4_0_current
+    - suite_e2e_minimum_kubernetes_2
+    - suite_upgrade_0_4_1_current
+    - suite_e2e_hp3_4_2
+    - suite_e2e_hp3_4_1
+    - suite_upgrade_0_5_0_current
+    - suite_upgrade_0_4_1_minimum
+    - suite_upgrade_0_5_0_minimum
+    - suite_upgrade_0_2_2_minimum
+    - suite_upgrade_0_2_1_minimum
+    - suite_upgrade_0_4_0_minimum
+    - suite_upgrade_0_2_0_minimum
+    - suite_upgrade_0_2_1_current
+    - suite_gitops_flux_external
+    - suite_upgrade_0_3_0_current
+    - suite_upgrade_0_2_0_alpha_3_minimum
+    - suite_upgrade_0_2_0_alpha_3_current
+    - suite_snapshot
+    - suite_chart_minimum
+    - suite_unit_command_1
+    - suite_upgrade_0_3_0_minimum
+    - suite_upgrade_0_1_0_current
+    - suite_upgrade_0_1_0_minimum
+    - suite_chart
+    - suite_unit_command_3
+    - suite_unit_command_2
+    - suite_upgrade_0_2_2_current
+    - suite_unit_renderer
+    - suite_upgrade_0_2_0_current
+    - suite_ingress_2
+    - suite_ingress_4
+    - suite_coverage_rest
+    - suite_ingress_1
+    - suite_acceptance
+    - suite_ingress_3
+    - suite_e2e_cache
+    - suite_e2e_rate_limit
+    - suite_lint
+    - suite_gateway_1
+    - suite_gateway_4
+    - suite_integration_3_3
+    - suite_integration_3_1
+    - suite_gateway_2
+    - suite_integration_3_4
+    - suite_wasm
+    - suite_e2e_api_gateway
+    - suite_gateway_3
+    - suite_integration_3_2
+    - suite_integration_3_0
+    - suite_defaults
+    - suite_install_without_gateway_minimum
+    - suite_test_support
+    - suite_install_without_gateway_current
+    - suite_unit_rest
+    - suite_agent_3_4
+    - suite_agent_3_0
+    - suite_coverage_renderer
+    - suite_vector
+    - suite_ci_image_3_3
+    - suite_ci_image_3_4
+    - suite_ci_image_3_1
+    - suite_ci_image_3_0
+    - suite_spoa
+    - suite_ci_image_3_2
+    - suite_docs
+    - suite_docs_image
     - coverage
     if: always()
     runs-on: ubuntu-24.04
