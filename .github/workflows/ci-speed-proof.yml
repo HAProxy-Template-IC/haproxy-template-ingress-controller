@@ -64,17 +64,17 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{ github.sha
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-${{ github.sha
           }}
-        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-
     - name: Restore shared command compilation
       if: matrix.suite == 'unit-shard' && matrix.shard == 'command' && matrix.index != 1
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{ github.sha
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-${{ github.sha
           }}
-        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-
     - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
       if: matrix.suite == 'snapshot' || matrix.suite == 'spoa'
       with:

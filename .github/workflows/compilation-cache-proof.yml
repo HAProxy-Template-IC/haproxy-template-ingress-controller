@@ -32,9 +32,9 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-${{ github.sha
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-${{ github.sha
           }}
-        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard }}-
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard }}-
     - name: Compile test packages without executing tests
       run: bash .github/scripts/run-remaining-pilot.sh
   consume:
@@ -62,7 +62,7 @@ jobs:
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-command-${{ github.sha }}
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-command-race-${{ github.sha }}
         fail-on-cache-miss: true
     - name: Execute every selected command test
       run: bash .github/scripts/run-remaining-pilot.sh

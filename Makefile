@@ -391,6 +391,10 @@ test-unit: ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 	@# test's 10m default under -race, which fails the package on time alone.
 	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $(if $(COUNT),-count=$(COUNT)) $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") $${PKG:-./...}
 
+.PHONY: test-unit-inventory
+test-unit-inventory: ## Enumerate the tests compiled for race-enabled unit verification
+	$(GO) test -race -list . $${PKG:-./...}
+
 .PHONY: test-e2e-helpers
 test-e2e-helpers: ## Test e2e client and cluster helpers without creating a cluster
 	$(GO) tool gotestsum --junitfile report-e2e-helpers.xml --format testname -- \

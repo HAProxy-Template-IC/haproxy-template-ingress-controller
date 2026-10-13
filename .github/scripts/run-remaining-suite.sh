@@ -16,7 +16,7 @@ case "$PILOT_SUITE" in
         export PKG
         export GOFLAGS=-p=4
         if [[ "$SHARD_ID" == command ]]; then
-            go test -list . ./cmd/haptic > .pilot/unit-command-inventory.txt
+            PKG=./cmd/haptic make test-unit-inventory > .pilot/unit-command-inventory.txt
         fi
         if [[ "$PILOT_SUITE" == unit-cache ]]; then
             export TEST_RUN_PATTERN='^$'
