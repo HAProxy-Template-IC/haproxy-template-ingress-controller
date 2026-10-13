@@ -94,7 +94,9 @@ def main():
         "--destination", str(retrieved), "--plain-http")
     if archive.read_bytes() != (retrieved / archive.name).read_bytes():
         raise ValueError("Retrieved chart differs from the packaged snapshot")
-    evidence["chart"] = {"version": version, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+    _, chart_digest = manifest("charts/haptic", version)
+    evidence["chart"] = {"version": version, "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+                         "reference": f"{REGISTRY}/charts/haptic@{chart_digest}"}
     Path(".pilot/snapshot-publication.json").write_text(json.dumps(evidence, indent=2) + "\n")
 
 

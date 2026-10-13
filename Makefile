@@ -1241,6 +1241,13 @@ build-docs-preview: ## Build the versioned documentation preview artifact
 test-snapshot-publication: ## Verify image and chart publication in a local registry
 	bash .github/scripts/test-snapshot-publication.sh
 
+.PHONY: prepare-github-release-config
+prepare-github-release-config: ## Preserve release builds and signatures while targeting GitHub
+	python3 -m scripts.ci.github_release --repository "$(GITHUB_REPOSITORY)" --output .pilot/goreleaser.github.yml
+	goreleaser check --config .pilot/goreleaser.github.yml
+
+GORELEASER_CONFIG ?= .goreleaser.yml
+
 goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
 	@set -eu; \
 	for series in $$(yq -r '.haproxyPatchVersions | keys | .[]' charts/haptic/values.yaml); do \
@@ -1248,7 +1255,7 @@ goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
 		image="$$(bash scripts/chart-haproxy-image.sh "$$series")"; \
 		export "$$pin=$$image"; \
 	done; \
-	CI_PIPELINE_ID=$${CI_PIPELINE_ID:-local} SOURCE_HASH=$(SOURCE_HASH) goreleaser release --snapshot --clean --skip=sign
+	CI_PIPELINE_ID=$${CI_PIPELINE_ID:-local} SOURCE_HASH=$(SOURCE_HASH) goreleaser release --config "$(GORELEASER_CONFIG)" --snapshot --clean --skip=sign
 
 ## PGO (Profile-Guided Optimization) targets
 
