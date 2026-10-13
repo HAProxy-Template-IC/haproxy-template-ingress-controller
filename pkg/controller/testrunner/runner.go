@@ -228,7 +228,7 @@ func (r *Runner) RunTests(ctx context.Context, testName string) (*TestResults, e
 
 	results.Duration = time.Since(startTime)
 
-	r.logger.Debug("Test run completed",
+	r.logger.Info("Test run completed",
 		"total", results.TotalTests,
 		"passed", results.PassedTests,
 		"failed", results.FailedTests,

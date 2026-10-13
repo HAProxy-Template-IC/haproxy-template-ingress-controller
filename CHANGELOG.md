@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Reduce temporary template allocations during configuration validation and rendering.
+- Log validation test totals and results at the default INFO level.
 
 ### Fixed
 
