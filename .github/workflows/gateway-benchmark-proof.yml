@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 165
     env:
+      HAPTIC_E2E_CONTROLLER_STARTUP: staged
       PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -30,7 +31,7 @@ jobs:
           --volume /var/run/docker.sock:/var/run/docker.sock \
           --volume "$PWD:$PWD" --workdir "$PWD" \
           --volume "$BENCH_CI_OUTPUT:$BENCH_CI_OUTPUT" \
-          --env BENCH_CI_OUTPUT \
+          --env BENCH_CI_OUTPUT --env HAPTIC_E2E_CONTROLLER_STARTUP \
           --entrypoint bash "$PILOT_CI_IMAGE" -euc '
             git config --global --add safe.directory "$PWD"
             make bench-gateway-api-ci
