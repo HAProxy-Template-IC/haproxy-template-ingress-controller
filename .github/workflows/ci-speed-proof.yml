@@ -1424,7 +1424,7 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_chart
+    needs: suite_unit_renderer
     if: ${{ !cancelled() }}
   suite_upgrade_0_3_0_minimum:
     name: ${{ matrix.name }}
@@ -1556,7 +1556,7 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_chart_minimum
+    needs: suite_upgrade_0_2_0_alpha_3_minimum
     if: ${{ !cancelled() }}
   suite_unit_command_2:
     name: ${{ matrix.name }}
@@ -1584,7 +1584,7 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_snapshot
+    needs: suite_coverage_rest
     if: ${{ !cancelled() }}
   suite_upgrade_0_2_2_current:
     name: ${{ matrix.name }}
@@ -1866,7 +1866,7 @@ jobs:
           suite: ''
           image: ''
           startup: ''
-    needs: suite_gitops_flux_cert_manager
+    needs: suite_upgrade_0_1_0_minimum
     if: ${{ !cancelled() }}
   suite_e2e_rate_limit:
     name: ${{ matrix.name }}
@@ -1894,7 +1894,7 @@ jobs:
           suite: ''
           image: ''
           startup: ''
-    needs: suite_upgrade_0_2_0_alpha_3_current
+    needs: suite_ingress_4
     if: ${{ !cancelled() }}
   suite_lint:
     name: ${{ matrix.name }}
@@ -1922,7 +1922,7 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_2_0_alpha_3_minimum
+    needs: suite_upgrade_0_4_0_current
     if: ${{ !cancelled() }}
   suite_gateway_1:
     name: ${{ matrix.name }}
@@ -1950,7 +1950,7 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-    needs: suite_upgrade_0_2_0_current
+    needs: suite_upgrade_0_4_1_minimum
     if: ${{ !cancelled() }}
   suite_gateway_4:
     name: ${{ matrix.name }}
@@ -1978,7 +1978,7 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-    needs: suite_e2e_hp3_4_2
+    needs: suite_upgrade_0_2_1_current
     if: ${{ !cancelled() }}
   suite_integration_3_3:
     name: ${{ matrix.name }}
@@ -1997,7 +1997,7 @@ jobs:
           haproxy: '3.3'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
           shard: ''
-    needs: suite_unit_renderer
+    needs: suite_chart
     if: ${{ !cancelled() }}
   suite_integration_3_1:
     name: ${{ matrix.name }}
@@ -2016,7 +2016,7 @@ jobs:
           haproxy: '3.1'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
           shard: ''
-    needs: suite_ingress_4
+    needs: suite_upgrade_0_1_0_current
     if: ${{ !cancelled() }}
   suite_gateway_2:
     name: ${{ matrix.name }}
@@ -2044,7 +2044,7 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-    needs: suite_upgrade_0_2_1_current
+    needs: suite_e2e_hp3_4_2
     if: ${{ !cancelled() }}
   suite_integration_3_4:
     name: ${{ matrix.name }}
@@ -2063,7 +2063,7 @@ jobs:
           haproxy: '3.4'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
           shard: ''
-    needs: suite_upgrade_0_1_0_minimum
+    needs: suite_snapshot
     if: ${{ !cancelled() }}
   suite_wasm:
     name: ${{ matrix.name }}
@@ -2091,7 +2091,7 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_4_1_minimum
+    needs: suite_upgrade_0_5_0_current
     if: ${{ !cancelled() }}
   suite_e2e_api_gateway:
     name: ${{ matrix.name }}
@@ -2119,7 +2119,7 @@ jobs:
           suite: ''
           image: ''
           startup: ''
-    needs: suite_upgrade_0_5_0_current
+    needs: suite_upgrade_0_2_1_minimum
     if: ${{ !cancelled() }}
   suite_gateway_3:
     name: ${{ matrix.name }}
@@ -2147,7 +2147,7 @@ jobs:
           settings: ''
           suite: ''
           image: ''
-    needs: suite_upgrade_0_4_0_current
+    needs: suite_upgrade_0_2_0_current
     if: ${{ !cancelled() }}
   suite_integration_3_2:
     name: ${{ matrix.name }}
@@ -2166,7 +2166,7 @@ jobs:
           haproxy: '3.2'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
           shard: ''
-    needs: suite_coverage_rest
+    needs: suite_upgrade_0_2_0_alpha_3_current
     if: ${{ !cancelled() }}
   suite_integration_3_0:
     name: ${{ matrix.name }}
@@ -2185,7 +2185,7 @@ jobs:
           haproxy: '3.0'
           image: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
           shard: ''
-    needs: suite_upgrade_0_1_0_current
+    needs: suite_chart_minimum
     if: ${{ !cancelled() }}
   suite_defaults:
     name: ${{ matrix.name }}
@@ -2213,7 +2213,7 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_2_1_minimum
+    needs: suite_upgrade_0_2_2_minimum
     if: ${{ !cancelled() }}
   suite_install_without_gateway_minimum:
     name: ${{ matrix.name }}
@@ -2241,7 +2241,7 @@ jobs:
           haproxy: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_4_1_current
+    needs: suite_upgrade_0_3_0_current
     if: ${{ !cancelled() }}
   suite_test_support:
     name: ${{ matrix.name }}
@@ -2269,7 +2269,7 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_3_0_minimum
+    needs: suite_upgrade_0_4_1_current
     if: ${{ !cancelled() }}
   suite_install_without_gateway_current:
     name: ${{ matrix.name }}
@@ -2297,7 +2297,7 @@ jobs:
           haproxy: ''
           image: ''
           baseline: ''
-    needs: suite_upgrade_0_2_2_current
+    needs: suite_upgrade_0_2_0_minimum
     if: ${{ !cancelled() }}
   suite_unit_rest:
     name: ${{ matrix.name }}
@@ -2353,7 +2353,7 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_upgrade_0_2_2_minimum
+    needs: suite_e2e_minimum_kubernetes_3
     if: ${{ !cancelled() }}
   suite_agent_3_0:
     name: ${{ matrix.name }}
@@ -2381,7 +2381,7 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_upgrade_0_3_0_current
+    needs: suite_upgrade_0_3_0_minimum
     if: ${{ !cancelled() }}
   suite_coverage_renderer:
     name: ${{ matrix.name }}
@@ -2400,7 +2400,7 @@ jobs:
           shard: renderer
           haproxy: ''
           image: ''
-    needs: suite_upgrade_0_2_0_minimum
+    needs: suite_e2e_minimum_kubernetes_1
     if: ${{ !cancelled() }}
   suite_vector:
     name: ${{ matrix.name }}
@@ -2428,7 +2428,7 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_e2e_minimum_kubernetes_1
+    needs: suite_upgrade_0_5_0_minimum
     if: ${{ !cancelled() }}
   suite_ci_image_3_3:
     name: ${{ matrix.name }}
@@ -2456,7 +2456,7 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_upgrade_0_5_0_minimum
+    needs: suite_gitops_flux_external
     if: ${{ !cancelled() }}
   suite_ci_image_3_4:
     name: ${{ matrix.name }}
@@ -2484,7 +2484,7 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_upgrade_0_4_0_minimum
+    needs: suite_e2e_hp3_4_1
     if: ${{ !cancelled() }}
   suite_ci_image_3_1:
     name: ${{ matrix.name }}
@@ -2512,7 +2512,7 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_helm_3_0
+    needs: suite_e2e_minimum_kubernetes_4
     if: ${{ !cancelled() }}
   suite_ci_image_3_0:
     name: ${{ matrix.name }}
@@ -2540,7 +2540,7 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_e2e_hp3_4_4
+    needs: suite_upgrade_0_4_0_minimum
     if: ${{ !cancelled() }}
   suite_spoa:
     name: ${{ matrix.name }}
@@ -2568,7 +2568,7 @@ jobs:
           settings: ''
           image: ''
           startup: ''
-    needs: suite_e2e_minimum_kubernetes_3
+    needs: suite_e2e_minimum_kubernetes_2
     if: ${{ !cancelled() }}
   suite_ci_image_3_2:
     name: ${{ matrix.name }}
@@ -2596,7 +2596,7 @@ jobs:
           certificates: ''
           node: ''
           baseline: ''
-    needs: suite_e2e_minimum_kubernetes_2
+    needs: suite_upgrade_0_2_2_current
     if: ${{ !cancelled() }}
   suite_docs:
     name: ${{ matrix.name }}
@@ -2624,7 +2624,7 @@ jobs:
           haproxy: ''
           node: ''
           baseline: ''
-    needs: suite_e2e_hp3_4_1
+    needs: suite_gitops_argo_external
     if: ${{ !cancelled() }}
   suite_docs_image:
     name: ${{ matrix.name }}
@@ -2652,7 +2652,7 @@ jobs:
           node: ''
           image: ''
           baseline: ''
-    needs: suite_gitops_flux_external
+    needs: suite_e2e_hp3_0_1
     if: ${{ !cancelled() }}
   coverage:
     name: coverage-combined
