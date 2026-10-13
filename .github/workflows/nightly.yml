@@ -39,7 +39,7 @@ jobs:
   compatibility:
     name: nightly-gwapi-${{ matrix.release }}
     needs: plan
-    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","weekly"]'), needs.plan.outputs.mode)
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly"]'), needs.plan.outputs.mode)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     env:
@@ -74,11 +74,9 @@ jobs:
       with:
         go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
         cache: true
-        cache-dependency-path: 'go.sum
+        cache-dependency-path: 'go.mod
 
-          Makefile
-
-          Dockerfile
+          go.sum
 
           cmd/haptic/default.pgo
 
@@ -108,7 +106,7 @@ jobs:
   churn:
     name: nightly-gateway-churn
     needs: plan
-    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","weekly"]'), needs.plan.outputs.mode)
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly"]'), needs.plan.outputs.mode)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -149,7 +147,7 @@ jobs:
   scale:
     name: nightly-scale
     needs: plan
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.mode != 'canary'
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","scale"]'), needs.plan.outputs.mode)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     env:
@@ -203,7 +201,7 @@ jobs:
   canary:
     name: nightly-gwapi-canary
     needs: plan
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.mode != 'scale'
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","canary"]'), needs.plan.outputs.mode)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     env:

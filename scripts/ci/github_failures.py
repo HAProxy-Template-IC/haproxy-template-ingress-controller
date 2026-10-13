@@ -42,7 +42,7 @@ def reports(repository, run, jobs):
             step["conclusion"] in FAILURES for step in job.get("steps", []))
         if not failed:
             continue
-        canary = run["path"] == ".github/workflows/nightly.yml" and job["name"] == "nightly-gwapi-canary"
+        canary = family(job["name"]) in {"nightly-gwapi-canary", "gateway-canary"}
         buckets["canary" if canary else "failure"].append(job)
     if not any(buckets.values()) and run["conclusion"] in FAILURES:
         buckets["failure"].append({"name": "workflow infrastructure", "id": None})

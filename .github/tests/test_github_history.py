@@ -37,10 +37,23 @@ class HistoryTests(unittest.TestCase):
             archive.writestr(name, json.dumps(contents or {"runner_cpu_model": "cpu", "controller_rss_bytes": 100}))
         return output.getvalue()
 
-    def history(self):
+    def history(self, **kwargs):
         return successful_job_metrics(self.api, "owner/repo", 43, workflow="nightly.yml", branch="main",
                                       job_name="nightly-scale", artifact_name="nightly-scale-metrics",
-                                      metrics_name="scale-metrics.json", max_runs=14, max_workflows=60)
+                                      metrics_name="scale-metrics.json", max_runs=14, max_workflows=60, **kwargs)
+
+    def test_integrated_scale_uses_canonical_pushes_and_never_pr_or_fork_history(self):
+        self.run.update(event="push", repository={"full_name": "owner/repo"},
+                        head_repository={"full_name": "owner/repo"})
+        self.assertEqual(self.history(), [])
+        allowed = ("push", "schedule", "workflow_dispatch")
+        self.assertEqual(len(self.history(events=allowed)), 1)
+        self.run["head_repository"]["full_name"] = "fork/repo"
+        self.assertEqual(self.history(events=allowed), [])
+        self.run["head_repository"]["full_name"] = "owner/repo"
+        for event in ("pull_request", "pull_request_target", "merge_group"):
+            self.run["event"] = event
+            self.assertEqual(self.history(events=allowed), [])
 
     def test_successful_job_is_a_baseline_even_if_another_job_failed(self):
         self.run["conclusion"] = "failure"

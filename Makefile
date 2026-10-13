@@ -383,6 +383,10 @@ lint-github-actions: ## Validate GitHub workflow syntax and expressions
 test-github-verification: lint-github-actions ## Check GitHub verification evidence fails closed
 	python3 -m unittest discover -s .github/tests -v
 
+.PHONY: schedule-github-verification
+schedule-github-verification: ## Balance GitHub jobs using the recorded runner durations
+	python3 -m scripts.ci.github_schedule
+
 .PHONY: test-github-toolchain-update
 test-github-toolchain-update: ## Verify Dockerfile changes reach the selected GitHub toolchain
 	python3 -m scripts.ci.toolchain_update_check "$(TOOLCHAIN_KIND)"

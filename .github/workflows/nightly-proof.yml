@@ -46,11 +46,9 @@ jobs:
       with:
         go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
         cache: true
-        cache-dependency-path: 'go.sum
+        cache-dependency-path: 'go.mod
 
-          Makefile
-
-          Dockerfile
+          go.sum
 
           cmd/haptic/default.pgo
 
@@ -113,11 +111,9 @@ jobs:
       with:
         go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
         cache: true
-        cache-dependency-path: 'go.sum
+        cache-dependency-path: 'go.mod
 
-          Makefile
-
-          Dockerfile
+          go.sum
 
           cmd/haptic/default.pgo
 
@@ -176,11 +172,9 @@ jobs:
       with:
         go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
         cache: true
-        cache-dependency-path: 'go.sum
+        cache-dependency-path: 'go.mod
 
-          Makefile
-
-          Dockerfile
+          go.sum
 
           cmd/haptic/default.pgo
 
@@ -251,11 +245,9 @@ jobs:
       with:
         go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
         cache: true
-        cache-dependency-path: 'go.sum
+        cache-dependency-path: 'go.mod
 
-          Makefile
-
-          Dockerfile
+          go.sum
 
           cmd/haptic/default.pgo
 

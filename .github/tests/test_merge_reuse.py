@@ -80,6 +80,21 @@ class MergeReuseTests(unittest.TestCase):
         self.assertEqual(result["artifact_id"], 20)
         self.assertEqual(self.find(), result)
 
+    def test_reuse_preserves_the_canary_outcome_and_rejects_missing_or_changed_evidence(self):
+        self.manifest = json.dumps({"required_jobs": ["unit", "canary"],
+                                    "allowed_failure_jobs": ["canary"]}).encode()
+        self.jobs.append(dict(self.jobs[0], name="full / canary", id=13, conclusion="failure"))
+        self.receipt["manifest_sha256"] = hashlib.sha256(self.manifest).hexdigest()
+        self.receipt["jobs"].insert(0, {"name": "full / canary", "id": 13, "conclusion": "failure"})
+        self.pack()
+        self.assertEqual(self.source()["jobs"], self.receipt["jobs"])
+        self.jobs[-1]["conclusion"] = "success"
+        with self.assertRaises(ValueError):
+            self.source()
+        self.jobs.pop()
+        with self.assertRaises(ValueError):
+            self.source()
+
     def test_rejects_wrong_source_event_branch_repository_path_or_status(self):
         original = copy.deepcopy(self.run)
         for key, value in (("event", "push"), ("event", "pull_request"),

@@ -98,6 +98,13 @@ class FailureReportingTests(unittest.TestCase):
         self.run["conclusion"] = "failure"
         self.assertIn("workflow infrastructure", self.selected([])[0]["title"])
 
+    def test_integrated_canary_failure_keeps_its_non_blocking_classification(self):
+        self.run["conclusion"] = "success"
+        self.job["name"] = "full / gateway-canary"
+        selected = self.selected()
+        self.assertEqual(len(selected), 1)
+        self.assertTrue(selected[0]["title"].startswith("Canary failure:"))
+
     def test_fingerprint_is_stable_across_shards_and_differs_across_failure_families(self):
         original = self.selected()[0]["marker"]
         self.job["name"] = "full / e2e-hp3.4-4"

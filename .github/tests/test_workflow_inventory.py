@@ -19,7 +19,11 @@ class WorkflowInventoryTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(set(names), set(self.manifest["required_jobs"]) | {"verified"})
         mapped = {name for group in self.manifest["gitlab_job_mapping"].values() for name in group}
+        mapped |= {name for group in self.manifest["additional_gitlab_job_mapping"].values() for name in group}
         self.assertEqual(mapped, set(names))
+        self.assertEqual(self.manifest["allowed_failure_jobs"], ["gateway-canary"])
+        self.assertEqual({job["name"] for job in self.workflow["jobs"].values()
+                          if job.get("continue-on-error")}, {"gateway-canary"})
 
     def test_skipped_jobs_keep_unique_names_without_matrix_expansion(self):
         names = [job["name"] for job in self.workflow["jobs"].values()]

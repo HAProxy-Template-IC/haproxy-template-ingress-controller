@@ -13,13 +13,18 @@ from .github import jobs_for_run
 
 
 def successful_job_metrics(api, repository, current_run, *, workflow, branch, job_name,
-                           artifact_name, metrics_name, max_runs, max_workflows):
+                           artifact_name, metrics_name, max_runs, max_workflows,
+                           events=("schedule", "workflow_dispatch")):
     path = f"repos/{repository}/actions/workflows/{urllib.parse.quote(workflow, safe='')}/runs"
     history = []
     for run in itertools.islice(api.all(path, "workflow_runs", branch=branch), max_workflows):
         if int(run["id"]) >= int(current_run) or run["head_branch"] != branch:
             continue
-        if run["event"] not in {"schedule", "workflow_dispatch"}:
+        if run["event"] not in events:
+            continue
+        if run["event"] == "push" and (
+                (run.get("head_repository") or {}).get("full_name") != repository or
+                run.get("repository", {}).get("full_name") != repository):
             continue
         if run["status"] != "completed":
             continue

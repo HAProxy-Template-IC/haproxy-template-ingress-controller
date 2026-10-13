@@ -65,6 +65,27 @@ class VerifyRunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             VERIFY.verify(self.run, [nested], ["unit"], **arguments)
 
+    def test_canary_may_fail_but_cannot_be_absent_skipped_or_from_another_attempt(self):
+        canary = dict(self.job, name="full / canary", id=124)
+        unit = dict(self.job, name="full / unit")
+        arguments = {"repository": "owner/repo", "sha": "abc", "attempt": 2,
+                     "prefix": "full / ", "allowed_failures": ["canary"]}
+        for conclusion in ("success", "failure", "timed_out"):
+            canary["conclusion"] = conclusion
+            receipt = VERIFY.verify(self.run, [unit, canary], ["unit", "canary"], **arguments)
+            self.assertIn({"name": "full / canary", "id": 124, "conclusion": conclusion}, receipt)
+        for key, value in (("conclusion", "skipped"), ("conclusion", "cancelled"),
+                           ("status", "queued"), ("run_attempt", 1), ("head_sha", "other")):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                VERIFY.verify(self.run, [unit, dict(canary, **{key: value})], ["unit", "canary"], **arguments)
+        for jobs in ([unit], [dict(unit, conclusion="failure"), canary]):
+            with self.assertRaises(ValueError):
+                VERIFY.verify(self.run, jobs, ["unit", "canary"], **arguments)
+        for allowed in (["missing"], ["canary", "canary"]):
+            with self.assertRaises(ValueError):
+                VERIFY.verify(self.run, [unit, canary], ["unit", "canary"],
+                              **{**arguments, "allowed_failures": allowed})
+
 
 class RevisionIdentityTests(unittest.TestCase):
     def setUp(self):

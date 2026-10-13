@@ -60,6 +60,11 @@
     "gateway-2",
     "gateway-3",
     "gateway-4",
+    "gateway-canary",
+    "gateway-churn",
+    "gateway-compatibility-v1.1.0",
+    "gateway-compatibility-v1.4.0",
+    "gateway-compatibility-v1.5.1",
     "gitops-argo-cert-manager",
     "gitops-argo-external",
     "gitops-flux-cert-manager",
@@ -81,6 +86,7 @@
     "integration-3.3",
     "integration-3.4",
     "lint",
+    "scale",
     "snapshot",
     "spoa",
     "test-support",
@@ -500,5 +506,24 @@
       "docs-image",
       "lint"
     ]
-  }
+  },
+  "additional_gitlab_job_mapping": {
+    "nightly-gwapi-matrix": [
+      "gateway-compatibility-v1.1.0",
+      "gateway-compatibility-v1.4.0",
+      "gateway-compatibility-v1.5.1"
+    ],
+    "nightly-gateway-churn": [
+      "gateway-churn"
+    ],
+    "nightly-scale": [
+      "scale"
+    ],
+    "nightly-gwapi-canary": [
+      "gateway-canary"
+    ]
+  },
+  "allowed_failure_jobs": [
+    "gateway-canary"
+  ]
 }

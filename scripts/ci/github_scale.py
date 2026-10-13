@@ -22,9 +22,11 @@ def main():
         raise ValueError("Scale history workflow does not match the current revision")
     history = successful_job_metrics(
         api, repository, run_id,
-        workflow=str(run["workflow_id"]), branch="main", job_name=TREND.JOB_NAME,
+        workflow=str(run["workflow_id"]), branch="main",
+        job_name=os.environ.get("SCALE_JOB_NAME", TREND.JOB_NAME),
         artifact_name="nightly-scale-metrics", metrics_name=TREND.METRICS_FILE,
-        max_runs=TREND.MAX_RUNS, max_workflows=TREND.MAX_PIPELINES)
+        max_runs=TREND.MAX_RUNS, max_workflows=TREND.MAX_PIPELINES,
+        events=("push", "schedule", "workflow_dispatch"))
     lines, failed = TREND.evaluate(current, history)
     print("\n".join(lines))
     return 1 if failed else 0
