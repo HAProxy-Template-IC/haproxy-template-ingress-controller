@@ -806,13 +806,14 @@ finalize_runner_summary() {
     mv "$temporary" "$summary"
 }
 
-scan_cleanup_artifacts() {
+verify_artifact_secrets() {
     local scan scan_rc
     for scan in 1 2; do
         scan_rc=0
         scan_artifacts_for_live_secrets || scan_rc=$?
         if [[ $scan_rc -eq 1 ]]; then
             printf 'benchmark: error: benchmark artifacts contained a live Secret value; affected files were redacted\n' >&2
+            jq -c '{redacted: .redacted}' "${BENCH_OUTPUT_DIR}/cluster/artifact-secret-scan.json" >&2
             return 1
         elif [[ $scan_rc -ne 0 ]]; then
             printf 'benchmark: error: artifact Secret scan failed; artifacts are untrusted\n' >&2
@@ -875,7 +876,7 @@ cleanup() {
     fi
     if [[ "$output_initialized" == "true" && "$live_secret_scan_ready" == "true" &&
         "$live_secret_capture_failed" == "false" && "$artifact_security_untrusted" == "false" ]]; then
-        scan_cleanup_artifacts || [[ $rc -ne 0 ]] || rc=1
+        verify_artifact_secrets || [[ $rc -ne 0 ]] || rc=1
     fi
 
     if [[ "$cluster_owned" == "true" && "$BENCH_KEEP_CLUSTER" != "true" ]]; then
@@ -1749,7 +1750,8 @@ assert_no_limit_workloads() {
         any($deployments[]; .metadata.name == "haptic-controller" and
           any(.spec.template.spec.containers[]; .name == "controller" and
             .resources.requests == $controller_requests and
-            .livenessProbe.httpGet.path == "/healthz" and .readinessProbe.httpGet.path == "/healthz")) and
+            .livenessProbe == $defaults[0].controller.livenessProbe and
+            .readinessProbe == $defaults[0].controller.readinessProbe)) and
         any($deployments[]; .metadata.name == "haptic-haproxy" and
           ((.spec.template.spec.shareProcessNamespace // false) == false))
     ' >/dev/null
@@ -5753,6 +5755,7 @@ main() {
     verify_spoa_bundle
     capture_live_secret_patterns || \
         die "failed to refresh live Secret patterns after HAPTIC configuration"
+    verify_artifact_secrets || die "bootstrap artifacts failed the Secret scan"
     prepare_gateway
     assert_isolated_workload
     install_prometheus
@@ -5773,13 +5776,7 @@ main() {
     capture_kind_cluster_inventory final present
     verify_spoa_bundle after
     write_runner_summary
-    local final_scan_rc=0
-    scan_artifacts_for_live_secrets || final_scan_rc=$?
-    if [[ $final_scan_rc -eq 1 ]]; then
-        die "benchmark artifacts contained a live Secret value; affected files were redacted"
-    elif [[ $final_scan_rc -ne 0 ]]; then
-        die "artifact Secret scan failed; artifacts are untrusted"
-    fi
+    verify_artifact_secrets || die "benchmark artifacts failed the Secret scan"
     record_event runner-complete
     if jq -e '.measured_result.pass == true' "${BENCH_OUTPUT_DIR}/runner-summary.json" >/dev/null; then
         info "benchmark completed with all measured scenario gates passing; artifacts: ${BENCH_OUTPUT_DIR}"

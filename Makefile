@@ -359,12 +359,11 @@ test-support: ## Run script, browser, process, playground and cluster-helper tes
 		scripts/tests/test_analyze_gateway_api_children.py \
 		scripts/tests/test_analyze_gateway_api_outcomes.py \
 		scripts/tests/test_analyze_gateway_api_resources.py
-	bash scripts/tests/test_bench_gateway_api.sh
+	$(MAKE) test-gateway-benchmark-harness
 	bash scripts/tests/test_chart_haproxy_image.sh
 	$(MAKE) test-release
 	bash scripts/tests/test_chart_spoa_image.sh
 	bash scripts/tests/test_chart_varnish_image.sh
-	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
 	@$(MAKE) test-process
 	@$(MAKE) test-playground
@@ -373,6 +372,11 @@ test-support: ## Run script, browser, process, playground and cluster-helper tes
 .PHONY: test-github-verification
 test-github-verification: ## Check GitHub verification evidence fails closed
 	python3 -m unittest discover -s .github/tests -v
+
+.PHONY: test-gateway-benchmark-harness
+test-gateway-benchmark-harness: ## Verify benchmark setup, workload gates and bundle provenance
+	bash scripts/tests/test_bench_gateway_api.sh
+	bash scripts/tests/test_spoa_bundle_provenance.sh
 
 .PHONY: compare-github-ci
 compare-github-ci: ## Compare completed GitHub workflow evidence with the GitLab baseline
