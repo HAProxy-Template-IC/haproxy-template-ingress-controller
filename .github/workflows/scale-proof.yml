@@ -19,6 +19,7 @@ jobs:
       PILOT_GOGC: '300'
       PILOT_GOMAXPROCS: '2'
       PILOT_STARTUP_PROFILE: '0'
+      PILOT_PROFILE_SCALE: '1'
       PILOT_VALIDATION_TMPFS: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi

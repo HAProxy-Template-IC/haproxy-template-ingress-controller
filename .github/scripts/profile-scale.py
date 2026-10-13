@@ -15,9 +15,9 @@ KUBECTL = ['docker', 'exec', 'haptic-e2e-control-plane', 'kubectl',
            '--kubeconfig=/etc/kubernetes/admin.conf', '--request-timeout=55s']
 
 
-def capture(index, pod):
+def capture(root, index, pod):
     name = pod['metadata']['name']
-    target = ROOT / name
+    target = root / name
     target.mkdir(exist_ok=True)
     (target / 'pod.json').write_text(json.dumps(pod, indent=2))
     debug_port = 18080 + index
@@ -52,20 +52,26 @@ def capture(index, pod):
             forward.wait(timeout=10)
 
 
+thresholds = iter((100, 400, 600))
+threshold = next(thresholds)
 deadline = time.monotonic() + 900
 while time.monotonic() < deadline and not FINISHED.exists():
     result = subprocess.run(KUBECTL + ['get', 'ingresses', '-A', '-o', 'json'],
                             capture_output=True, timeout=60, check=False)
     if result.returncode == 0:
         resources = json.loads(result.stdout)['items']
-        if len(resources) >= 100:
-            (ROOT / 'ingresses-at-capture.json').write_bytes(result.stdout)
+        if len(resources) >= threshold:
+            sample = ROOT / f"ingresses-{threshold}"
+            sample.mkdir(exist_ok=True)
+            (sample / 'ingresses-at-capture.json').write_bytes(result.stdout)
             pods = json.loads(subprocess.check_output(KUBECTL + [
                 'get', 'pods', '-n', 'haptic', '-l',
                 'app.kubernetes.io/component=controller', '-o', 'json']))['items']
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                futures = [executor.submit(capture, index, pod) for index, pod in enumerate(pods)]
+                futures = [executor.submit(capture, sample, index, pod) for index, pod in enumerate(pods)]
                 for future in futures:
                     future.result()
-            break
+            threshold = next(thresholds, None)
+            if threshold is None:
+                break
     time.sleep(3)
