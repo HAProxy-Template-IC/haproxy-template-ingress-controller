@@ -853,6 +853,10 @@ bench-render-comparison: ## Compare clean HEAD with BENCH_BASE_REF on the same h
 bench-gateway-api: ## Run pinned Gateway API benchmark programs against HAPTIC
 	bash scripts/bench-gateway-api.sh
 
+.PHONY: bench-gateway-api-ci
+bench-gateway-api-ci: ## Run the hosted benchmark profile and validate its artifacts
+	bash scripts/bench-gateway-api-ci.sh
+
 ## Schema extraction (for offline validate)
 
 # SCHEMA_DIR is where extract-schemas writes its output. The default

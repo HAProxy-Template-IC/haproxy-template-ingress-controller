@@ -2052,7 +2052,7 @@ validate_haptic_scale_routes 1 "$3" "$4"
             re.DOTALL,
         )
         self.assertIsNotNone(match)
-        job = match.group(1)
+        job = match.group(1) + (CI_CONFIG.parent / "scripts/bench-gateway-api-ci.sh").read_text(encoding="utf-8")
         for setting in (
             "image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4",
             'timeout: 2 hours 45 minutes',
@@ -2150,10 +2150,8 @@ exit "$rc"
                 self.assertEqual(result.stdout.strip(), str(expected_calls))
 
     def test_ci_retains_failed_diagnostics_only_after_security_and_provenance_checks(self):
-        ci = CI_CONFIG.read_text(encoding="utf-8")
-        start = ci.index("      trusted=false", ci.index("gateway-api-benchmark-smoke:"))
-        end = ci.index('      exit "$runner_rc"', start) + len('      exit "$runner_rc"')
-        staging = textwrap.dedent(ci[start:end])
+        wrapper = (CI_CONFIG.parent / "scripts/bench-gateway-api-ci.sh").read_text(encoding="utf-8")
+        staging = wrapper[wrapper.index("trusted=false"):wrapper.index('exit "$runner_rc"') + len('exit "$runner_rc"')]
         for case in (
             "complete", "aborted", "one-scan", "redacted", "untrusted",
             "wrong-profile", "false-success", "false-measurement", "symlink",

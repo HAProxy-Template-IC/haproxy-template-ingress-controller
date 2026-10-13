@@ -7,6 +7,10 @@ go version
 haproxy -v
 
 case "$PILOT_SUITE" in
+    gateway-benchmark)
+        BENCH_CI_OUTPUT="$PWD/.pilot/gateway-benchmark" make bench-gateway-api-ci
+        exit
+        ;;
     integration) KEEP_CLUSTER=false make test-integration; exit ;;
     integration-coverage) KEEP_CLUSTER=false make test-integration-coverage; cp -r coverage .pilot/; exit ;;
     unit-shard|unit-cache)
