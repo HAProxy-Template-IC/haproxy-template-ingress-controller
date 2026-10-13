@@ -1,0 +1,32 @@
+name: CI
+'on':
+  pull_request:
+    branches:
+      - main
+      - maint/**
+  push:
+    branches:
+      - main
+      - maint/**
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  full:
+    uses: ./.github/workflows/ci-speed-proof.yml
+    with:
+      verification_job_prefix: 'full / '
+  verified:
+    needs: full
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require complete verification
+        env:
+          VERIFICATION_RESULT: ${{ needs.full.result }}
+        run: test "$VERIFICATION_RESULT" = success

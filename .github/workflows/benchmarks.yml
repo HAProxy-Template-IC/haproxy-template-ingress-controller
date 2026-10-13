@@ -1,0 +1,79 @@
+name: Manual benchmarks
+'on':
+  workflow_call:
+    inputs:
+      suite:
+        type: string
+        required: true
+      baseline:
+        type: string
+        default: ''
+  workflow_dispatch:
+    inputs:
+      suite:
+        type: choice
+        required: true
+        default: gateway
+        options:
+          - gateway
+          - render
+      baseline:
+        description: Render baseline commit SHA; defaults to merge base with main
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: benchmark-${{ inputs.suite }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  gateway:
+    if: inputs.suite == 'gateway'
+    uses: ./.github/workflows/gateway-benchmark-proof.yml
+  render:
+    if: inputs.suite == 'render'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      REQUESTED_BASELINE: ${{ inputs.baseline }}
+      CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare clean baseline and candidate on one runner
+        run: |
+          if [[ -n "$REQUESTED_BASELINE" ]]; then
+            [[ "$REQUESTED_BASELINE" =~ ^[a-f0-9]{40}$ ]] || {
+              echo 'Render baseline must be a full commit SHA.' >&2
+              exit 1
+            }
+            export BENCH_BASE_REF="$REQUESTED_BASELINE"
+          else
+            BENCH_BASE_REF=$(git merge-base HEAD origin/main)
+            export BENCH_BASE_REF
+          fi
+          export BENCH_COMPARISON_OUTPUT="$RUNNER_TEMP/render-comparison/result"
+          mkdir -p "$RUNNER_TEMP/render-comparison"
+          bash scripts/retry.sh docker pull "$CI_IMAGE"
+          docker run --rm \
+            --volume "$PWD:$PWD" --workdir "$PWD" \
+            --volume "$RUNNER_TEMP/render-comparison:$RUNNER_TEMP/render-comparison" \
+            --env BENCH_BASE_REF --env BENCH_COMPARISON_OUTPUT \
+            --entrypoint bash "$CI_IMAGE" -euc '
+              git config --global --add safe.directory "$PWD"
+              make bench-render-comparison
+            '
+      - name: Make benchmark evidence readable
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/render-comparison" ]]; then
+            sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/render-comparison"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: render-benchmark-comparison
+          path: ${{ runner.temp }}/render-comparison/result/
+          retention-days: 30
+          if-no-files-found: error
