@@ -19,7 +19,33 @@ def timestamp(value):
     return result
 
 
-def compare(run, jobs, manifest):
+def gitlab_duration(evidence, manifest):
+    pipeline = evidence["pipeline"]
+    baseline = manifest["baseline"]
+    if (pipeline["status"] != "success" or pipeline["sha"] != baseline["commit"] or
+            pipeline["web_url"] != baseline["url"]):
+        raise ValueError("GitLab baseline must identify the recorded successful pipeline")
+    required = set(manifest["gitlab_job_mapping"])
+    selected = [job for job in evidence["jobs"] if job["name"] in required]
+    if (len(selected) != len(required) or {job["name"] for job in selected} != required or
+            any(job["status"] != "success" for job in selected)):
+        raise ValueError("GitLab baseline requires every mapped check exactly once and successful")
+    extra = {job["name"] for job in evidence["jobs"] if job["status"] == "success"} - required
+    if extra != set(baseline["excluded_post_merge_jobs"]):
+        raise ValueError("GitLab baseline contains unexpected successful jobs")
+    started = timestamp(pipeline["created_at"])
+    finished = max(timestamp(job["finished_at"]) for job in selected)
+    if any(not started <= timestamp(job["started_at"]) <= timestamp(job["finished_at"])
+           for job in selected):
+        raise ValueError("GitLab job timestamps do not belong to the measured pipeline interval")
+    elapsed = (finished - started).total_seconds()
+    if (elapsed <= 0 or elapsed != baseline["wall_seconds"] or
+            timestamp(baseline["created_at"]) != started or timestamp(baseline["completed_at"]) != finished):
+        raise ValueError("GitLab baseline must measure creation through the final required check")
+    return elapsed
+
+
+def compare(run, jobs, manifest, gitlab_evidence):
     if run["status"] != "completed" or run["conclusion"] != "success":
         raise ValueError("Speed proof requires a completed successful workflow")
     if run["run_attempt"] != 1:
@@ -32,9 +58,7 @@ def compare(run, jobs, manifest):
         if not started <= timestamp(job["started_at"]) <= timestamp(job["completed_at"]):
             raise ValueError("Job timestamps do not belong to the measured workflow interval")
     elapsed = (finished - started).total_seconds()
-    baseline = manifest["baseline"]["wall_seconds"]
-    if baseline <= 0:
-        raise ValueError("GitLab baseline duration must be positive")
+    baseline = gitlab_duration(gitlab_evidence, manifest)
     return {
         "repository": run["repository"]["full_name"], "sha": run["head_sha"],
         "run_id": run["id"], "run_url": run["html_url"], "run_attempt": 1,
@@ -53,8 +77,9 @@ def main():
     parser.add_argument("--manifest", type=Path, default=Path(".github/ci-verification.json"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    manifest = json.loads(args.manifest.read_text())
     report = compare(json.loads(args.run.read_text()), json.loads(args.jobs.read_text())["jobs"],
-                     json.loads(args.manifest.read_text()))
+                     manifest, json.loads(Path(manifest["baseline"]["evidence_file"]).read_text()))
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
     raise SystemExit(0 if report["speed_requirement_passed"] else 1)

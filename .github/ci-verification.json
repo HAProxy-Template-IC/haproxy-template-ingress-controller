@@ -2,11 +2,12 @@
   "version": 1,
   "repository": "HAProxy-Template-IC/haproxy-template-ingress-controller",
   "baseline": {
-    "url": "https://gitlab.com/haproxy-haptic/haptic/-/pipelines/2940207278",
-    "commit": "ea30ee6fb3d4be926434db29db33590469836f45",
-    "started_at": "2026-10-12T21:37:46.238Z",
-    "completed_at": "2026-10-12T22:07:06.333Z",
-    "wall_seconds": 1760.095,
+    "url": "https://gitlab.com/haproxy-haptic/haptic/-/pipelines/2940262274",
+    "commit": "883433768c9425fe20edd250e928f7eae922de88",
+    "created_at": "2026-10-12T22:06:16.110Z",
+    "completed_at": "2026-10-12T22:34:20.275Z",
+    "wall_seconds": 1684.165,
+    "evidence_file": ".github/gitlab-ci-baseline.json",
     "excluded_post_merge_jobs": [
       "pages-preview-cleanup"
     ]
@@ -467,22 +468,13 @@
     "playground": "Retain the complete WASM bundle and source identity.",
     "production_deployment": "Pending after the full workflow speed proof; these checks do not switch publishing or repository ownership."
   },
-  "previous_baselines": [
-    {
-      "url": "https://gitlab.com/haproxy-haptic/haptic/-/pipelines/2939522426",
-      "commit": "c7577986ee89b9cf7feef3d688176832ecd3839d",
-      "started_at": "2026-10-12T16:38:06.193Z",
-      "completed_at": "2026-10-12T17:09:15.675Z",
-      "wall_seconds": 1869.482
-    }
-  ],
   "comparison_context": {
     "main_revision": "36b64fb6c93f93d4cf62aa84a0ef82da0a705b23",
     "latest_main_train": {
       "url": "https://gitlab.com/haproxy-haptic/haptic/-/pipelines/2940262274",
       "commit": "883433768c9425fe20edd250e928f7eae922de88",
-      "wall_seconds": 1806.624
+      "wall_seconds": 1684.165
     },
-    "target_selection": "Retain the faster 1760.095-second complete GitLab baseline."
+    "target_selection": "Latest complete GitLab merge train, measured from pipeline creation through the final required check; post-merge cleanup is excluded."
   }
 }
