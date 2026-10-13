@@ -1753,7 +1753,8 @@ assert_no_limit_workloads() {
         all($deployments[]; all(.spec.template.spec.containers[];
           ((.resources.limits.memory? // "") == "") and
           ((.resources.limits.cpu? // "") == "") and
-          all(.env[]?; .name != "GOMEMLIMIT"))) and
+          all(.env[]?; .name != "GOMEMLIMIT" and .name != "GOMAXPROCS" and
+                       .name != "GOGC" and .name != "TMPDIR"))) and
         any($deployments[]; .metadata.name == "haptic-controller" and
           any(.spec.template.spec.containers[]; .name == "controller" and
             .resources.requests == $controller_requests and
@@ -2027,9 +2028,10 @@ configure_haptic() {
         all($pods[]; all(((.spec.initContainers[]? | select(.restartPolicy == "Always")), .spec.containers[]);
                          ((.resources.limits.memory? // "") == "") and
                                              ((.resources.limits.cpu? // "") == "") and
-                                             all(.env[]?; .name != "GOMEMLIMIT")))
+                                             all(.env[]?; .name != "GOMEMLIMIT" and .name != "GOMAXPROCS" and
+                                                          .name != "GOGC" and .name != "TMPDIR")))
     ' "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" >/dev/null || \
-        die "measured HAPTIC pods still have a CPU/memory limit or explicit GOMEMLIMIT"
+        die "measured HAPTIC pods retain resource limits or Go/temporary-directory overrides"
 
     jq '
         [.items[] |

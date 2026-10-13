@@ -140,6 +140,14 @@ no_limit_workloads() {
 }
 write_manifest '{requests: {cpu: 100m, memory: 1Gi}}'
 no_limit_workloads
+for variable in GOMEMLIMIT GOMAXPROCS GOGC TMPDIR; do
+    write_manifest '{requests: {cpu: 100m, memory: 1Gi}}'
+    VARIABLE="$variable" yq -i '(select(.metadata.name == "haptic-controller") | .spec.template.spec.containers[0].env) = [{"name": strenv(VARIABLE), "value": "override"}]' "$tmp/manifest.yaml"
+    if no_limit_workloads; then
+        echo "assert_no_limit_workloads accepted a retained $variable override" >&2
+        exit 1
+    fi
+done
 write_manifest '{requests: {cpu: 100m, memory: 1Gi}, limits: {memory: 1Gi}}'
 if no_limit_workloads; then
     echo "assert_no_limit_workloads accepted a controller memory limit" >&2

@@ -15,7 +15,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 165
     env:
-      HAPTIC_E2E_CONTROLLER_STARTUP: staged
+      HAPTIC_E2E_CONTROLLER_STARTUP: parallel
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -31,9 +32,18 @@ jobs:
           --volume /var/run/docker.sock:/var/run/docker.sock \
           --volume "$PWD:$PWD" --workdir "$PWD" \
           --volume "$BENCH_CI_OUTPUT:$BENCH_CI_OUTPUT" \
-          --env BENCH_CI_OUTPUT --env HAPTIC_E2E_CONTROLLER_STARTUP \
+          --env BENCH_CI_OUTPUT --env HAPTIC_E2E_CONTROLLER_STARTUP --env HAPTIC_E2E_EXTRA_SET \
           --entrypoint bash "$PILOT_CI_IMAGE" -euc '
             git config --global --add safe.directory "$PWD"
+            yq -i '\''
+              .controller.extraEnv += [
+                {"name": "GOMAXPROCS", "value": "2"},
+                {"name": "GOGC", "value": "300"},
+                {"name": "TMPDIR", "value": "/v"}
+              ] |
+              .controller.extraVolumes += [{"name": "validation-scratch", "emptyDir": {"medium": "Memory", "sizeLimit": "512Mi"}}] |
+              .controller.extraVolumeMounts += [{"name": "validation-scratch", "mountPath": "/v"}]
+            '\'' scripts/dev-env-assets/conformance-values.yaml
             make bench-gateway-api-ci
           '
     - name: Make validated artifacts readable
