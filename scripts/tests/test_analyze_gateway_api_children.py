@@ -170,6 +170,58 @@ def capture(topology):
 
 
 class AnalyzeGatewayAPIChildrenTest(unittest.TestCase):
+    def test_secret_capture_keeps_verified_owners_deleted_during_collection(self):
+        owner = {
+            "apiVersion": "haproxy-haptic.org/v1alpha1", "kind": "HAProxyCfg",
+            "name": "retained-config", "uid": "retained-uid", "controller": True,
+        }
+        secret = {
+            "type": "Opaque",
+            "metadata": {
+                "namespace": "haptic", "name": "certificate",
+                "labels": {"haproxy-haptic.org/type": "ssl-certificate",
+                           "haproxy-haptic.org/runtime-config": "retained-config"},
+                "ownerReferences": [owner],
+            },
+            "data": {key: base64.b64encode(value.encode()).decode() for key, value in {
+                "certificate": "fixture-private-key-material", "path": "default.pem",
+            }.items()},
+        }
+        unverified = copy.deepcopy(secret)
+        unverified["metadata"]["name"] = "unverified-certificate"
+        unverified["metadata"]["ownerReferences"][0]["uid"] = "unknown-uid"
+        config = {"apiVersion": owner["apiVersion"], "kind": owner["kind"],
+                  "metadata": {"namespace": "haptic", "name": owner["name"], "uid": owner["uid"]}}
+        command = r'''
+source "$1"
+trap - EXIT INT TERM
+WORK_DIR="$2"
+kubectl() {
+    if [[ "$2" == secrets ]]; then
+        cat "$WORK_DIR/secrets.json"
+        touch "$WORK_DIR/owner-deleted"
+    elif [[ -e "$WORK_DIR/owner-deleted" ]]; then
+        printf '{"items":[]}'
+    else
+        cat "$WORK_DIR/configs.json"
+    fi
+}
+capture_live_secret_patterns_once
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "secrets.json").write_text(json.dumps({"items": [secret, unverified]}))
+            (root / "configs.json").write_text(json.dumps({"items": [config]}))
+            result = subprocess.run(["/usr/bin/bash", "-c", command, "capture-race", str(RUNNER), directory],
+                                    check=False, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            patterns = json.loads((root / "live-secret-patterns.json").read_text())["patterns"]
+            sources = [entry["source"] for entry in patterns]
+            self.assertNotIn("haptic/certificate/path", sources)
+            for source in ("haptic/certificate/certificate", "haptic/unverified-certificate/certificate",
+                           "haptic/unverified-certificate/path"):
+                self.assertEqual(sources.count(source), 2)
+
     def test_secret_patterns_exclude_only_owned_haptic_ssl_path_metadata(self):
         def encoded(value):
             return base64.b64encode(value.encode()).decode()

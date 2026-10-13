@@ -515,6 +515,15 @@ verify_secret_redaction() {
     fi
 }
 
+capture_runtime_config_identities() {
+    kubectl get haproxycfgs.haproxy-haptic.org --all-namespaces -o json | jq -S '
+        {items: [.items[] |
+          {apiVersion, kind,
+           metadata: (.metadata | {namespace, name, uid})}]}
+    ' > "$1" || return 1
+    chmod 0600 "$1"
+}
+
 capture_live_secret_patterns_once() {
     live_secret_capture_index=$((live_secret_capture_index + 1))
     local capture_id
@@ -523,13 +532,13 @@ capture_live_secret_patterns_once() {
     local runtime_configs="${WORK_DIR}/live-haproxycfgs-${capture_id}.json"
     local captured_patterns="${WORK_DIR}/live-secret-patterns-${capture_id}.json"
     live_secret_patterns="${WORK_DIR}/live-secret-patterns.json"
+    capture_runtime_config_identities "${runtime_configs}.before" || return 1
     kubectl get secrets --all-namespaces -o json > "$secrets" || return 1
     chmod 0600 "$secrets" || return 1
-    kubectl get haproxycfgs.haproxy-haptic.org --all-namespaces -o json | jq -S '
-        {items: [.items[] |
-          {apiVersion, kind,
-           metadata: (.metadata | {namespace, name, uid})}]}
-    ' > "$runtime_configs" || return 1
+    capture_runtime_config_identities "${runtime_configs}.after" || return 1
+    # A retained owner can disappear between the Secret and HAProxyCfg lists.
+    jq -S -s '{items: ([.[].items[]] | unique_by([.metadata.namespace, .metadata.name, .metadata.uid]))}' \
+        "${runtime_configs}.before" "${runtime_configs}.after" > "$runtime_configs" || return 1
     chmod 0600 "$runtime_configs" || return 1
     build_live_secret_patterns "$secrets" "$runtime_configs" "$captured_patterns" || return 1
     local merged="${live_secret_patterns}.tmp"
