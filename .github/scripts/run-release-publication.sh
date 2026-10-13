@@ -4,7 +4,7 @@ set -euo pipefail
 image=registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
 mkdir -p .publication
 trap 'sudo chown -R "$(id -u):$(id -g)" .publication' EXIT
-bash scripts/retry.sh docker pull "$image"
+image=$(python3 -m scripts.ci.github_toolchain "$image")
 docker run --rm --network host \
     --volume /var/run/docker.sock:/var/run/docker.sock \
     --volume "$HOME/.docker:/root/.docker" \

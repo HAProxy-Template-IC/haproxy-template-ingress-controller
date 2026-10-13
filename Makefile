@@ -382,6 +382,10 @@ lint-github-actions: ## Validate GitHub workflow syntax and expressions
 test-github-verification: lint-github-actions ## Check GitHub verification evidence fails closed
 	python3 -m unittest discover -s .github/tests -v
 
+.PHONY: test-github-toolchain-update
+test-github-toolchain-update: ## Verify Dockerfile changes reach the selected GitHub toolchain
+	python3 -m scripts.ci.toolchain_update_check "$(TOOLCHAIN_KIND)"
+
 .PHONY: test-registry-build-retry
 test-registry-build-retry: ## Verify registry retries preserve permanent build failures
 	python3 -m unittest scripts/tests/test_retry_registry_build.py -v
@@ -979,6 +983,10 @@ test-agent-skill-package: ## Check skill downloads (requires mkdocs on PATH)
 .PHONY: build-ci-image
 build-ci-image: ## Build the pinned CI image locally for HAPROXY_VERSION
 	@HAPROXY_VERSION=$(HAPROXY_VERSION) bash scripts/build-ci-image.sh
+
+.PHONY: build-docs-image
+build-docs-image: ## Build the documentation toolchain from current pins
+	@bash scripts/build-docs-image.sh
 
 build: check-source-hash ## Build the controller binary for local development (with PGO if profile exists)
 	@echo "Building controller..."

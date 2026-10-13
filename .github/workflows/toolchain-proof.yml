@@ -1,0 +1,37 @@
+name: CI toolchain update proof
+'on':
+  push:
+    branches:
+      - ci/github-toolchain-proof-20261013
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: toolchain-proof-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  update:
+    name: update-${{ matrix.kind }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [ci, docs]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify unchanged reuse and a real toolchain rebuild
+        env:
+          TOOLCHAIN_KIND: ${{ matrix.kind }}
+        run: make test-github-toolchain-update TOOLCHAIN_KIND="$TOOLCHAIN_KIND"
+      - name: Retain toolchain identities
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: toolchain-update-${{ matrix.kind }}
+          path: .pilot/toolchain-update.json
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error

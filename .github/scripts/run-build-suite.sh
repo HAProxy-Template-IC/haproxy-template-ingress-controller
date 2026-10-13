@@ -18,16 +18,10 @@ case "$PILOT_SUITE" in
         docker run --rm --entrypoint bash "$image" -c 'go version && haproxy -v && kind version && helm version && cosign version'
         ;;
     docs-image)
-        declare -A pins
-        while IFS=$'\t' read -r name value; do pins["$name"]="$value"; done < <(yq -r '.variables | to_entries[] | [.key, .value] | @tsv' .gitlab/ci/build-pins.yml)
-        args=()
-        for pin in $(awk '/^ARG / { split($2, value, "="); print value[1] }' .gitlab/ci/images/python-docs/Dockerfile); do
-            test -n "${pins[$pin]:-}"
-            args+=(--build-arg "$pin=${pins[$pin]}")
-        done
-        docker build "${args[@]}" --tag haptic-docs:pilot .gitlab/ci/images/python-docs
-        docker image inspect haptic-docs:pilot > .pilot/built-toolchain-image.json
-        docker run --rm --entrypoint bash haptic-docs:pilot -c 'mkdocs --version && mike --version'
+        make build-docs-image
+        image="haptic-docs:$(scripts/ci-image-input-hash.sh)"
+        docker image inspect "$image" > .pilot/built-toolchain-image.json
+        docker run --rm --entrypoint bash "$image" -c 'mkdocs --version && mike --version'
         ;;
     coverage-combined)
         profiles=()
