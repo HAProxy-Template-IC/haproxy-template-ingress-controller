@@ -20,6 +20,7 @@ jobs:
       PILOT_GOMAXPROCS: '2'
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
+      PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
@@ -33,11 +34,20 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Select native compiler cache
+      run: |
+        mkdir -p .pilot
+        printf '%s\n' host-cache > .pilot/compiler-cache-variant
     - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
       with:
         go-version: 1.27.2
         cache: true
-        cache-dependency-path: go.sum
+        cache-dependency-path: |
+          go.sum
+          Makefile
+          Dockerfile
+          cmd/haptic/default.pgo
+          .pilot/compiler-cache-variant
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
     - name: Run native E2E verification
@@ -70,6 +80,7 @@ jobs:
       PILOT_GOMAXPROCS: '2'
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
+      PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
@@ -83,11 +94,20 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Select native compiler cache
+      run: |
+        mkdir -p .pilot
+        printf '%s\n' host-cache > .pilot/compiler-cache-variant
     - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
       with:
         go-version: 1.27.2
         cache: true
-        cache-dependency-path: go.sum
+        cache-dependency-path: |
+          go.sum
+          Makefile
+          Dockerfile
+          cmd/haptic/default.pgo
+          .pilot/compiler-cache-variant
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
     - name: Run native E2E verification
@@ -115,6 +135,7 @@ jobs:
       PILOT_GOMAXPROCS: '2'
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
+      PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
@@ -129,11 +150,20 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Select native compiler cache
+      run: |
+        mkdir -p .pilot
+        printf '%s\n' host-cache > .pilot/compiler-cache-variant
     - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
       with:
         go-version: 1.27.2
         cache: true
-        cache-dependency-path: go.sum
+        cache-dependency-path: |
+          go.sum
+          Makefile
+          Dockerfile
+          cmd/haptic/default.pgo
+          .pilot/compiler-cache-variant
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
     - name: Run native E2E verification
@@ -173,6 +203,7 @@ jobs:
       PILOT_GOMAXPROCS: '2'
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
+      PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
@@ -187,11 +218,20 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Select native compiler cache
+      run: |
+        mkdir -p .pilot
+        printf '%s\n' host-cache > .pilot/compiler-cache-variant
     - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
       with:
         go-version: 1.27.2
         cache: true
-        cache-dependency-path: go.sum
+        cache-dependency-path: |
+          go.sum
+          Makefile
+          Dockerfile
+          cmd/haptic/default.pgo
+          .pilot/compiler-cache-variant
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
     - name: Resolve upstream Gateway API commit
