@@ -285,6 +285,7 @@ build_live_secret_patterns() {
     if ! python3 - "$secrets" "$runtime_configs" "$output" <<'PY'
 import base64
 import binascii
+import hashlib
 import json
 import os
 import sys
@@ -307,6 +308,12 @@ runtime_config_identities = {
     and item.get("metadata", {}).get("uid")
 }
 
+
+def runtime_config_label(name):
+    # Match configpublisher.runtimeConfigLabelValue for names beyond Kubernetes' label limit.
+    return name if len(name) <= 63 else "haptic-" + hashlib.sha256(name.encode()).hexdigest()[:16]
+
+
 patterns = []
 for item in document.get("items", []):
     metadata = item.get("metadata", {})
@@ -322,7 +329,7 @@ for item in document.get("items", []):
         and any(
             reference.get("apiVersion") == "haproxy-haptic.org/v1alpha1"
             and reference.get("kind") == "HAProxyCfg"
-            and reference.get("name") == runtime_config
+            and runtime_config_label(reference.get("name", "")) == runtime_config
             and (namespace, reference.get("name"), reference.get("uid"))
             in runtime_config_identities
             and reference.get("controller") is True

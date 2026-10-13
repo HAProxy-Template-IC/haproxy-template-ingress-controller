@@ -14,6 +14,7 @@
 
 import base64
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -354,10 +355,11 @@ cp "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json" "$2/report-5.json"
 
         certificate = "fixture-private-key-material"
         ordinary_path = "ordinary-secret-path"
+        runtime_name = "haptic-config-haproxycfg-retained-" + "a" * 64
         owner = {
             "apiVersion": "haproxy-haptic.org/v1alpha1",
             "kind": "HAProxyCfg",
-            "name": "haptic-config-haproxycfg",
+            "name": runtime_name,
             "uid": "runtime-config-uid",
             "controller": True,
         }
@@ -370,7 +372,7 @@ cp "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json" "$2/report-5.json"
                         "name": "haproxy-cert-default",
                         "labels": {
                             "haproxy-haptic.org/type": "ssl-certificate",
-                            "haproxy-haptic.org/runtime-config": "haptic-config-haproxycfg",
+                            "haproxy-haptic.org/runtime-config": "haptic-" + hashlib.sha256(runtime_name.encode()).hexdigest()[:16],
                         },
                         "ownerReferences": [owner],
                     },
@@ -407,7 +409,7 @@ redact_secret_matches "$4" "$5" "$6"
                                 "kind": "HAProxyCfg",
                                 "metadata": {
                                     "namespace": "haptic",
-                                    "name": "haptic-config-haproxycfg",
+                                    "name": runtime_name,
                                     "uid": "runtime-config-uid",
                                 },
                             }
@@ -2125,6 +2127,10 @@ class HostedBenchmarkArtifactTests(unittest.TestCase):
         command = r"""
 source "$1"
 trap - EXIT INT TERM
+BENCH_OUTPUT_DIR=$(mktemp -d)
+trap 'rm -rf "$BENCH_OUTPUT_DIR"' EXIT
+mkdir "$BENCH_OUTPUT_DIR/cluster"
+printf '{"redacted": []}\n' > "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json"
 calls=0
 scan_artifacts_for_live_secrets() {
     calls=$((calls + 1))
@@ -2132,7 +2138,7 @@ scan_artifacts_for_live_secrets() {
     return 0
 }
 rc=0
-scan_cleanup_artifacts || rc=$?
+verify_artifact_secrets || rc=$?
 printf '%s\n' "$calls"
 exit "$rc"
 """
