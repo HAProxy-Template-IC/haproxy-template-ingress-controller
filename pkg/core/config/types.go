@@ -280,7 +280,8 @@ type LeaderElectionConfig struct {
 
 // ConfigPublishingConfig configures how rendered configs are stored in CRDs.
 type ConfigPublishingConfig struct {
-	// CompressionThreshold is the minimum size in bytes at which configs are compressed.
+	// CompressionThreshold is the payload size in bytes above which configs are compressed.
+	// It includes the encoded recovery plan when one is present.
 	// Default: 1 MiB (1048576 bytes) via CRD kubebuilder default.
 	// Set to 0 or negative to disable compression.
 	CompressionThreshold int64 `yaml:"compression_threshold"`

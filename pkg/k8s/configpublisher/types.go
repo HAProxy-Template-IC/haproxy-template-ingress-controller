@@ -96,8 +96,8 @@ type PublishRequest struct {
 	// +optional
 	ValidationError string
 
-	// CompressionThreshold is the minimum size in bytes at which configs are compressed.
-	// Configs smaller than this threshold are stored uncompressed.
+	// CompressionThreshold is the payload size in bytes above which configs are compressed.
+	// It includes the encoded recovery plan when one is present.
 	// Set to 0 or negative to disable compression.
 	// Set to a positive value (e.g., 1048576 for 1 MiB) to enable compression.
 	CompressionThreshold int64

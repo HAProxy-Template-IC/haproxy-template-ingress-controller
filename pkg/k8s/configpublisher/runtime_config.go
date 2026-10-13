@@ -110,8 +110,12 @@ func interruptedErr(ctx context.Context) error {
 
 // buildRuntimeConfig constructs a HAProxyCfg resource from the request.
 func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haproxyv1alpha1.HAProxyCfg {
-	// Compress if content exceeds threshold
-	result := p.compressIfNeeded(req.Config, req.CompressionThreshold, runtimeConfigKind)
+	threshold := req.CompressionThreshold
+	if threshold > 0 {
+		// The recovery plan shares this object's storage budget with the config.
+		threshold = max(1, threshold-int64(len(req.RetainedPlan)))
+	}
+	result := p.compressIfNeeded(req.Config, threshold, runtimeConfigKind)
 
 	runtimeConfig := &haproxyv1alpha1.HAProxyCfg{
 		ObjectMeta: metav1.ObjectMeta{
