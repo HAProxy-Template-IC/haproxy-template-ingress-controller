@@ -1217,7 +1217,7 @@ fetch_and_build_upstream() {
     local gateway_api_manifest="${WORK_DIR}/gateway-api-${BENCH_GATEWAY_API_CHANNEL}-install.yaml"
     local gateway_api_url
     gateway_api_url="https://github.com/kubernetes-sigs/gateway-api/releases/download/${BENCH_GATEWAY_API_VERSION}/${BENCH_GATEWAY_API_CHANNEL}-install.yaml"
-    curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+    curl --fail --location --silent --show-error --retry 7 --retry-all-errors \
         "$gateway_api_url" > "$gateway_api_manifest" || \
         die "failed to download the Gateway API ${BENCH_GATEWAY_API_VERSION} ${BENCH_GATEWAY_API_CHANNEL} bundle"
     local gateway_api_manifest_sha

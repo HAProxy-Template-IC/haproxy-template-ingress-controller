@@ -4,7 +4,7 @@ set -euo pipefail
 tools_dir="$RUNNER_TEMP/haptic-arm-tools"
 mkdir -p "$tools_dir"
 fetch() {
-    curl --fail --location --retry 3 --output "$1" "$2"
+    curl --fail --location --retry 7 --retry-all-errors --output "$1" "$2"
     printf '%s  %s\n' "$3" "$1" | sha256sum --check -
 }
 read -r bootstrap_version bootstrap_sha < <(python3 -c '

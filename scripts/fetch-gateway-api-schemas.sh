@@ -20,7 +20,7 @@ mkdir -p "${OUTDIR}"
 
 tmp="$(mktemp)"
 trap 'rm -f "${tmp}"' EXIT
-curl -fsSL "${URL}" -o "${tmp}"
+curl -fsSL --retry 7 --retry-all-errors "${URL}" -o "${tmp}"
 
 # Split the multi-doc install manifest into one file per CRD, named after the
 # CRD (matching the tests/schemas/ convention).

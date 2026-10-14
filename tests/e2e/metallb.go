@@ -55,10 +55,7 @@ const metallbManifestURL = "https://raw.githubusercontent.com/metallb/metallb/" 
 func installMetalLB(ctx context.Context) (context.Context, error) {
 	// Step 1: apply the MetalLB manifest. This is upstream's bundle —
 	// CRDs, controller deployment, speaker daemonset, RBAC, ValidatingWebhook.
-	apply := exec.CommandContext(ctx, "kubectl", "apply",
-		kubeconfigFlag, kubeconfigPath,
-		"-f", metallbManifestURL)
-	if out, err := apply.CombinedOutput(); err != nil {
+	if out, err := kubectlWithBackoff(ctx, "apply", kubeconfigFlag, kubeconfigPath, "-f", metallbManifestURL); err != nil {
 		return ctx, fmt.Errorf("apply metallb manifest: %w (output: %s)", err, out)
 	}
 
