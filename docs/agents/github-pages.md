@@ -34,7 +34,10 @@ digests. Unknown worker implementations fail packaging for review.
 
 The complete migration baseline is archived in a GitHub release. Its URL, size,
 and SHA-256 are pinned in `.github/pages-baseline.json`; the archive contains its
-source provenance and every file's checksum. Restore and verify it with:
+source provenance and every file's checksum. The archive's development docs are an
+unpublished preview, so the first development publication must descend from
+`published_dev_commit`, the commit the GitLab-hosted site served. Restore and
+verify it with:
 
 ```bash
 make restore-github-pages PAGES_OUTPUT=/path/to/new-output

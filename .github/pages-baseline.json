@@ -3,5 +3,6 @@
   "size": 429378477,
   "sha256": "f9848bc4526524fafae16dc83ca990f55584265c85d0878e0d57de768cbc5422",
   "files": 4196,
-  "site_bytes": 1319394736
+  "site_bytes": 1319394736,
+  "published_dev_commit": "36b64fb6c93f93d4cf62aa84a0ef82da0a705b23"
 }
