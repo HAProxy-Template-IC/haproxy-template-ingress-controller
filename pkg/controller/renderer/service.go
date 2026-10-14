@@ -309,6 +309,7 @@ type RenderService struct {
 	pathResolver                *templating.PathResolver
 	logger                      *slog.Logger
 	admissionSlots              chan struct{}
+	admissionSlotWaitObserver   func(time.Duration)
 	coldRenders                 *coldRenderGate
 	incremental                 *incrementalRenderState
 	mainDocumentCache           *rendercontext.RenderDocumentCache
@@ -400,6 +401,10 @@ type RenderServiceConfig struct {
 	// IncrementalCacheBuildObserver receives optional cold-cache lifecycle notifications.
 	IncrementalCacheBuildObserver IncrementalCacheBuildObserver
 
+	// AdmissionSlotWaitObserver, if set, receives how long each admission
+	// render waited for its slot, whether or not it got one.
+	AdmissionSlotWaitObserver func(time.Duration)
+
 	// CurrentAuxFilesProvider returns the default auxiliary baseline. The
 	// Coordinator overrides it with a leader-term snapshot for reconciliation.
 	CurrentAuxFilesProvider func() map[string]string
@@ -479,6 +484,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		pathResolver:                pathResolver,
 		logger:                      cfg.Logger,
 		admissionSlots:              make(chan struct{}, admissionRenderSlots(runtime.GOMAXPROCS(0))),
+		admissionSlotWaitObserver:   cfg.AdmissionSlotWaitObserver,
 		mainDocumentCache:           mainDocumentCache,
 		planTokenAuthority:          planTokenAuthority,
 		planMemo:                    rendercontext.NewPlanMemo(),
@@ -661,6 +667,9 @@ func admissionRenderSlots(cpus int) int {
 func (s *RenderService) acquireAdmissionSlot(ctx context.Context) (func(), error) {
 	if s.admissionSlots == nil {
 		return func() {}, nil
+	}
+	if s.admissionSlotWaitObserver != nil {
+		defer func(start time.Time) { s.admissionSlotWaitObserver(time.Since(start)) }(time.Now())
 	}
 	select {
 	case s.admissionSlots <- struct{}{}:

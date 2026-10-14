@@ -94,7 +94,8 @@ Each agent also exports its own view on the pod's `agent-metrics` port; [monitor
 | Metric | Type | Labels | What it tracks |
 |--------|------|--------|----------------|
 | `haptic_webhook_requests_total` | counter | `gvk`, `result` | Admission requests by kind and allow/deny/error |
-| `haptic_webhook_request_duration_seconds` | histogram | `gvk` | Per-request wall-clock |
+| `haptic_webhook_request_duration_seconds` | histogram | — | Per-request wall-clock |
+| `haptic_admission_render_slot_wait_seconds` | histogram | — | Admission render's wait for a render slot |
 | `haptic_webhook_validation_total` | counter | `gvk`, `result` | Validation-only tally (no timing) — handy for ratios |
 
 ### Leader election

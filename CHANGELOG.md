@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Select several validation tests in one run by repeating `haptic validate --test`.
+- Add the `haptic_admission_render_slot_wait_seconds` metric: how long admission dry runs queue for a render slot.
 
 ### Changed
 
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reduce reconciliation allocations by reusing unchanged watched-resource revisions during input isolation.
 - Reduce temporary template allocations during configuration validation and rendering.
 - Log validation test totals and results at the default INFO level.
+- `haptic_webhook_request_duration_seconds` buckets now extend to 30 seconds, so latencies near the admission timeout are measurable.
 
 ### Fixed
 
