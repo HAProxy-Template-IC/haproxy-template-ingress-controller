@@ -332,7 +332,7 @@ metrics, plus `containers-start.json`/`containers-end.json` (`crictl stats` for
 every container on the node). Mutex and block profiles are cumulative; compare
 windows with `go tool pprof -base window-007/<pod>/mutex.prof window-008/<pod>/mutex.prof`.
 Locally, run the script beside `make test-e2e` and `touch .pilot/test-finished`
-afterwards.
+afterwards; each run replaces `.pilot/scale-profile`.
 
 ### Architecture Validation
 

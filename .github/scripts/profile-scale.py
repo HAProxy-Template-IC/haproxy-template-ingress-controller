@@ -3,8 +3,10 @@
 
 import concurrent.futures
 import datetime
+import http.client
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import time
 from urllib.request import urlopen
@@ -14,6 +16,8 @@ ROOT = Path('.pilot/scale-profile')
 FINISHED = Path('.pilot/test-finished')
 WINDOW_SECONDS = 30
 NODE = ['docker', 'exec', 'haptic-e2e-control-plane']
+# A port-forward that drops mid-transfer raises IncompleteRead, which is not an OSError.
+TRANSFER_ERRORS = (OSError, http.client.HTTPException)
 KUBECONFIG = Path('/tmp/haproxy-e2e-kubeconfig')
 KUBECTL = ['kubectl', f'--kubeconfig={KUBECONFIG}', '-n', 'haptic', '--request-timeout=55s']
 ENDPOINTS = [
@@ -51,7 +55,7 @@ class Controller:
                 with urlopen(f'http://127.0.0.1:{self.debug_port}/debug/pprof/', timeout=5) as response:
                     response.read()
                 return
-            except OSError:
+            except TRANSFER_ERRORS:
                 if time.monotonic() >= deadline or self.forward.poll() is not None:
                     raise
                 time.sleep(1)
@@ -62,7 +66,7 @@ class Controller:
         errors = []
         try:
             self.connect()
-        except OSError as error:
+        except TRANSFER_ERRORS as error:
             (target / 'errors.txt').write_text(f'connect: {error}\n')
             return
         for endpoint, filename in ENDPOINTS:
@@ -70,7 +74,7 @@ class Controller:
             try:
                 with urlopen(f'http://127.0.0.1:{port}/{endpoint}', timeout=WINDOW_SECONDS + 25) as response:
                     (target / filename).write_bytes(response.read())
-            except OSError as error:
+            except TRANSFER_ERRORS as error:
                 errors.append(f'{endpoint}: {error}')
         if errors:
             (target / 'errors.txt').write_text('\n'.join(errors) + '\n')
@@ -78,27 +82,36 @@ class Controller:
     def close(self):
         if self.forward is not None:
             self.forward.terminate()
-            self.forward.wait(timeout=10)
+            try:
+                self.forward.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.forward.kill()
         self.log.close()
 
 
 def container_stats(path):
-    with path.open('wb') as output:
-        subprocess.run(NODE + ['crictl', 'stats', '-o', 'json'], stdout=output, stderr=subprocess.DEVNULL,
-                       timeout=30, check=False)
+    try:
+        with path.open('wb') as output:
+            subprocess.run(NODE + ['crictl', 'stats', '-o', 'json'], stdout=output, stderr=subprocess.DEVNULL,
+                           timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        path.with_suffix('.error.txt').write_text(f'{error}\n')
 
 
 def controller_names():
-    result = subprocess.run(KUBECTL + ['get', 'pods', '-l', 'app.kubernetes.io/component=controller', '-o', 'json'],
-                            capture_output=True, timeout=60, check=False)
-    if result.returncode != 0:
+    try:
+        result = subprocess.run(KUBECTL + ['get', 'pods', '-l', 'app.kubernetes.io/component=controller', '-o', 'json'],
+                                capture_output=True, timeout=60, check=True)
+        pods = json.loads(result.stdout)['items']
+    except (OSError, subprocess.SubprocessError, ValueError):
         return []
-    pods = json.loads(result.stdout)['items']
     return sorted(pod['metadata']['name'] for pod in pods if pod['status'].get('phase') == 'Running')
 
 
 def main():
-    ROOT.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(ROOT, ignore_errors=True)
+    ROOT.mkdir(parents=True)
+    FINISHED.unlink(missing_ok=True)
     deadline = time.monotonic() + 900
     names = []
     while len(names) < 2 and time.monotonic() < deadline and not FINISHED.exists():
