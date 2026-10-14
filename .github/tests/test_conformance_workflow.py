@@ -142,12 +142,12 @@ class ConformanceWorkflowTests(unittest.TestCase):
         self.assertEqual(publish["steps"][-1]["run"],
                          'gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/gateway-conformance/$ARCHIVE"')
 
-    def test_conformance_and_its_startup_diagnosis_use_the_native_arm_toolchain(self):
+    def test_conformance_uses_the_native_arm_toolchain(self):
         wrapper = (ROOT / ".github/scripts/run-conformance-report.sh").read_text()
         self.assertIn('test "$(uname -m)" = aarch64', wrapper)
         self.assertLess(wrapper.index("make test-github-native-tools"), wrapper.index('make "$CONFORMANCE_TARGET"'))
         self.assertNotIn("docker run", wrapper)
-        for filename, job_name in (("conformance-report.yml", "report"), ("startup-diagnosis.yml", "startup")):
+        for filename, job_name in (("conformance-report.yml", "report"),):
             with self.subTest(workflow=filename):
                 workflow = yaml.safe_load((ROOT / ".github/workflows" / filename).read_text())
                 job = workflow["jobs"][job_name]

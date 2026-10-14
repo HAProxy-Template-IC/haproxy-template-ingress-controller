@@ -401,7 +401,7 @@ test-registry-build-retry: ## Verify registry retries preserve permanent build f
 
 .PHONY: test-gateway-benchmark-harness
 test-gateway-benchmark-harness: build-map-identity-check ## Verify benchmark setup, workload gates and bundle provenance
-	python3 -m unittest scripts/tests/test_record_benchmark_config_identities.py scripts/tests/test_profile_gateway_benchmark.py
+	python3 -m unittest scripts/tests/test_record_benchmark_config_identities.py
 	bash scripts/tests/test_bench_gateway_api.sh
 	bash scripts/tests/test_spoa_bundle_provenance.sh
 

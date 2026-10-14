@@ -1,8 +1,5 @@
 name: CI migration speed proof
 'on':
-  push:
-    branches:
-    - ci/github-speed-proof-20261012
   workflow_dispatch: {}
   workflow_call:
     inputs:

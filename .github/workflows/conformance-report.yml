@@ -9,9 +9,6 @@ name: Gateway API conformance report
         type: boolean
         default: false
   workflow_dispatch:
-  push:
-    branches:
-      - ci/github-conformance-report-proof-20261013
 permissions:
   contents: read
   actions: read

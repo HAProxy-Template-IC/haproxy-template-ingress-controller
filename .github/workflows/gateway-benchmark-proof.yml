@@ -1,9 +1,6 @@
 name: Gateway benchmark migration proof
 'on':
   workflow_call: null
-  push:
-    branches:
-    - ci/github-gateway-benchmark-proof-20261013
 permissions:
   contents: read
 concurrency:
