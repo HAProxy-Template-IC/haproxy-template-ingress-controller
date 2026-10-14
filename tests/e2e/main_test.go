@@ -604,23 +604,22 @@ func applyGatewayAPICRDs(ctx context.Context, version, channel string) error {
 		return err
 	}
 	// The CRD bundle (release manifest for a "v" version, kustomize base for a
-	// git ref) is fetched from GitHub, which intermittently 504s / times out at
-	// setup. A single failure there sinks the whole e2e or conformance job
-	// before any test runs, so retry a few times with linear backoff. exec.Cmd
-	// isn't reusable, so rebuild it each attempt.
-	newApply := func() *exec.Cmd {
-		return exec.CommandContext(ctx, "kubectl", args...)
-	}
+	// git ref) is fetched from GitHub, whose release assets fail for about a
+	// minute at a time (run 38571838388), so back off for two minutes.
+	const attempts = 7
 	var out []byte
-	for attempt := 1; attempt <= 4; attempt++ {
-		if out, err = newApply().CombinedOutput(); err == nil {
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if out, err = exec.CommandContext(ctx, "kubectl", args...).CombinedOutput(); err == nil {
 			break
 		}
 		if ctx.Err() != nil {
 			break // suite is shutting down — don't keep retrying
 		}
-		if attempt < 4 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Second) // 2s, 4s, 6s
+		if attempt < attempts {
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Duration(1<<attempt) * time.Second): // 2s, 4s, ... 64s
+			}
 		}
 	}
 	if err != nil {
