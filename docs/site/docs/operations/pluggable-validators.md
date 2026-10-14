@@ -9,7 +9,7 @@ invalid output before HAPTIC deploys it.
 The chart already configures a validator for the [SPOA hub](spoa-hub.md) when
 the hub is enabled. Use the settings below when you need to validate another
 file format or supply your own validator implementation. Implementations follow
-the [validator wire protocol](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/development/validator-protocol.md).
+the [validator wire protocol](https://github.com/haproxy-haptic/HAPTIC/blob/main/docs/development/validator-protocol.md).
 
 <a id="chart-wiring-default"></a>
 
@@ -107,7 +107,7 @@ raising it doesn't speed up a single slow file check.
 ## Custom validators
 
 Add your validator beside the bundled validator. It must implement the
-[validator wire protocol](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/development/validator-protocol.md)
+[validator wire protocol](https://github.com/haproxy-haptic/HAPTIC/blob/main/docs/development/validator-protocol.md)
 and listen on a Unix socket shared with the controller.
 
 Merge this example into your [complete Helm values](../deploying-with-helm.md#change-settings).
@@ -156,5 +156,5 @@ retrying the rejected change; disabling validation would leave its files uncheck
 
 ## See also
 
-- [Validator wire protocol](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/development/validator-protocol.md) — authoritative spec
+- [Validator wire protocol](https://github.com/haproxy-haptic/HAPTIC/blob/main/docs/development/validator-protocol.md) — authoritative spec
 - [SPOA hub overview](./spoa-hub.md) — the bundled plugin host (one possible validator implementation)

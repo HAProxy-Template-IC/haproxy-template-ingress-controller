@@ -115,6 +115,7 @@ artifact_security_untrusted=false
 live_secret_patterns=""
 live_secret_capture_index=0
 live_secret_scan_index=0
+runtime_config_history_pid=""
 
 info() {
     printf 'benchmark: %s\n' "$*" >&2
@@ -285,6 +286,7 @@ build_live_secret_patterns() {
     if ! python3 - "$secrets" "$runtime_configs" "$output" <<'PY'
 import base64
 import binascii
+import hashlib
 import json
 import os
 import sys
@@ -307,6 +309,12 @@ runtime_config_identities = {
     and item.get("metadata", {}).get("uid")
 }
 
+
+def runtime_config_label(name):
+    # Match configpublisher.runtimeConfigLabelValue for names beyond Kubernetes' label limit.
+    return name if len(name) <= 63 else "haptic-" + hashlib.sha256(name.encode()).hexdigest()[:16]
+
+
 patterns = []
 for item in document.get("items", []):
     metadata = item.get("metadata", {})
@@ -322,7 +330,7 @@ for item in document.get("items", []):
         and any(
             reference.get("apiVersion") == "haproxy-haptic.org/v1alpha1"
             and reference.get("kind") == "HAProxyCfg"
-            and reference.get("name") == runtime_config
+            and runtime_config_label(reference.get("name", "")) == runtime_config
             and (namespace, reference.get("name"), reference.get("uid"))
             in runtime_config_identities
             and reference.get("controller") is True
@@ -508,6 +516,41 @@ verify_secret_redaction() {
     fi
 }
 
+capture_runtime_config_identities() {
+    kubectl get haproxycfgs.haproxy-haptic.org --all-namespaces -o json | jq -S '
+        {items: [.items[] |
+          {apiVersion, kind,
+           metadata: (.metadata | {namespace, name, uid})}]}
+    ' > "$1" || return 1
+    chmod 0600 "$1"
+}
+
+start_runtime_config_history() {
+    python3 "${SCRIPT_DIR}/record-benchmark-config-identities.py" "$WORK_DIR" \
+        2> "${WORK_DIR}/runtime-config-history.stderr" &
+    runtime_config_history_pid=$!
+    local deadline=$((SECONDS + 60))
+    until [[ -f "${WORK_DIR}/runtime-config-history.ready" ]]; do
+        kill -0 "$runtime_config_history_pid" 2>/dev/null || die "HAProxyCfg identity recorder exited before becoming ready"
+        (( SECONDS < deadline )) || die "HAProxyCfg identity recorder did not become ready"
+        sleep 0.1
+    done
+}
+
+capture_runtime_config_history() {
+    python3 - "${WORK_DIR}/runtime-config-history.jsonl" "$1" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+history, destination = map(Path, sys.argv[1:])
+lines = history.read_bytes().split(b"\n")[:-1] if history.exists() else []
+items = [json.loads(line) for line in lines if line]
+destination.write_text(json.dumps({"items": items}) + "\n")
+destination.chmod(0o600)
+PY
+}
+
 capture_live_secret_patterns_once() {
     live_secret_capture_index=$((live_secret_capture_index + 1))
     local capture_id
@@ -516,13 +559,14 @@ capture_live_secret_patterns_once() {
     local runtime_configs="${WORK_DIR}/live-haproxycfgs-${capture_id}.json"
     local captured_patterns="${WORK_DIR}/live-secret-patterns-${capture_id}.json"
     live_secret_patterns="${WORK_DIR}/live-secret-patterns.json"
+    capture_runtime_config_identities "${runtime_configs}.before" || return 1
     kubectl get secrets --all-namespaces -o json > "$secrets" || return 1
     chmod 0600 "$secrets" || return 1
-    kubectl get haproxycfgs.haproxy-haptic.org --all-namespaces -o json | jq -S '
-        {items: [.items[] |
-          {apiVersion, kind,
-           metadata: (.metadata | {namespace, name, uid})}]}
-    ' > "$runtime_configs" || return 1
+    capture_runtime_config_identities "${runtime_configs}.after" || return 1
+    capture_runtime_config_history "${runtime_configs}.history" || return 1
+    # Garbage collection can leave a certificate after its verified owner disappears.
+    jq -S -s '{items: ([.[].items[]] | unique_by([.metadata.namespace, .metadata.name, .metadata.uid]))}' \
+        "${runtime_configs}.before" "${runtime_configs}.after" "${runtime_configs}.history" > "$runtime_configs" || return 1
     chmod 0600 "$runtime_configs" || return 1
     build_live_secret_patterns "$secrets" "$runtime_configs" "$captured_patterns" || return 1
     local merged="${live_secret_patterns}.tmp"
@@ -715,10 +759,18 @@ capture_failure_state() {
             --all-namespaces -o json
     best_effort_failure_capture "$output/events.json" \
         kubectl get events --all-namespaces -o json
+    best_effort_failure_capture "$output/network.log" \
+        kubectl logs -n kube-system -l app=kindnet --all-containers --prefix --tail=-1 --timestamps=true
+    best_effort_failure_capture "$output/previous-network.log" \
+        kubectl logs -n kube-system -l app=kindnet --all-containers --previous --prefix --tail=-1 --timestamps=true
     best_effort_failure_capture "$output/controller.log" \
         kubectl logs -n "$RELEASE_NAMESPACE" \
             -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
             --all-containers --prefix --tail=-1 --timestamps=true
+    best_effort_failure_capture "$output/previous-controller.log" \
+        kubectl logs -n "$RELEASE_NAMESPACE" \
+            -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=controller \
+            --container controller --previous --prefix --tail=-1 --timestamps=true
     best_effort_failure_capture "$output/loadbalancer.log" \
         kubectl logs -n "$RELEASE_NAMESPACE" \
             -l app.kubernetes.io/instance=haptic,app.kubernetes.io/component=loadbalancer \
@@ -802,13 +854,14 @@ finalize_runner_summary() {
     mv "$temporary" "$summary"
 }
 
-scan_cleanup_artifacts() {
+verify_artifact_secrets() {
     local scan scan_rc
     for scan in 1 2; do
         scan_rc=0
         scan_artifacts_for_live_secrets || scan_rc=$?
         if [[ $scan_rc -eq 1 ]]; then
             printf 'benchmark: error: benchmark artifacts contained a live Secret value; affected files were redacted\n' >&2
+            jq -c '{redacted: .redacted}' "${BENCH_OUTPUT_DIR}/cluster/artifact-secret-scan.json" >&2
             return 1
         elif [[ $scan_rc -ne 0 ]]; then
             printf 'benchmark: error: artifact Secret scan failed; artifacts are untrusted\n' >&2
@@ -871,7 +924,13 @@ cleanup() {
     fi
     if [[ "$output_initialized" == "true" && "$live_secret_scan_ready" == "true" &&
         "$live_secret_capture_failed" == "false" && "$artifact_security_untrusted" == "false" ]]; then
-        scan_cleanup_artifacts || [[ $rc -ne 0 ]] || rc=1
+        verify_artifact_secrets || [[ $rc -ne 0 ]] || rc=1
+    fi
+
+    if [[ -n "$runtime_config_history_pid" ]]; then
+        kill "$runtime_config_history_pid" 2>/dev/null || true
+        wait "$runtime_config_history_pid" 2>/dev/null || true
+        runtime_config_history_pid=""
     fi
 
     if [[ "$cluster_owned" == "true" && "$BENCH_KEEP_CLUSTER" != "true" ]]; then
@@ -1112,6 +1171,7 @@ check_build_prerequisites() {
     command_required git
     command_required go
     command_required jq
+    command_required rg
     command_required sha256sum
     command_required xargs
     command_required cp
@@ -1442,7 +1502,7 @@ capture_host_provenance() {
 
 check_cluster_prerequisites() {
     local cmd
-    for cmd in kind kubectl helm make docker python3 rg timeout yq curl ps base64 tr; do
+    for cmd in kind kubectl helm make docker python3 timeout yq curl ps base64 tr; do
         command_required "$cmd"
     done
     local analyzer="${PROJECT_ROOT}/scripts/analyze-gateway-api-bench.py"
@@ -1477,6 +1537,43 @@ apply_verified_gateway_api_bundle() {
         kubectl apply --server-side -f "$manifest" || apply_rc=$?
     [[ $apply_rc -eq 0 ]] || die "verified Gateway API bundle apply failed"
     record_event gateway-api-verified-bundle-applied
+}
+
+network_pod_identity() {
+    jq -eS '
+        [.items[] | select(.metadata.deletionTimestamp == null)] |
+        if length != 1 then error("expected one benchmark network Pod") else . end |
+        map(select(.status.phase == "Running" and (.status.containerStatuses | length) == 1) |
+            {uid: .metadata.uid, containers: [.status.containerStatuses[]? |
+                select(.ready == true and .restartCount == 0 and .state.running != null) |
+                {name, containerID}]}) |
+        if length != 1 or (.[0].uid // "") == "" or
+           (.[0].containers | length) != 1 or (.[0].containers[0].containerID // "") == ""
+        then error("benchmark network Pod is unready or restarted") else . end
+    '
+}
+
+capture_network_health() {
+    local phase="$1" output="${BENCH_OUTPUT_DIR}/cluster/network-${1}"
+    kubectl get pods -n kube-system -l app=kindnet -o json > "${output}-pods.json" || \
+        die "could not inspect the benchmark network daemon"
+    network_pod_identity < "${output}-pods.json" > "${output}-identity.json" || \
+        die "benchmark network daemon is unready or restarted; inspect cluster/network-${phase}-pods.json"
+    if [[ "$phase" != baseline ]]; then
+        cmp -s "${BENCH_OUTPUT_DIR}/cluster/network-baseline-identity.json" "${output}-identity.json" || \
+            die "benchmark network daemon changed identity during the workload"
+    fi
+}
+
+prepare_network_capacity() {
+    kubectl get daemonset kindnet -n kube-system -o json > "${BENCH_OUTPUT_DIR}/cluster/network-before.json"
+    kubectl set resources daemonset kindnet -n kube-system --containers=kindnet-cni --limits=memory=256Mi
+    kubectl rollout status daemonset/kindnet -n kube-system --timeout=120s
+    kubectl get daemonset kindnet -n kube-system -o json > "${BENCH_OUTPUT_DIR}/cluster/network-configured.json"
+    jq -e '[.spec.template.spec.containers[] | select(.name == "kindnet-cni") |
+        .resources.limits.memory] == ["256Mi"]' "${BENCH_OUTPUT_DIR}/cluster/network-configured.json" >/dev/null || \
+        die "benchmark network daemon memory allowance was not applied"
+    capture_network_health baseline
 }
 
 bootstrap_cluster() {
@@ -1524,13 +1621,9 @@ bootstrap_cluster() {
         cluster_owned=true
         network_owned=true
         kubeconfig_owned=true
-        docker network create \
-            --label 'haproxy-haptic.org/gateway-api-benchmark=true' \
-            --label "haproxy-haptic.org/benchmark-cluster=${CLUSTER_NAME}" \
-            --label "haproxy-haptic.org/benchmark-owner=${CLUSTER_OWNERSHIP_TOKEN}" \
-            "$DOCKER_NETWORK_NAME" > "${BENCH_OUTPUT_DIR}/cluster/docker-network-id.txt" || \
-            die "failed to create the owned benchmark Docker network"
-        verify_network_ownership || die "created Docker network does not carry the benchmark ownership token"
+        local network_labels
+        network_labels="$(jq -cn --arg cluster "$CLUSTER_NAME" --arg owner "$CLUSTER_OWNERSHIP_TOKEN" \
+            '{"haproxy-haptic.org/gateway-api-benchmark":"true", "haproxy-haptic.org/benchmark-cluster":$cluster, "haproxy-haptic.org/benchmark-owner":$owner}')"
         info "creating isolated HAPTIC e2e environment"
         local bootstrap_rc=0
         run_logged "${BENCH_OUTPUT_DIR}/cluster/bootstrap.log" \
@@ -1549,6 +1642,7 @@ bootstrap_cluster() {
                 HAPTIC_E2E_CLUSTER_NAME="$CLUSTER_NAME" \
                 HAPTIC_E2E_KUBECONFIG_PATH="$KUBECONFIG_PATH" \
                 HAPTIC_E2E_EXPOSE_HOST_PORTS=false \
+                HAPTIC_E2E_NETWORK_LABELS="$network_labels" \
                 KIND_EXPERIMENTAL_DOCKER_NETWORK="$DOCKER_NETWORK_NAME" \
                 KIND_NODE_IMAGE="$BENCH_KIND_NODE_IMAGE" \
                 HAPTIC_E2E_GWAPI_VERSION="$BENCH_GATEWAY_API_VERSION" \
@@ -1559,6 +1653,9 @@ bootstrap_cluster() {
                 printf 'benchmark: pod failure summary is unavailable\n' >&2
             die "isolated HAPTIC e2e bootstrap failed"
         fi
+        verify_network_ownership || die "created Docker network does not carry the benchmark ownership token"
+        docker network inspect "$DOCKER_NETWORK_NAME" --format '{{.Id}}' > "${BENCH_OUTPUT_DIR}/cluster/docker-network-id.txt" || \
+            die "failed to record the owned benchmark Docker network"
         cluster_state="$(kind_cluster_state "$CLUSTER_NAME")" || \
             die "could not verify the created kind cluster"
         [[ "$cluster_state" == "present" ]] || die "e2e bootstrap did not create ${CLUSTER_NAME}"
@@ -1733,22 +1830,36 @@ wait_for_config_valid() {
 assert_no_limit_workloads() {
     local manifest="$1"
     local defaults="$2"
-    yq -o=json -I=0 '.' "$manifest" | jq -se --slurpfile defaults "$defaults" '
+    yq -o=json -I=0 '.' "$manifest" | jq -L "${PROJECT_ROOT}/scripts/lib" -se --slurpfile defaults "$defaults" '
+        include "benchmark-runtime";
         $defaults[0].controller.resources.requests as $controller_requests |
         [.[] | select(.kind == "Deployment" and
           (.metadata.name == "haptic-controller" or .metadata.name == "haptic-haproxy"))] as $deployments |
         ($deployments | map(.metadata.name) | sort) == ["haptic-controller", "haptic-haproxy"] and
-        all($deployments[]; all(.spec.template.spec.containers[];
-          ((.resources.limits.memory? // "") == "") and
-          ((.resources.limits.cpu? // "") == "") and
-          all(.env[]?; .name != "GOMEMLIMIT"))) and
+        all($deployments[]; all(.spec.template.spec | measured_containers;
+          benchmark_runtime_matches($defaults[0]))) and
         any($deployments[]; .metadata.name == "haptic-controller" and
           any(.spec.template.spec.containers[]; .name == "controller" and
             .resources.requests == $controller_requests and
-            .livenessProbe.httpGet.path == "/healthz" and .readinessProbe.httpGet.path == "/healthz")) and
+            .livenessProbe == $defaults[0].controller.livenessProbe and
+            .readinessProbe == $defaults[0].controller.readinessProbe)) and
         any($deployments[]; .metadata.name == "haptic-haproxy" and
           ((.spec.template.spec.shareProcessNamespace // false) == false))
     ' >/dev/null
+}
+
+assert_no_limit_pods() {
+    local pods="$1"
+    local defaults="$2"
+    jq -L "${PROJECT_ROOT}/scripts/lib" -e --slurpfile defaults "$defaults" '
+        include "benchmark-runtime";
+        [.items[] |
+          select(.metadata.labels["app.kubernetes.io/component"] == "controller" or
+                 .metadata.labels["app.kubernetes.io/component"] == "loadbalancer")] as $pods |
+        any($pods[]; .metadata.labels["app.kubernetes.io/component"] == "controller") and
+        any($pods[]; .metadata.labels["app.kubernetes.io/component"] == "loadbalancer") and
+        all($pods[]; all(.spec | measured_containers; benchmark_runtime_matches($defaults[0])))
+    ' "$pods" >/dev/null
 }
 
 assert_effective_profile() {
@@ -2006,17 +2117,8 @@ configure_haptic() {
 
     kubectl get pods -n "$RELEASE_NAMESPACE" -l app.kubernetes.io/instance=haptic -o json \
         > "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json"
-    jq -e '
-        [.items[] |
-          select(.metadata.labels["app.kubernetes.io/component"] == "controller" or
-                 .metadata.labels["app.kubernetes.io/component"] == "loadbalancer")] as $pods |
-        ($pods | length) > 0 and
-        all($pods[]; all(((.spec.initContainers[]? | select(.restartPolicy == "Always")), .spec.containers[]);
-                         ((.resources.limits.memory? // "") == "") and
-                                             ((.resources.limits.cpu? // "") == "") and
-                                             all(.env[]?; .name != "GOMEMLIMIT")))
-    ' "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" >/dev/null || \
-        die "measured HAPTIC pods still have a CPU/memory limit or explicit GOMEMLIMIT"
+    assert_no_limit_pods "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" "$chart_defaults" || \
+        die "measured HAPTIC pods differ from the no-limit product-default runtime profile"
 
     jq '
         [.items[] |
@@ -2025,7 +2127,8 @@ configure_haptic() {
           {namespace: .metadata.namespace, pod: .metadata.name,
            component: .metadata.labels["app.kubernetes.io/component"],
            containers: [((.spec.initContainers[]? | select(.restartPolicy == "Always")), .spec.containers[]) |
-             {name, resources, env: [.env[]? | select(.name == "GOMEMLIMIT")]}]}]
+             {name, resources, env: [.env[]? | select(.name == "GOMEMLIMIT" or .name == "GOMAXPROCS" or
+                                                    .name == "GOGC" or .name == "TMPDIR")]}]}]
     ' "${BENCH_OUTPUT_DIR}/cluster/measured-pods.json" > "${BENCH_OUTPUT_DIR}/cluster/resource-methodology.json"
     verify_controller_runtime_identity
     record_event haptic-configured
@@ -3951,6 +4054,7 @@ capture_referenced_map_inventory() {
     local objects="${output%.json}-objects.json"
     local candidate="${output}.candidate"
     local cfg="${output%.json}-cfg.json"
+    local identities="${output%.json}-identities.json"
     kubectl get haproxymapfiles -n "$RELEASE_NAMESPACE" -o json > "$objects" || \
         return "$READINESS_RESULT_EVIDENCE_INVALID"
     kubectl get haproxycfg "$HAPROXYCFG_NAME" -n "$RELEASE_NAMESPACE" -o json > "${cfg}.read" || \
@@ -3991,8 +4095,11 @@ capture_referenced_map_inventory() {
               ((.consecutiveErrors == null) or
                ((.consecutiveErrors | type) == "number" and .consecutiveErrors >= 0))))))
     ' "$objects" >/dev/null || return "$READINESS_RESULT_EVIDENCE_INVALID"
+    "$PROJECT_ROOT/bin/check-map-identities" "$cfg" "$objects" > "$identities" || \
+        return "$READINESS_RESULT_EVIDENCE_INVALID"
     : > "$candidate" || return "$READINESS_RESULT_EVIDENCE_INVALID"
-    jq -S --arg default_namespace "$RELEASE_NAMESPACE" --argjson allow_deployed_lag "$allow_deployed_lag" --slurpfile cfg "$cfg" --slurpfile pods "$pods" '
+    jq -S --arg default_namespace "$RELEASE_NAMESPACE" --argjson allow_deployed_lag "$allow_deployed_lag" \
+        --slurpfile cfg "$cfg" --slurpfile pods "$pods" --slurpfile identities "$identities" '
         $cfg[0] as $parent |
         ($parent.status.auxiliaryFiles.setID // "") as $set_id |
         ($parent.status.auxiliaryFiles.mapFiles // []) as $refs |
@@ -4009,7 +4116,7 @@ capture_referenced_map_inventory() {
         select(($refs | map([(.namespace // $default_namespace), .name] | join("/")) | unique | length) == ($refs | length)) |
         select(($selected | length) == ($refs | length)) |
         select(all($selected[];
-          (.metadata.annotations["haproxy-haptic.org/auxiliary-set-id"] == $set_id and
+          ($identities[0].valid[.metadata.namespace + "/" + .metadata.name] == .metadata.uid and
            (.spec.mapName // "") != "" and (.spec.path // "") != "" and
            (.spec.checksum // "") != "" and
            ((.status.deployedToPods // []) | length) == ($current | length)) and
@@ -5492,6 +5599,7 @@ run_scale() {
 
     local next_report=$SECONDS
     while workload_container_running "$active_workload_container"; do
+        capture_network_health scale-current
         local count
         count="$(total_route_count)"
         printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" "$count" >> "$scenario_dir/route-counts.txt"
@@ -5743,12 +5851,15 @@ main() {
 
     check_cluster_prerequisites
     bootstrap_cluster
+    prepare_network_capacity
+    start_runtime_config_history
     capture_live_secret_patterns || \
         die "failed to capture live Secret patterns after cluster bootstrap"
     configure_haptic
     verify_spoa_bundle
     capture_live_secret_patterns || \
         die "failed to refresh live Secret patterns after HAPTIC configuration"
+    verify_artifact_secrets || die "bootstrap artifacts failed the Secret scan"
     prepare_gateway
     assert_isolated_workload
     install_prometheus
@@ -5759,23 +5870,19 @@ main() {
     local scenario
     for scenario in "${SCENARIOS[@]}"; do
         capture_kind_cluster_inventory "before-${scenario}" present
+        capture_network_health "before-${scenario}"
         case "$scenario" in
             probe) run_probe ;;
             routechange) run_routechange ;;
             scale) run_scale ;;
         esac
+        capture_network_health "after-${scenario}"
     done
 
     capture_kind_cluster_inventory final present
     verify_spoa_bundle after
     write_runner_summary
-    local final_scan_rc=0
-    scan_artifacts_for_live_secrets || final_scan_rc=$?
-    if [[ $final_scan_rc -eq 1 ]]; then
-        die "benchmark artifacts contained a live Secret value; affected files were redacted"
-    elif [[ $final_scan_rc -ne 0 ]]; then
-        die "artifact Secret scan failed; artifacts are untrusted"
-    fi
+    verify_artifact_secrets || die "benchmark artifacts failed the Secret scan"
     record_event runner-complete
     if jq -e '.measured_result.pass == true' "${BENCH_OUTPUT_DIR}/runner-summary.json" >/dev/null; then
         info "benchmark completed with all measured scenario gates passing; artifacts: ${BENCH_OUTPUT_DIR}"

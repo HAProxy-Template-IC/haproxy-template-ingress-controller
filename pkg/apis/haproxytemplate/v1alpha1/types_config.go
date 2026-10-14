@@ -306,9 +306,9 @@ type LeaderElectionConfig struct {
 
 // ConfigPublishingConfig configures how rendered configs are stored in CRDs.
 type ConfigPublishingConfig struct {
-	// CompressionThreshold is the minimum size in bytes at which configs are compressed.
+	// CompressionThreshold is the payload size in bytes above which configs are compressed.
+	// It includes the encoded recovery plan when one is present.
 	//
-	// Configs smaller than this threshold are stored uncompressed.
 	// Compression uses zstd+base64 encoding.
 	//
 	// Default: 1048576 (1 MiB)

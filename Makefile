@@ -18,6 +18,9 @@ GO := env -u GOROOT go
 GOLANGCI_LINT_VERSION := v2.14.0
 GOLANGCI_LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(GO) run golang.org/x/vuln/cmd/govulncheck
+# renovate: datasource=github-releases depName=rhysd/actionlint
+ACTIONLINT_VERSION := v1.7.12
+ACTIONLINT := $(GO) run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 # renovate: datasource=github-releases depName=losisin/helm-values-schema-json
 HELM_VALUES_SCHEMA_JSON_VERSION := v2.6.0
 HELM_VALUES_SCHEMA_JSON := $(GO) run github.com/losisin/helm-values-schema-json/v2@$(HELM_VALUES_SCHEMA_JSON_VERSION)
@@ -29,8 +32,10 @@ CONTROLLER_GEN := $(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen
 # Docker variables
 IMAGE_NAME ?= haptic# Container image name (override: IMAGE_NAME=my-image)
 IMAGE_TAG ?= dev# Image tag (override: IMAGE_TAG=v1.0.0)
-REGISTRY ?=# Container registry (e.g., registry.gitlab.com/myorg)
+REGISTRY ?=# Container registry (e.g., ghcr.io/myorg)
 FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NAME):$(IMAGE_TAG))
+DOCKER_BINARY_ARCH ?= amd64
+DOCKER_BINARY_CONTEXT ?=
 # HAProxy version baked into the controller image at build time.
 # Override per-build with HAPROXY_VERSION=3.x.
 HAPROXY_VERSION ?= $(shell yq -r '.haproxyVersion' charts/haptic/values.yaml)
@@ -42,7 +47,7 @@ SOURCE_HASH := $(shell ./scripts/source-hash.sh 2>/dev/null || echo "unknown")
 CHART_VERSION := $(shell grep '^version:' charts/haptic/Chart.yaml 2>/dev/null | awk '{print $$2}' || echo "dev")
 
 # Coverage packages (excludes generated code)
-COVERAGE_PACKAGES := ./cmd/...,./pkg/compression/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/stores/...,./pkg/templating/...,./pkg/webhook/...
+COVERAGE_PACKAGES := ./cmd/...,./pkg/compression/...,./pkg/controller/...,./pkg/core/...,./pkg/dataplane/...,./pkg/events/...,./pkg/httpstore/...,./pkg/incremental/...,./pkg/introspection/...,./pkg/k8s/...,./pkg/lifecycle/...,./pkg/metrics/...,./pkg/persistenttree/...,./pkg/rendercontent/...,./pkg/stores/...,./pkg/templating/...,./pkg/webhook/...
 
 # Default target
 help: ## Show this help message
@@ -62,7 +67,7 @@ version: ## Display version information
 lint: vendor ## Run all linters (YAML, JSON, Markdown, Go)
 	@$(MAKE) test-ci-rules test-admission-readiness
 	@echo "Checking go.mod/go.sum are tidy..."
-	@$(GO) mod tidy -diff || { echo "go.mod/go.sum are not tidy, so the next snapshot or release publish fails its source-hash check. Run 'go mod tidy' and commit the result."; exit 1; }
+	@$(GO) mod tidy -diff || { echo "go.mod/go.sum are not tidy. Run 'go mod tidy' and commit the result."; exit 1; }
 	@echo "Checking test inventory (every test must run somewhere)..."
 	./scripts/check-test-inventory.sh
 	@echo "Checking the no-Lua feature policy..."
@@ -310,6 +315,7 @@ audit: vendor ## Run security vulnerability scanning
 	@echo "Running govulncheck..."
 	$(GOVULNCHECK) ./...
 	npm --prefix .gitlab/ci/images/ci audit
+	npm --prefix scripts/pages audit
 
 ## Combined checks
 
@@ -320,11 +326,7 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 
 .PHONY: test-ci-rules
 test-ci-rules: ## Check CI selection, schedules, feature coverage, and merge verification
-	python3 -m unittest scripts/tests/test_ci_chart_rules.py scripts/tests/test_ci_verification.py scripts/tests/test_ci_budget.py scripts/tests/test_ci_schedules.py scripts/tests/test_e2e_profiles.py scripts/tests/test_shard_go_tests.py scripts/tests/test_ci_nightly.py
-
-.PHONY: ci-budget
-ci-budget: ## Check live CI headroom (CI_CANDIDATE_MINUTES is required)
-	python3 -m scripts.ci.budget --candidate-minutes "$(CI_CANDIDATE_MINUTES)"
+	python3 -m unittest scripts/tests/test_e2e_profiles.py scripts/tests/test_shard_go_tests.py
 
 .PHONY: test-admission-readiness
 .PHONY: check-no-lua
@@ -335,7 +337,12 @@ check-no-lua: ## Reject Lua scripts and runtime hooks in HAPTIC
 test-admission-readiness: ## Verify admission readiness polling fails closed
 	$(GO) tool gotestsum --format testname -- -race ./tests/admission/...
 
-test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast feedback; CI and pre-push run it unscoped)
+test: ## Run all unit and supporting test suites
+	@$(MAKE) test-support
+	@$(MAKE) test-unit
+
+.PHONY: test-support
+test-support: build-map-identity-check ## Run script, browser, process, playground and cluster-helper tests
 	@echo "Running tests..."
 	$(MAKE) test-admission-readiness
 	$(MAKE) test-playground-web
@@ -354,17 +361,49 @@ test: ## Run tests (PKG=./pkg/controller/renderer/ scopes the Go run for fast fe
 		scripts/tests/test_analyze_gateway_api_children.py \
 		scripts/tests/test_analyze_gateway_api_outcomes.py \
 		scripts/tests/test_analyze_gateway_api_resources.py
-	bash scripts/tests/test_bench_gateway_api.sh
+	$(MAKE) test-registry-build-retry
+	$(MAKE) test-gateway-benchmark-harness
 	bash scripts/tests/test_chart_haproxy_image.sh
 	$(MAKE) test-release
 	bash scripts/tests/test_chart_spoa_image.sh
 	bash scripts/tests/test_chart_varnish_image.sh
-	bash scripts/tests/test_spoa_bundle_provenance.sh
 	bash scripts/tests/test_shard_conformance_tests.sh
-	@$(MAKE) test-unit
 	@$(MAKE) test-process
 	@$(MAKE) test-playground
 	@$(MAKE) test-e2e-helpers
+
+.PHONY: lint-github-actions test-github-verification
+lint-github-actions: ## Validate GitHub workflow syntax and expressions
+	$(ACTIONLINT)
+
+test-github-verification: lint-github-actions ## Check GitHub verification evidence fails closed
+	python3 -m unittest discover -s .github/tests -v
+
+.PHONY: check-chart-upgrade-baselines
+check-chart-upgrade-baselines: ## Require every published baseline in the active CI upgrade configurations
+	./scripts/check-chart-upgrade-baselines.sh
+
+.PHONY: schedule-github-verification
+schedule-github-verification: ## Balance GitHub jobs using the recorded runner durations
+	python3 -m scripts.ci.github_schedule
+
+.PHONY: test-github-toolchain-update
+test-github-toolchain-update: ## Verify Dockerfile changes reach the selected GitHub toolchain
+	python3 -m scripts.ci.toolchain_update_check "$(TOOLCHAIN_KIND)"
+
+.PHONY: test-github-native-tools
+test-github-native-tools: ## Check installed ARM tools match the shared build pins
+	python3 -m scripts.ci.github_native_tools verify "$(RUNNER_TEMP)/haptic-arm-tools/plan.json"
+
+.PHONY: test-registry-build-retry
+test-registry-build-retry: ## Verify registry retries preserve permanent build failures
+	python3 -m unittest scripts/tests/test_retry_registry_build.py -v
+
+.PHONY: test-gateway-benchmark-harness
+test-gateway-benchmark-harness: build-map-identity-check ## Verify benchmark setup, workload gates and bundle provenance
+	python3 -m unittest scripts/tests/test_record_benchmark_config_identities.py
+	bash scripts/tests/test_bench_gateway_api.sh
+	bash scripts/tests/test_spoa_bundle_provenance.sh
 
 .PHONY: test-process
 test-process: ## Verify process supervision with real child processes, without a cluster
@@ -377,7 +416,11 @@ test-unit: ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 	@# produce the profile; a correctness run does not need it.
 	@# -timeout: pkg/controller/renderer's chart-scale suites run well past go
 	@# test's 10m default under -race, which fails the package on time alone.
-	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") $${PKG:-./...}
+	$(GO) tool gotestsum --junitfile report.xml --format testname -- -race -timeout 45m $(if $(COUNT),-count=$(COUNT)) $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") $${PKG:-./...}
+
+.PHONY: test-unit-inventory
+test-unit-inventory: ## Enumerate the tests compiled for race-enabled unit verification
+	$(GO) test -race -list . $${PKG:-./...}
 
 .PHONY: test-e2e-helpers
 test-e2e-helpers: ## Test e2e client and cluster helpers without creating a cluster
@@ -477,6 +520,16 @@ CONFORMANCE_CONTAINER ?= haptic-conformance-run
 INGRESS_CONFORMANCE_IMAGE ?= haptic-ingress-conformance-test:latest
 INGRESS_CONFORMANCE_REPO ?= https://github.com/kubernetes-sigs/ingress-controller-conformance.git
 INGRESS_CONFORMANCE_SHA ?= d920ed36a0076e169a9a329a850844ab3a695ae8
+
+.PHONY: test-gateway-conformance-report github-conformance-report github-conformance-startup
+test-gateway-conformance-report: ## Run the complete suite and verify its report and controller identity
+	bash scripts/gateway-conformance-report.sh $(if $(CONFORMANCE_RELEASE_EVIDENCE),--release-evidence)
+
+github-conformance-report: ## Prepare fresh GitHub conformance evidence for a candidate or published release
+	python3 -m scripts.ci.github_conformance
+
+github-conformance-startup: ## Diagnose fresh candidate startup without producing release evidence
+	python3 -m scripts.ci.github_conformance --startup-only
 
 test-gateway-conformance: ## Run upstream Gateway API conformance suite as a sibling container on the kind network
 	@echo "Running Gateway API conformance suite against the $(CONFORMANCE_KIND_CLUSTER) cluster..."
@@ -692,7 +745,7 @@ docker-build-varnish: ## Build the bundled non-root Varnish image
 		image="$$(bash scripts/chart-varnish-image.sh)"; \
 	fi; \
 	docker buildx build $(if $(VARNISH_PLATFORMS),--platform "$(VARNISH_PLATFORMS)") \
-		--label "org.opencontainers.image.source=https://gitlab.com/haproxy-haptic/haptic" \
+		--label "org.opencontainers.image.source=https://github.com/haproxy-haptic/HAPTIC" \
 		--label "org.opencontainers.image.revision=$$(git rev-parse HEAD)" \
 		--provenance=false --tag "$$image" $(VARNISH_OUTPUT) -f Dockerfile.varnish .
 
@@ -729,6 +782,7 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test docker-
 	@echo "  SKIP_CLUSTER_CREATE - CI mode: assume cluster already exists; skip kind create"
 	@echo "  SKIP_DOCKER_BUILD   - CI mode: assume haptic:test-haproxyX.Y already loaded"
 	@echo "  TEST_RUN_PATTERN    - Run specific tests matching pattern"
+	@echo "  HAPTIC_E2E_EXTRA_VALUES - Additional Helm values file, after the selected test profile"
 	@echo "  HAPTIC_E2E_EXTRA_SET - Extra helm --set pairs, ';'-separated. Match CI's shape"
 	@echo "                        locally with controller.resources.limits.cpu=4: GOMAXPROCS"
 	@echo "                        sizes the validationTests gate, so a big box hides gaps"
@@ -743,7 +797,7 @@ test-e2e: check-source-hash $(if $(SKIP_DOCKER_BUILD),,docker-build-test docker-
 	if ! printf '%s\n' "$$controller_rollout_id" | grep -Eq '^sha256:[0-9a-f]{64}$$'; then echo "Controller image haptic:test-haproxy$(HAPROXY_VERSION) has invalid ID '$$controller_rollout_id'; rebuild it with make docker-build-test."; exit 1; fi; \
 	if ! printf '%s\n' "$$controller_binary_sha256" | grep -Eq '^[0-9a-f]{64}$$'; then echo "Controller binary digest '$$controller_binary_sha256' is invalid; rebuild haptic:test-haproxy$(HAPROXY_VERSION)."; exit 1; fi; \
 	if [ "$$controller_source_hash" != "$(SOURCE_HASH)" ]; then echo "Controller image source hash '$$controller_source_hash' does not match local source hash '$(SOURCE_HASH)'; rebuild it with make docker-build-test."; exit 1; fi; \
-	HAPTIC_EXPECTED_CONTROLLER_ROLLOUT_ID="$$controller_rollout_id" HAPTIC_EXPECTED_CONTROLLER_BINARY_SHA256="$$controller_binary_sha256" HAPTIC_EXPECTED_SOURCE_HASH=$(SOURCE_HASH) HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -count=1 -mod=readonly -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") ./tests/e2e/...
+	HAPTIC_EXPECTED_CONTROLLER_ROLLOUT_ID="$$controller_rollout_id" HAPTIC_EXPECTED_CONTROLLER_BINARY_SHA256="$$controller_binary_sha256" HAPTIC_EXPECTED_SOURCE_HASH=$(SOURCE_HASH) HAPTIC_HAPROXY_VERSION=$(HAPROXY_VERSION) $(GO) test -count=$(or $(COUNT),1) -mod=readonly -tags=e2e -v -timeout 30m $(if $(PARALLEL),-parallel $(PARALLEL)) $(if $(TEST_RUN_PATTERN),-run "$(TEST_RUN_PATTERN)") ./tests/e2e/...
 
 test-helm-defaults: $(if $(HELM_DEFAULTS_IMAGE),,docker-build-test) ## Install the default chart in kind and run its deployment smoke tests
 	@# Local runs must test this worktree's controller against this worktree's
@@ -792,6 +846,14 @@ build-integration-test: ## Build integration test binary (without running)
 	@mkdir -p bin
 	$(GO) test -c -o bin/integration.test ./tests/integration/...
 
+.PHONY: test-coverage-unit
+test-coverage-unit: ## Collect unit coverage independently of the race suite (PKG selects packages)
+	$(GO) tool gotestsum --format testname -- \
+		-count=1 -timeout 45m -coverprofile=coverage.out -covermode=atomic \
+		-coverpkg=$(COVERAGE_PACKAGES) $${PKG:-./...}
+	$(GO) tool cover -func=coverage.out > coverage.txt
+	tail -1 coverage.txt
+
 test-coverage: ## Run unit tests with coverage report
 	@echo "Running unit tests with coverage..."
 	$(GO) test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=$(COVERAGE_PACKAGES) ./pkg/...
@@ -830,8 +892,16 @@ bench: ## Run benchmarks (usage: make bench PKG=./pkg/templating/ BENCH=Benchmar
 bench-render-comparison: ## Compare clean HEAD with BENCH_BASE_REF on the same host
 	bash scripts/bench-render-comparison.sh
 
-bench-gateway-api: ## Run pinned Gateway API benchmark programs against HAPTIC
+bench-gateway-api: build-map-identity-check ## Run pinned Gateway API benchmark programs against HAPTIC
 	bash scripts/bench-gateway-api.sh
+
+.PHONY: bench-gateway-api-ci
+bench-gateway-api-ci: build-map-identity-check ## Run the hosted benchmark profile and validate its artifacts
+	bash scripts/bench-gateway-api-ci.sh
+
+.PHONY: build-map-identity-check
+build-map-identity-check: ## Build the benchmark's published-map identity verifier
+	$(GO) build -o bin/check-map-identities ./cmd/check-map-identities
 
 ## Schema extraction (for offline validate)
 
@@ -892,8 +962,8 @@ validate-helm-libraries: build ## Render the chart and run `haptic validate` aga
 	@# Smoke-tests that the chart's bundled libraries merge cleanly and
 	@# that the resulting config passes the controller's offline
 	@# validate path — engine compile + chart validationTests. Used by
-	@# CI (.validate-helm-libraries-base in .gitlab-ci.yml) and by chart
-	@# authors who want to reproduce the CI check locally.
+	@# CI (the helm-3.x jobs) and by chart authors who want to reproduce the
+	@# CI check locally.
 	@#
 	@# Delegates to scripts/test-templates.sh so the render-and-validate
 	@# flow has one source of truth — every flag/path/library decision
@@ -922,6 +992,10 @@ test-agent-skill-package: ## Check skill downloads (requires mkdocs on PATH)
 build-ci-image: ## Build the pinned CI image locally for HAPROXY_VERSION
 	@HAPROXY_VERSION=$(HAPROXY_VERSION) bash scripts/build-ci-image.sh
 
+.PHONY: build-docs-image
+build-docs-image: ## Build the documentation toolchain from current pins
+	@bash scripts/build-docs-image.sh
+
 build: check-source-hash ## Build the controller binary for local development (with PGO if profile exists)
 	@echo "Building controller..."
 	@echo "  Version: $(VERSION)"
@@ -938,18 +1012,18 @@ build: check-source-hash ## Build the controller binary for local development (w
 build-for-docker: check-source-hash ## Build binary in platform-structured path for Docker builds with --build-context
 	@echo "Building controller for Docker..."
 	@echo "  Version: $(VERSION)"
-	@echo "  Platform: linux/amd64"
-	@mkdir -p dist/linux/amd64
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build \
+	@echo "  Platform: linux/$(DOCKER_BINARY_ARCH)"
+	@mkdir -p dist/linux/$(DOCKER_BINARY_ARCH)
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(DOCKER_BINARY_ARCH) $(GO) build \
 		-mod=readonly \
 		-pgo=auto \
 		-trimpath \
 		-buildvcs=false \
 		-ldflags="-s -w -X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.sourceHash=$(SOURCE_HASH)" \
-		-o dist/linux/amd64/haptic \
+		-o dist/linux/$(DOCKER_BINARY_ARCH)/haptic \
 		./cmd/haptic
-	@echo "✓ Binary built: dist/linux/amd64/haptic"
-	@echo "  Use with: docker buildx build --platform linux/amd64 --build-context binary=dist --target runtime ..."
+	@echo "✓ Binary built: dist/linux/$(DOCKER_BINARY_ARCH)/haptic"
+	@echo "  Use with: docker buildx build --platform linux/$(DOCKER_BINARY_ARCH) --build-context binary=dist --target runtime ..."
 
 ## Docker targets
 
@@ -962,7 +1036,8 @@ docker-build: check-source-hash ## Build Docker image
 	@echo "  Git tag:         $(GIT_TAG)"
 	@echo "  Source hash:     $(SOURCE_HASH)"
 	@echo "  HAProxy series:  $(HAPROXY_VERSION) (chart-selected patch)"
-	DOCKER_BUILDKIT=1 docker build \
+	DOCKER_BUILDKIT=1 bash scripts/retry-registry-build.sh docker build \
+		$(if $(DOCKER_BINARY_CONTEXT),--build-context "binary=$(DOCKER_BINARY_CONTEXT)" --target runtime) \
 		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		--build-arg GIT_TAG=$(GIT_TAG) \
 		--build-arg SOURCE_HASH=$(SOURCE_HASH) \
@@ -973,6 +1048,11 @@ docker-build: check-source-hash ## Build Docker image
 
 docker-build-test: ## Build Docker image with test tag for acceptance tests
 	IMAGE_TAG=test $(MAKE) docker-build
+
+.PHONY: docker-build-test-native
+docker-build-test-native: ## Build the test image with the host Go compiler and cache
+	$(MAKE) build-for-docker VERSION="$(GIT_TAG)" DOCKER_BINARY_ARCH="$(shell $(GO) env GOARCH)"
+	IMAGE_TAG=test DOCKER_BINARY_CONTEXT="$(CURDIR)/dist" $(MAKE) docker-build
 
 docker-build-multiarch: check-source-hash ## Build multi-platform Docker image for local testing (linux/amd64 only)
 	@echo "Building multi-platform Docker image: $(FULL_IMAGE)"
@@ -994,7 +1074,7 @@ docker-build-multiarch: check-source-hash ## Build multi-platform Docker image f
 docker-build-multiarch-push: check-source-hash ## Build and push multi-platform Docker image (linux/amd64,linux/arm64)
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "Error: REGISTRY variable must be set for multi-arch push"; \
-		echo "Example: make docker-build-multiarch-push REGISTRY=registry.gitlab.com/myorg"; \
+		echo "Example: make docker-build-multiarch-push REGISTRY=ghcr.io/myorg"; \
 		exit 1; \
 	fi
 	@echo "Building and pushing multi-platform Docker image: $(FULL_IMAGE)"
@@ -1027,7 +1107,7 @@ docker-load-kind: docker-build ## Build Docker image and load into kind cluster
 docker-push: docker-build ## Build and push Docker image to registry
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "Error: REGISTRY variable must be set"; \
-		echo "Example: make docker-push REGISTRY=registry.gitlab.com/myorg"; \
+		echo "Example: make docker-push REGISTRY=ghcr.io/myorg"; \
 		exit 1; \
 	fi
 	@echo "Pushing Docker image: $(FULL_IMAGE)"
@@ -1206,6 +1286,64 @@ release: ## Prepare a release of controller + chart (usage: make release RELEASE
 	fi
 	@./scripts/release.sh $(RELEASE_VERSION)
 
+.PHONY: build-docs-preview test-snapshot-publication
+build-docs-preview: ## Build the versioned documentation preview artifact
+	bash .github/scripts/build-docs-preview.sh
+
+.PHONY: prepare-github-pages test-github-pages-browser archive-github-pages restore-github-pages
+archive-github-pages: ## Archive every original website file and its source provenance
+	python3 -m scripts.ci.github_site_archive create --source "$(PAGES_SOURCE)" --archive "$(PAGES_ARCHIVE)" --provenance "$(PAGES_PROVENANCE)"
+
+restore-github-pages: ## Restore the complete pinned GitHub website baseline
+	python3 -m scripts.ci.github_site_archive restore --config .github/pages-baseline.json --output "$(PAGES_OUTPUT)" $(if $(PAGES_ARCHIVE),--archive "$(PAGES_ARCHIVE)")
+
+prepare-github-pages: ## Package a complete website below the GitHub Pages size limit
+	python3 -m scripts.ci.github_pages --source "$(PAGES_SOURCE)" --output "$(PAGES_OUTPUT)"
+
+test-github-pages-browser: ## Verify every packaged playground engine in a real browser
+	node scripts/tests/test_github_pages_browser.mjs "$(PAGES_OUTPUT)"
+
+.PHONY: build-github-website retain-github-website assemble-github-website restore-current-github-website
+restore-current-github-website: ## Restore every version recorded in the GitHub website catalog
+	python3 -m scripts.ci.github_site_state --output "$(PAGES_OUTPUT)"
+
+build-github-website: ## Build the website from verified CI artifacts and archived versions
+	python3 -m scripts.ci.github_site_publication build --version "$(WEBSITE_VERSION)" --output "$(PAGES_OUTPUT)"
+
+retain-github-website: ## Retain the verified website before deployment
+	python3 -m scripts.ci.github_site_publication retain
+
+assemble-github-website: ## Restore a website from locally retained version archives
+	python3 -m scripts.ci.github_site_versions --baseline "$(PAGES_SOURCE)" --catalog "$(PAGES_CATALOG)" --output "$(PAGES_OUTPUT)"
+
+test-snapshot-publication: ## Verify image and chart publication in a local registry
+	bash .github/scripts/test-snapshot-publication.sh
+
+.PHONY: prepare-github-release-config publish-github-release smoke-spoa-image
+.PHONY: prepare-spoa-release
+prepare-spoa-release: spoa-prep ## Prepare the immutable bundle for a release branch
+	bash scripts/spoa-release-image.sh prepare
+
+.PHONY: tag-github-release
+tag-github-release: ## Tag and dispatch a release after canonical source verification
+	python3 -m scripts.ci.github_release_tag
+
+publish-github-release: ## Publish one verified release phase to GitHub
+	bash scripts/publish-github-release.sh "$(PUBLICATION_PHASE)"
+
+.PHONY: publish-github-snapshot
+publish-github-snapshot: ## Publish matching snapshot images and chart from verified main
+	bash scripts/publish-github-snapshot.sh "$(PUBLICATION_PHASE)"
+
+smoke-spoa-image: ## Run the native SPOA smoke suite against an immutable image
+	bash scripts/smoke-spoa-image.sh "$(SPOA_SMOKE_IMAGE)"
+
+prepare-github-release-config: ## Preserve release builds and signatures while targeting GitHub
+	python3 -m scripts.ci.github_release --repository "$(GITHUB_REPOSITORY)" --output .pilot/goreleaser.github.yml $(if $(GITHUB_SNAPSHOT_SHA),--snapshot-sha "$(GITHUB_SNAPSHOT_SHA)")
+	goreleaser check --config .pilot/goreleaser.github.yml
+
+GORELEASER_CONFIG ?= .goreleaser.yml
+
 goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
 	@set -eu; \
 	for series in $$(yq -r '.haproxyPatchVersions | keys | .[]' charts/haptic/values.yaml); do \
@@ -1213,7 +1351,7 @@ goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
 		image="$$(bash scripts/chart-haproxy-image.sh "$$series")"; \
 		export "$$pin=$$image"; \
 	done; \
-	CI_PIPELINE_ID=$${CI_PIPELINE_ID:-local} SOURCE_HASH=$(SOURCE_HASH) goreleaser release --snapshot --clean --skip=sign
+	GITHUB_RUN_ID=$${GITHUB_RUN_ID:-local} SOURCE_HASH=$(SOURCE_HASH) goreleaser release --config "$(GORELEASER_CONFIG)" --snapshot --clean --skip=sign
 
 ## PGO (Profile-Guided Optimization) targets
 

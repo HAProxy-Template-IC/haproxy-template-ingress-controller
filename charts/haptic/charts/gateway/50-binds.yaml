@@ -177,7 +177,7 @@ templateSnippets:
         {{- render_glob "gateway-ssl-passthrough-*" -}}
         {%- var byPort = byPortRaw.(map[int]any) %}
         {%- var httpsPort = toint(extraContext | dig("httpsPort") | fallback(8443)) %}
-        {%- var allBackends = incremental_values("gateway-ssl-passthrough", "backends") %}
+        {%- var allBackends = incremental_values("gateway-ssl-passthrough", "backends") | sort_by([]string{"$.rank"}) %}
         {#- Determine whether the chart-static HTTPS frontend or ssl-tcp
             will bind the chart-static httpsPort. The two flags
             (bindHTTPSDefault + len(passthroughBackends)>0) cover both
@@ -218,6 +218,9 @@ templateSnippets:
           {%- if port != httpsPort || !chartStaticBindsHTTPSPort %}
             {%- var portEntry = byPort[port].(map[string]any) %}
             {%- var portMode = tostring(portEntry["mode"]) %}
+            {%- var sourcePort = toint(portEntry["sourcePort"]) %}
+            {%- var gatewayName = tostring(portEntry["gatewayName"]) %}
+            {%- var gatewayNamespace = tostring(portEntry["gatewayNamespace"]) %}
             {#- Filter the route entries (Pass 2 output) to those
                 claiming this port. Each entry was tagged with `port`
                 + `mode` when emitted; we copy a freshly-typed slice
@@ -235,7 +238,9 @@ templateSnippets:
                   TLSRouteInvalidBackendRef* conformance tests
                   expect. -#}
               {%- var invalidFlag = tostring(be | dig("invalid") | fallback("false")) == "true" %}
-              {%- if toint(be["port"] | fallback(0)) == port && !invalidFlag %}
+              {%- var matchesGateway = gatewayName == "" ||
+                (tostring(be["gw_name"]) == gatewayName && tostring(be["gw_namespace"]) == gatewayNamespace) %}
+              {%- if toint(be["port"] | fallback(0)) == sourcePort && matchesGateway && !invalidFlag %}
                 {%- portRoutes = append(portRoutes, be) %}
               {%- end %}
             {%- end %}

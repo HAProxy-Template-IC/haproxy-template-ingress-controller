@@ -232,6 +232,8 @@ type persistentInfra struct {
 	// silently ignored.
 	webhookServerConfig *pkgwebhook.ServerConfig
 
+	loadGateTimeout time.Duration
+
 	graceMu              sync.Mutex
 	graceNow             func() time.Time
 	currentIterationID   iterationID
@@ -289,12 +291,24 @@ func (e *persistentWebhookServerError) Unwrap() error {
 	return e.err
 }
 
-// ReinitGraceWindow is how long after a voluntary iteration restart /healthz
-// keeps reporting healthy while components re-initialize. A reinit re-runs the
-// load gate, so this MUST exceed initialValidationTestsRunTimeout: below it a
-// gate that legitimately uses its budget trips liveness and restarts an
-// advancing controller, costing the fleet another full rebuild.
-const ReinitGraceWindow = initialValidationTestsRunTimeout + 45*time.Second
+// reinitGraceMargin is how much longer than the load gate's budget /healthz
+// keeps reporting healthy after a voluntary iteration restart. A reinit re-runs
+// the load gate, so a smaller window lets a gate that legitimately uses its
+// budget trip liveness and restart an advancing controller.
+const reinitGraceMargin = 45 * time.Second
+
+// loadGateBudget returns the load-path validationTests budget; zero means
+// defaultLoadGateTimeout.
+func (p *persistentInfra) loadGateBudget() time.Duration {
+	if p.loadGateTimeout > 0 {
+		return p.loadGateTimeout
+	}
+	return defaultLoadGateTimeout
+}
+
+func (p *persistentInfra) reinitGraceWindow() time.Duration {
+	return p.loadGateBudget() + reinitGraceMargin
+}
 
 // EnsureWebhookServer returns the process-lifetime admission listener, creating
 // and starting it on the first call and returning the same server afterwards.
@@ -514,7 +528,7 @@ func (p *persistentInfra) NoteAttemptReturned(id iterationID) {
 }
 
 // attemptStalled reports a startup attempt that has not returned within
-// ReinitGraceWindow. Failing attempts retry from live state; a hung one never does.
+// reinitGraceWindow. Failing attempts retry from live state; a hung one never does.
 func (p *persistentInfra) attemptStalled() (time.Duration, bool) {
 	p.graceMu.Lock()
 	defer p.graceMu.Unlock()
@@ -522,7 +536,7 @@ func (p *persistentInfra) attemptStalled() (time.Duration, bool) {
 		return 0, false
 	}
 	running := p.graceTime().Sub(p.attemptStartedAt)
-	return running, running >= ReinitGraceWindow
+	return running, running >= p.reinitGraceWindow()
 }
 
 func (p *persistentInfra) currentIteration() iterationID {
@@ -553,7 +567,7 @@ func (p *persistentInfra) NoteSettled(id iterationID) {
 func (p *persistentInfra) InReinitGrace() bool {
 	p.graceMu.Lock()
 	defer p.graceMu.Unlock()
-	return !p.reinitStartedAt.IsZero() && p.graceTime().Sub(p.reinitStartedAt) < ReinitGraceWindow
+	return !p.reinitStartedAt.IsZero() && p.graceTime().Sub(p.reinitStartedAt) < p.reinitGraceWindow()
 }
 
 func (p *persistentInfra) graceTime() time.Time {
@@ -613,6 +627,10 @@ func Run(
 	if err != nil {
 		return err
 	}
+	loadGateTimeout, err := loadGateTimeoutFromEnv()
+	if err != nil {
+		return err
+	}
 
 	// Admission still needs live watchers and validators while its listener drains.
 	procCtx, procCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -622,6 +640,7 @@ func Run(
 		IntrospectionRegistry: introspection.NewRegistry(),
 		eventDropMetrics:      &persistentEventDropMetrics{},
 		processCancel:         procCancel,
+		loadGateTimeout:       loadGateTimeout,
 	}
 	if debugPort > 0 {
 		infra.IntrospectionServer = introspection.NewServer(fmt.Sprintf(":%d", debugPort), infra.IntrospectionRegistry)
@@ -783,6 +802,22 @@ func listenerPortFromEnv(envName string, defaultPort int, allowDisabled bool) (i
 		return 0, fmt.Errorf("%s must be between %d and 65535", envName, minimum)
 	}
 	return port, nil
+}
+
+// loadGateTimeoutFromEnv returns zero when LOAD_GATE_TIMEOUT is unset.
+func loadGateTimeoutFromEnv() (time.Duration, error) {
+	raw := os.Getenv("LOAD_GATE_TIMEOUT")
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parsing LOAD_GATE_TIMEOUT=%q as a duration: %w", raw, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("LOAD_GATE_TIMEOUT must be positive, got %s", raw)
+	}
+	return value, nil
 }
 
 // componentSetup contains all resources created during component initialization.

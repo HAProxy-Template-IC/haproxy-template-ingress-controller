@@ -224,7 +224,7 @@ func loadGatewayTCPRouteClaimSnippets(t *testing.T) map[string]config.TemplateSn
 		"util-webhook-reject-or-warn": true, "backendtlsvalues-490-gateway": true,
 		"util-gateway-backend-bindings": true, "util-gateway-tcp-backend-bindings": true,
 		"util-resource-helpers": true, "util-reference-grant-permitted": true,
-		"util-backend-servers-helpers": true, "util-backend-servers-result": true,
+		"util-backend-servers-helpers": true, "util-backend-servers-result": true, "util-gated-pod-routable": true,
 		"util-publish-gateway-tcproute-claims": true, gatewayTCPRouteClaimComponent: true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))

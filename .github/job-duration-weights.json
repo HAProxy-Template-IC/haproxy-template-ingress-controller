@@ -1,0 +1,448 @@
+{
+  "runner_limit": 60,
+  "jobs": {
+    "snapshot": {
+      "seconds": 925,
+      "run_id": 38483303507
+    },
+    "e2e-hp3.3-4": {
+      "seconds": 949,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.2-2": {
+      "seconds": 945,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.1-4": {
+      "seconds": 939,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.2-3": {
+      "seconds": 940,
+      "run_id": 38432655131
+    },
+    "helm-3.2": {
+      "seconds": 983,
+      "run_id": 38479981671
+    },
+    "helm-3.0": {
+      "seconds": 914,
+      "run_id": 38479981671
+    },
+    "e2e-hp3.2-4": {
+      "seconds": 926,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.0-3": {
+      "seconds": 924,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.3-3": {
+      "seconds": 924,
+      "run_id": 38432655131
+    },
+    "helm-3.3": {
+      "seconds": 823,
+      "run_id": 38483303507
+    },
+    "e2e-hp3.0-1": {
+      "seconds": 915,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.1-2": {
+      "seconds": 912,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.0-4": {
+      "seconds": 918,
+      "run_id": 38483303507
+    },
+    "e2e-hp3.3-1": {
+      "seconds": 908,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.4-3": {
+      "seconds": 905,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.3-2": {
+      "seconds": 900,
+      "run_id": 38432655131
+    },
+    "helm-3.4": {
+      "seconds": 845,
+      "run_id": 38483303507
+    },
+    "e2e-hp3.4-1": {
+      "seconds": 897,
+      "run_id": 38432655131
+    },
+    "helm-3.1": {
+      "seconds": 941,
+      "run_id": 38479981671
+    },
+    "e2e-hp3.0-2": {
+      "seconds": 896,
+      "run_id": 38483303507
+    },
+    "e2e-hp3.2-1": {
+      "seconds": 891,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.1-1": {
+      "seconds": 889,
+      "run_id": 38432655131
+    },
+    "e2e-minimum-kubernetes-3": {
+      "seconds": 870,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.1-3": {
+      "seconds": 861,
+      "run_id": 38432655131
+    },
+    "e2e-minimum-kubernetes-2": {
+      "seconds": 859,
+      "run_id": 38432655131
+    },
+    "e2e-minimum-kubernetes-1": {
+      "seconds": 858,
+      "run_id": 38432655131
+    },
+    "e2e-minimum-kubernetes-4": {
+      "seconds": 840,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.4-4": {
+      "seconds": 822,
+      "run_id": 38432655131
+    },
+    "e2e-hp3.4-2": {
+      "seconds": 819,
+      "run_id": 38432655131
+    },
+    "gitops-flux-cert-manager": {
+      "seconds": 741,
+      "run_id": 38432655131
+    },
+    "gitops-flux-external": {
+      "seconds": 703,
+      "run_id": 38432655131
+    },
+    "gitops-argo-cert-manager": {
+      "seconds": 690,
+      "run_id": 38483303507
+    },
+    "gitops-argo-external": {
+      "seconds": 672,
+      "run_id": 38432655131
+    },
+    "upgrade-0.5.0-minimum": {
+      "seconds": 672,
+      "run_id": 38432655131
+    },
+    "upgrade-0.4.0-minimum": {
+      "seconds": 661,
+      "run_id": 38483303507
+    },
+    "upgrade-0.2.1-minimum": {
+      "seconds": 651,
+      "run_id": 38432655131
+    },
+    "upgrade-0.4.1-current": {
+      "seconds": 644,
+      "run_id": 38432655131
+    },
+    "upgrade-0.5.0-current": {
+      "seconds": 679,
+      "run_id": 38483303507
+    },
+    "upgrade-0.4.1-minimum": {
+      "seconds": 645,
+      "run_id": 38432655131
+    },
+    "upgrade-0.3.0-minimum": {
+      "seconds": 647,
+      "run_id": 38483303507
+    },
+    "upgrade-0.2.0-minimum": {
+      "seconds": 641,
+      "run_id": 38432655131
+    },
+    "ingress-4": {
+      "seconds": 637,
+      "run_id": 38432655131
+    },
+    "upgrade-0.3.0-current": {
+      "seconds": 635,
+      "run_id": 38432655131
+    },
+    "upgrade-0.4.0-current": {
+      "seconds": 650,
+      "run_id": 38483303507
+    },
+    "upgrade-0.2.2-minimum": {
+      "seconds": 654,
+      "run_id": 38483303507
+    },
+    "upgrade-0.2.1-current": {
+      "seconds": 644,
+      "run_id": 38483303507
+    },
+    "ingress-2": {
+      "seconds": 629,
+      "run_id": 38432655131
+    },
+    "upgrade-0.2.0-alpha.3-current": {
+      "seconds": 629,
+      "run_id": 38432655131
+    },
+    "upgrade-0.2.2-current": {
+      "seconds": 623,
+      "run_id": 38432655131
+    },
+    "ingress-1": {
+      "seconds": 614,
+      "run_id": 38432655131
+    },
+    "upgrade-0.2.0-current": {
+      "seconds": 628,
+      "run_id": 38483303507
+    },
+    "acceptance": {
+      "seconds": 585,
+      "run_id": 38483303507
+    },
+    "upgrade-0.2.0-alpha.3-minimum": {
+      "seconds": 630,
+      "run_id": 38483303507
+    },
+    "chart-minimum": {
+      "seconds": 580,
+      "run_id": 38479981671
+    },
+    "upgrade-0.1.0-minimum": {
+      "seconds": 578,
+      "run_id": 38432655131
+    },
+    "upgrade-0.1.0-current": {
+      "seconds": 560,
+      "run_id": 38432655131
+    },
+    "coverage-rest": {
+      "seconds": 667,
+      "run_id": 38479981671
+    },
+    "ingress-3": {
+      "seconds": 555,
+      "run_id": 38432655131
+    },
+    "chart": {
+      "seconds": 424,
+      "run_id": 38483303507
+    },
+    "e2e-rate-limit": {
+      "seconds": 536,
+      "run_id": 38432655131
+    },
+    "integration-3.4": {
+      "seconds": 546,
+      "run_id": 38479981671
+    },
+    "lint": {
+      "seconds": 560,
+      "run_id": 38479981671
+    },
+    "integration-3.0": {
+      "seconds": 505,
+      "run_id": 38479981671
+    },
+    "unit-command-2": {
+      "seconds": 311,
+      "run_id": 38483303507
+    },
+    "integration-3.3": {
+      "seconds": 527,
+      "run_id": 38479981671
+    },
+    "integration-3.1": {
+      "seconds": 522,
+      "run_id": 38479981671
+    },
+    "e2e-cache": {
+      "seconds": 455,
+      "run_id": 38432655131
+    },
+    "unit-rest": {
+      "seconds": 442,
+      "run_id": 38479981671
+    },
+    "gateway-2": {
+      "seconds": 437,
+      "run_id": 38432655131
+    },
+    "integration-3.2": {
+      "seconds": 491,
+      "run_id": 38479981671
+    },
+    "gateway-1": {
+      "seconds": 436,
+      "run_id": 38432655131
+    },
+    "gateway-4": {
+      "seconds": 432,
+      "run_id": 38432655131
+    },
+    "defaults": {
+      "seconds": 421,
+      "run_id": 38483303507
+    },
+    "gateway-3": {
+      "seconds": 427,
+      "run_id": 38432655131
+    },
+    "install-without-gateway-minimum": {
+      "seconds": 449,
+      "run_id": 38479981671
+    },
+    "e2e-api-gateway": {
+      "seconds": 411,
+      "run_id": 38432655131
+    },
+    "wasm": {
+      "seconds": 493,
+      "run_id": 38483303507
+    },
+    "install-without-gateway-current": {
+      "seconds": 411,
+      "run_id": 38483303507
+    },
+    "unit-command-3": {
+      "seconds": 216,
+      "run_id": 38483303507
+    },
+    "unit-command-1": {
+      "seconds": 494,
+      "run_id": 38479981671
+    },
+    "test-support": {
+      "seconds": 403,
+      "run_id": 38479981671
+    },
+    "agent-3.0": {
+      "seconds": 269,
+      "run_id": 38479981671
+    },
+    "agent-3.4": {
+      "seconds": 281,
+      "run_id": 38483303507
+    },
+    "coverage-renderer": {
+      "seconds": 186,
+      "run_id": 38479981671
+    },
+    "vector": {
+      "seconds": 188,
+      "run_id": 38483303507
+    },
+    "ci-image-3.0": {
+      "seconds": 158,
+      "run_id": 38483303507
+    },
+    "ci-image-3.4": {
+      "seconds": 136,
+      "run_id": 38479981671
+    },
+    "spoa": {
+      "seconds": 134,
+      "run_id": 38479981671
+    },
+    "ci-image-3.3": {
+      "seconds": 122,
+      "run_id": 38479981671
+    },
+    "ci-image-3.1": {
+      "seconds": 127,
+      "run_id": 38479981671
+    },
+    "ci-image-3.2": {
+      "seconds": 138,
+      "run_id": 38479981671
+    },
+    "docs": {
+      "seconds": 110,
+      "run_id": 38479981671
+    },
+    "docs-image": {
+      "seconds": 61,
+      "run_id": 38483303507
+    },
+    "gateway-churn": {
+      "seconds": 659,
+      "run_id": 38483303507
+    },
+    "gateway-canary": {
+      "seconds": 623,
+      "run_id": 38483303507
+    },
+    "scale": {
+      "seconds": 507,
+      "run_id": 38483303507
+    },
+    "gateway-compatibility-v1.1.0": {
+      "seconds": 464,
+      "run_id": 38483303507
+    },
+    "gateway-compatibility-v1.5.1": {
+      "seconds": 458,
+      "run_id": 38483303507
+    },
+    "gateway-compatibility-v1.4.0": {
+      "seconds": 424,
+      "run_id": 38483303507
+    },
+    "unit-renderer-1": {
+      "seconds": 317,
+      "run_id": 38487659388
+    },
+    "unit-renderer-2": {
+      "seconds": 239,
+      "run_id": 38487659388
+    },
+    "unit-renderer-3": {
+      "seconds": 315,
+      "run_id": 38487659388
+    },
+    "coverage-combined": {
+      "seconds": 67,
+      "run_id": 38483303507
+    }
+  },
+  "early_jobs": [
+    "unit-command-1",
+    "unit-rest"
+  ],
+  "cache_reuse_chains": [
+    [
+      "unit-command-1",
+      "unit-command-2",
+      "unit-command-3"
+    ],
+    [
+      "unit-rest",
+      "test-support"
+    ],
+    [
+      "upgrade-0.2.0-alpha.3-current",
+      "gateway-compatibility-v1.4.0"
+    ],
+    [
+      "upgrade-0.2.2-current",
+      "gateway-compatibility-v1.5.1"
+    ],
+    [
+      "upgrade-0.3.0-current",
+      "gateway-compatibility-v1.1.0"
+    ]
+  ]
+}

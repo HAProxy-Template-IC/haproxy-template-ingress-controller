@@ -168,6 +168,27 @@ func NewEchoServerBackend(ctx context.Context, t *testing.T, client klient.Clien
 	return EchoServerBackend
 }
 
+// PodReadinessGate is the condition HAPTIC sets once every HAProxy pod routes
+// to a pod (controller.templateLibraries.kubernetesBackends.podReadinessGate).
+const PodReadinessGate = "haproxy-haptic.org/load-balancer-ready"
+
+// NewGatedEchoServerBackend is NewEchoServerBackend with the HAPTIC readiness
+// gate on its pod template. The wait for a ready endpoint therefore also waits
+// for HAPTIC to set the gate.
+func NewGatedEchoServerBackend(ctx context.Context, t *testing.T, client klient.Client, namespace string) BackendRef {
+	t.Helper()
+	gate := func(deployment *appsv1.Deployment) {
+		deployment.Spec.Template.Spec.ReadinessGates = []corev1.PodReadinessGate{{ConditionType: PodReadinessGate}}
+	}
+	if err := applyNamedEchoServerBackend(ctx, client, namespace, EchoServerBackend, 1, gate); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if err := waitForServiceEndpointReady(ctx, client, namespace, EchoServerBackend.Service); err != nil {
+		t.Fatalf("gated echo-server endpoint not ready: %v", err)
+	}
+	return EchoServerBackend
+}
+
 // NewNamedEchoServerBackend is NewEchoServerBackend for a caller-chosen Service
 // name (port 80), so one test namespace can host more than one echo backend —
 // e.g. a primary route target plus a separate request-mirror target. Deploys
@@ -214,7 +235,7 @@ func applyEchoServerBackend(ctx context.Context, client klient.Client, namespace
 // applyNamedEchoServerBackend is applyEchoServerBackend parameterised by the
 // BackendRef and replica count, so callers can deploy additional echo backends
 // under distinct Service names in the same namespace, optionally multi-replica.
-func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, namespace string, ref BackendRef, replicas int32) error {
+func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, namespace string, ref BackendRef, replicas int32, mutators ...func(*appsv1.Deployment)) error {
 	labels := map[string]string{"app": ref.Service}
 
 	deployment := &appsv1.Deployment{
@@ -285,6 +306,9 @@ func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, name
 				},
 			},
 		},
+	}
+	for _, mutate := range mutators {
+		mutate(deployment)
 	}
 	if err := client.Resources(namespace).Create(ctx, deployment); err != nil {
 		return fmt.Errorf("create echo-server Deployment %s/%s: %w", namespace, ref.Service, err)

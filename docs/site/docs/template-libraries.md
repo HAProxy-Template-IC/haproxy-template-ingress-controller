@@ -298,7 +298,7 @@ items:
 This example supplies its own minimal routing configuration. Its `host.map` maps
 hostnames directly to backends; the bundled base library uses a different map
 contract. For an example that extends the bundled chart, use the
-[custom-CRD library](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd).
+[custom-CRD library](https://github.com/haproxy-haptic/HAPTIC/tree/main/examples/byo-crd).
 
 <a id="library-architecture"></a>
 

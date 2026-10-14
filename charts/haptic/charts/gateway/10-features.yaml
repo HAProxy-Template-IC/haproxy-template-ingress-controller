@@ -100,7 +100,8 @@ templateSnippets:
       {%- var gf = shared.Get("globalFeatures").(map[string]any) %}
       {%- var sslBackends = gf | dig("sslPassthroughBackends") %}
       {%- if sslBackends != nil %}
-        {%- for _, backend := range incremental_values("gateway-ssl-passthrough", "backends") %}
+        {%- var orderedBackends = incremental_values("gateway-ssl-passthrough", "backends") | sort_by([]string{"$.rank"}) %}
+        {%- for _, backend := range orderedBackends %}
           {%- gf["sslPassthroughBackends"] = append(gf["sslPassthroughBackends"].([]any), backend) %}
         {%- end %}
       {%- end %}
@@ -1029,31 +1030,41 @@ templateSnippets:
       {%- for _, flag := range incremental_values("gateway-bind-flags", "flags") %}
         {%- gf[tostring(flag)] = true %}
       {%- end %}
-      {#- TLS listeners feed the per-port mode-tcp frontends of
-          frontends-600-gateway-tls-listener, keyed by port: the first listener
-          on a port sets the port's mode (mixed modes are already flagged
-          ProtocolConflict by the status patches). -#}
+      {{- render "util-gateway-pod-port-allocator" -}}
       {%%
         var tlsRecords = incremental_values("gateway-bind-flags", "tls")
+        var allocations = shared.Get("gatewayPodPortAllocations").(map[string]any)
         if len(tlsRecords) > 0 {
           var byPortRaw, _ = shared.ComputeIfAbsent("gatewayTLSListenersByPort", func() any { return map[int]any{} })
           var byPort = byPortRaw.(map[int]any)
           for _, recordAny := range tlsRecords {
             var record = recordAny.(map[string]any)
-            var port = toint(record["port"])
-            var portEntry, exists = byPort[port]
-            if !exists {
-              portEntry = map[string]any{"mode": tostring(record["mode"]), "listeners": []any{}}
+            var sourcePort = toint(record["port"])
+            var ports = []int{sourcePort}
+            var allocationKey = tostring(record["gwNs"]) + "/" + tostring(record["gwName"]) + ":" +
+              tostring(record["name"]) + ":" + tostring(sourcePort)
+            var allocated, found = allocations[allocationKey]
+            if found && toint(allocated) != sourcePort { ports = append(ports, toint(allocated)) }
+            for _, port := range ports {
+              var portEntry, exists = byPort[port]
+              if !exists {
+                portEntry = map[string]any{
+                  "mode": tostring(record["mode"]), "listeners": []any{}, "sourcePort": sourcePort,
+                  "gatewayNamespace": "", "gatewayName": "",
+                }
+                if port != sourcePort {
+                  portEntry.(map[string]any)["gatewayNamespace"] = record["gwNs"]
+                  portEntry.(map[string]any)["gatewayName"] = record["gwName"]
+                }
+              }
+              var pe = portEntry.(map[string]any)
+              pe["listeners"] = append(pe["listeners"].([]any), map[string]any{
+                "gwNs": tostring(record["gwNs"]), "gwName": tostring(record["gwName"]),
+                "name": tostring(record["name"]), "hostname": tostring(record["hostname"]),
+                "mode": tostring(record["mode"]),
+              })
+              byPort[port] = pe
             }
-            var pe = portEntry.(map[string]any)
-            pe["listeners"] = append(pe["listeners"].([]any), map[string]any{
-              "gwNs":     tostring(record["gwNs"]),
-              "gwName":   tostring(record["gwName"]),
-              "name":     tostring(record["name"]),
-              "hostname": tostring(record["hostname"]),
-              "mode":     tostring(record["mode"]),
-            })
-            byPort[port] = pe
           }
         }
       %%}

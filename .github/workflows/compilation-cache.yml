@@ -1,0 +1,40 @@
+name: Refresh shared compilation caches
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: compilation-cache-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compile:
+    name: Compile ${{ matrix.shard }} test packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+        - command
+        - renderer
+        - rest
+    env:
+      PILOT_SOURCE_SHA: ${{ github.sha }}
+      PILOT_SUITE: unit-cache
+      PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      SHARD_ID: ${{ matrix.shard }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Restore and update compiled packages
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: ${{ env.PILOT_GO_CACHE_DIR }}
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml') }}-${{ matrix.shard
+          == 'command' && 'command-race' || matrix.shard }}
+        restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ matrix.shard == 'command' && 'command-race' || matrix.shard
+          }}-
+    - name: Compile test packages without executing tests
+      run: bash .github/scripts/run-remaining-pilot.sh

@@ -122,7 +122,7 @@ def evaluate(cur, history):
     pool = [r for r in history if r.get("runner_cpu_model") == model][:WINDOW]
     if len(pool) < MIN_BASELINES:
         lines.append(f"TREND UNGATED: {len(pool)} of {MIN_BASELINES} required baselines on this CPU model; "
-                     "this run becomes one.")
+                     "comparison waits for matching history.")
         return lines, False
     lines.append(f"baseline: median of {len(pool)} runs (jobs {', '.join(str(r['_job_id']) for r in pool)})")
 

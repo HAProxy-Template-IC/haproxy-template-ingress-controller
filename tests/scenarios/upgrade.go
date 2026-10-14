@@ -20,7 +20,7 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
 )
 
-const chartOCI = "oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic"
+const chartOCI = "oci://ghcr.io/haproxy-haptic/haptic/charts/haptic"
 const brokenTemplate = "{%- var x = %}"
 
 type upgrade struct {

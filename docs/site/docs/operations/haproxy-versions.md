@@ -55,7 +55,7 @@ Use these values when installing HAPTIC. For an existing release, follow
 
 ## Patch version pinning
 
-By default, the HAProxy pod image is pinned to the latest patch version tested with the chart, looked up from the `haproxyPatchVersions` map in [`charts/haptic/values.yaml`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/charts/haptic/values.yaml). An installed release keeps that image until you upgrade it.
+By default, the HAProxy pod image is pinned to the latest patch version tested with the chart, looked up from the `haproxyPatchVersions` map in [`charts/haptic/values.yaml`](https://github.com/haproxy-haptic/HAPTIC/blob/main/charts/haptic/values.yaml). An installed release keeps that image until you upgrade it.
 
 To pin a specific patch version yourself, set `haproxy.image.tag`:
 
@@ -114,7 +114,7 @@ For a chart-managed Community Edition deployment, this example selects HAProxy
 HAProxy images. It preserves the release's other values:
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic --reuse-values \
   --set-string haproxyVersion=3.3 \
   --set-string haproxy.image.tag= --set-string controller.image.tag=

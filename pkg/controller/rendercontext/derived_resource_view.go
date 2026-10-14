@@ -329,11 +329,12 @@ func resolveDerivedResourceProjection(
 				projection.identity.Resource, projection.identity.Namespace, projection.identity.Name, err)
 		}
 		if found {
-			projection.entry, err = validateResolvedDerivedResource(projection.identity, projection.source, &entry)
+			projection.entry, projection.projected, err = validateResolvedDerivedResource(projection.identity, projection.source, &entry)
 			if err != nil {
 				return err
 			}
 			projection.found = true
+			return nil
 		}
 	}
 	if !projection.found {
@@ -355,15 +356,16 @@ func validateResolvedDerivedResource(
 	identity DerivedResourceIdentity,
 	source []byte,
 	resolved *DerivedResource,
-) (DerivedResource, error) {
+) (DerivedResource, any, error) {
 	entry := DerivedResource{
 		Identity: resolved.Identity,
 		Source:   slices.Clone(resolved.Source),
 		Value:    slices.Clone(resolved.Value),
 	}
 	if entry.Identity != identity {
-		return DerivedResource{}, errors.New("resolved derived resource identity does not match its lookup")
+		return DerivedResource{}, nil, errors.New("resolved derived resource identity does not match its lookup")
 	}
+	var projected any
 	for _, candidate := range []struct {
 		label   string
 		encoded []byte
@@ -372,25 +374,28 @@ func validateResolvedDerivedResource(
 		{label: "value", encoded: entry.Value},
 	} {
 		if !json.Valid(candidate.encoded) {
-			return DerivedResource{}, fmt.Errorf("resolved derived resource %s is not valid JSON", candidate.label)
+			return DerivedResource{}, nil, fmt.Errorf("resolved derived resource %s is not valid JSON", candidate.label)
 		}
 		value, err := decodeDerivedResource(candidate.encoded)
 		if err != nil {
-			return DerivedResource{}, fmt.Errorf("decoding resolved derived resource %s: %w", candidate.label, err)
+			return DerivedResource{}, nil, fmt.Errorf("decoding resolved derived resource %s: %w", candidate.label, err)
 		}
 		candidateIdentity, err := derivedResourceIdentity(identity.Resource, value)
 		if err != nil {
-			return DerivedResource{}, fmt.Errorf("resolved derived resource %s: %w", candidate.label, err)
+			return DerivedResource{}, nil, fmt.Errorf("resolved derived resource %s: %w", candidate.label, err)
 		}
 		if candidateIdentity != identity {
-			return DerivedResource{}, fmt.Errorf("resolved derived resource %s identity does not match its owner", candidate.label)
+			return DerivedResource{}, nil, fmt.Errorf("resolved derived resource %s identity does not match its owner", candidate.label)
+		}
+		if candidate.label == "value" {
+			projected = value
 		}
 	}
 	if !bytes.Equal(source, entry.Source) {
-		return DerivedResource{}, fmt.Errorf("%w for %s %s/%s", ErrDerivedResourceStale,
+		return DerivedResource{}, nil, fmt.Errorf("%w for %s %s/%s", ErrDerivedResourceStale,
 			identity.Resource, identity.Namespace, identity.Name)
 	}
-	return entry, nil
+	return entry, projected, nil
 }
 
 // Bind records the exact store source behind a typed or otherwise materialized value.

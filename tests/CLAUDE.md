@@ -295,7 +295,7 @@ addresses inside those ranges, and add any new creator to the list.
 
 ### Measuring controller memory at scale
 
-`TestScale` is the instrument; the nightly tier enforces its RSS budget at 800
+`TestScale` is the instrument; the `scale` CI job enforces its RSS budget at 800
 Ingresses. To measure larger installs locally (#284), run it on an isolated
 cluster with the workload kept:
 
@@ -547,11 +547,11 @@ When a test fails intermittently:
 ### Example Investigation
 
 ```bash
-# Download CI job artifacts
-glab api --method GET "projects/<project>/jobs/<job_id>/artifacts" > artifacts.zip
+# Download CI run artifacts
+gh run download <run_id> --repo haproxy-haptic/HAPTIC --dir artifacts
 
 # View job logs
-glab api --method GET "projects/<project>/jobs/<job_id>/trace"
+gh run view --job <job_id> --repo haproxy-haptic/HAPTIC --log
 
 # Run test in loop locally to reproduce
 for i in {1..50}; do

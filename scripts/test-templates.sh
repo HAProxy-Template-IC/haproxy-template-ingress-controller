@@ -70,7 +70,7 @@ This script automates the correct workflow:
   3. controller validate with offline schemas to run tests
 
 OPTIONS:
-  --test NAME           Run specific test by name
+  --test NAME           Run specific test by name; repeat to select several tests
   --workers N           Number of parallel test workers (0=automatic CPU and memory budget, 1=sequential, default: 0)
   --dump-rendered       Dump all rendered content
   --verbose             Show rendered content preview for failed assertions
@@ -180,7 +180,7 @@ trap 'rm -f "$TEMP_CONFIG"' EXIT
 # env var (matches the _global fixtures which provide SSL certs in 'default').
 #
 # HAPROXY_VERSION env var is honored so CI's per-version matrix
-# (.validate-helm-libraries-base in .gitlab-ci.yml) can render with the
+# (the helm-3.x jobs) can render with the
 # matching haproxyVersion value. When unset, the chart's values.yaml
 # default applies.
 HAPROXY_VERSION_ARG=""
@@ -213,6 +213,7 @@ if ! helm template "$CHART_DIR" \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
     --set controller.templateLibraries.customCrdExample.enabled=true \
+    --set controller.templateLibraries.kubernetesBackends.podReadinessGate.enabled=true \
     --set defaultSSLCertificate.secretName=regression-custom-rsa-cert \
     --set defaultSSLCertificate.ecdsaSecretName=regression-custom-ecdsa-cert \
     --set 'controller.config.templatingSettings.extraContext.tls.sessionTickets.enabled=true' \
@@ -414,11 +415,9 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         --set rateLimit.shared.managedStore.enabled=true \
         --set spoaHub.plugins.coraza.enabled=true \
         | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' > "$POLICY_CONFIG"
-    for TEST in test-gateway-policy-authentication test-gateway-policy-shared-rate-limit \
-        test-gateway-policy-private-cache test-gateway-policy-waf-catalogs; do
-        "$CONTROLLER_BIN" validate --file "$POLICY_CONFIG" "${SCHEMA_DIR_ARGS[@]}" --test "$TEST" "$@" || FULL_RC=$?
-        if [[ $FULL_RC -ne 0 ]]; then break; fi
-    done
+    "$CONTROLLER_BIN" validate --file "$POLICY_CONFIG" "${SCHEMA_DIR_ARGS[@]}" \
+        --test test-gateway-policy-authentication --test test-gateway-policy-shared-rate-limit \
+        --test test-gateway-policy-private-cache --test test-gateway-policy-waf-catalogs "$@" || FULL_RC=$?
     if [[ $FULL_RC -eq 0 && ${#SCHEMA_DIR_ARGS[@]} -gt 0 ]]; then
         POLICY_SCHEMAS=$(mktemp -d /tmp/haptic-policy-schemas-XXXXXX)
         cp "$SCHEMA_DIR"/*.yaml "$POLICY_SCHEMAS/"
@@ -457,33 +456,28 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         echo -e "${RED}Error: Failed to render shared rate-limit Helm profile${NC}" >&2
         exit 1
     fi
-    for TEST in \
-        test-haptic-canary-by-header \
-        test-nginx-ingress-canary-by-header \
-        test-haptic-cache-core \
-        test-gateway-policy-shared-rate-limit \
-        test-gateway-policy-waf \
-        test-gateway-policy-waf-invalid \
-        test-gateway-policy-waf-catalogs \
-        test-gateway-policy-waf-baseline \
-        test-haptic-rate-limit-shared-ip \
-        test-haptic-rate-limit-shared-ip-allowlist \
-        test-haptic-rate-limit-shared-ip-before-waf \
-        test-haptic-rate-limit-shared-exact-consumer \
-        test-haptic-rate-limit-shared-strict-unavailable \
-        test-haptic-rate-limit-shared-consumer-cache-route \
-        test-haptic-rate-limit-shared-consumer-cache-without-api-key-accepted \
-        test-haptic-cache-shared-rate-limit-loopback \
-        test-haptic-cache-autoscaling \
-        test-haptic-rate-limit-shared-invalid-requests \
-        test-haptic-rate-limit-shared-invalid-period-zero \
-        test-haptic-rate-limit-shared-refill-horizon-too-long; do
-        echo -e "${YELLOW}Shared rate-limit profile: ${TEST}...${NC}" >&2
-        "$CONTROLLER_BIN" validate --file "$RATE_LIMIT_CONFIG" "${SCHEMA_DIR_ARGS[@]}" --test "$TEST" "$@" || FULL_RC=$?
-        if [[ $FULL_RC -ne 0 ]]; then
-            break
-        fi
-    done
+    "$CONTROLLER_BIN" validate --file "$RATE_LIMIT_CONFIG" "${SCHEMA_DIR_ARGS[@]}" \
+        --test test-haptic-canary-by-header \
+        --test test-nginx-ingress-canary-by-header \
+        --test test-haptic-cache-core \
+        --test test-gateway-policy-shared-rate-limit \
+        --test test-gateway-policy-waf \
+        --test test-gateway-policy-waf-invalid \
+        --test test-gateway-policy-waf-catalogs \
+        --test test-gateway-policy-waf-baseline \
+        --test test-haptic-rate-limit-shared-ip \
+        --test test-haptic-rate-limit-shared-ip-allowlist \
+        --test test-haptic-rate-limit-shared-ip-before-waf \
+        --test test-haptic-rate-limit-shared-exact-consumer \
+        --test test-haptic-rate-limit-shared-strict-unavailable \
+        --test test-haptic-rate-limit-shared-consumer-cache-route \
+        --test test-haptic-rate-limit-shared-consumer-cache-without-api-key-accepted \
+        --test test-haptic-cache-shared-rate-limit-loopback \
+        --test test-haptic-cache-autoscaling \
+        --test test-haptic-rate-limit-shared-invalid-requests \
+        --test test-haptic-rate-limit-shared-invalid-period-zero \
+        --test test-haptic-rate-limit-shared-refill-horizon-too-long \
+        "$@" || FULL_RC=$?
 fi
 
 # Optional API-gateway request-validation profile. The normal render keeps the
@@ -509,19 +503,14 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
         echo -e "${RED}Error: Failed to render request-validation Helm profile${NC}" >&2
         exit 1
     fi
-    for TEST in \
-        test-haptic-request-validation-configmap \
-        test-haptic-request-validation-secret \
-        test-haptic-request-validation-rejects-two-sources \
-        test-haptic-request-validation-missing-key \
-        test-haptic-request-validation-max-body-bounded \
-        test-haptic-request-validation-max-body-fits-buffer; do
-        echo -e "${YELLOW}Request-validation profile: ${TEST}...${NC}" >&2
-        "$CONTROLLER_BIN" validate --file "$REQUEST_VALIDATION_CONFIG" "${SCHEMA_DIR_ARGS[@]}" --test "$TEST" "$@" || FULL_RC=$?
-        if [[ $FULL_RC -ne 0 ]]; then
-            break
-        fi
-    done
+    "$CONTROLLER_BIN" validate --file "$REQUEST_VALIDATION_CONFIG" "${SCHEMA_DIR_ARGS[@]}" \
+        --test test-haptic-request-validation-configmap \
+        --test test-haptic-request-validation-secret \
+        --test test-haptic-request-validation-rejects-two-sources \
+        --test test-haptic-request-validation-missing-key \
+        --test test-haptic-request-validation-max-body-bounded \
+        --test test-haptic-request-validation-max-body-fits-buffer \
+        "$@" || FULL_RC=$?
     if [[ $FULL_RC -eq 0 ]]; then
         echo -e "${YELLOW}Request-validation Helm guard: requestBody.defaultMaxBytes hard cap...${NC}" >&2
         GUARD_ERR=$(mktemp /tmp/haptic-request-validation-guard-XXXXXX.log)

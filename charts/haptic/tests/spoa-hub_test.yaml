@@ -585,7 +585,7 @@ tests:
     asserts:
       - matchRegex:
           path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].image
-          pattern: 'registry\.gitlab\.com/haproxy-haptic/haptic/spoa-hub:\d+\.\d+\.\d+'
+          pattern: 'ghcr\.io/haproxy-haptic/haptic/spoa-hub:\d+\.\d+\.\d+'
 
   - it: should respect spoaHub.image.tag override
     template: haproxy-deployment.yaml
@@ -595,7 +595,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.initContainers[?(@.name=="spoa-hub")].image
-          value: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:v0.9.9-test
+          value: ghcr.io/haproxy-haptic/haptic/spoa-hub:v0.9.9-test
 
   - it: should render the SPOP listener with the configured socketPath
     template: spoa-hub-configmap.yaml

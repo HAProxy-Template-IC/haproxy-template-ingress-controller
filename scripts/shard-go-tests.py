@@ -16,7 +16,7 @@ def unmeasured_weight(weights):
     return {"seconds": statistics.median(serial_seconds) if serial_seconds else 1.0, "parallel": False}
 
 
-def partition(inventory, total, weights=None, include=None):
+def partition(inventory, total, weights=None, include=None, kinds=("Test",)):
     """Split the inventory into `total` shards of balanced measured cost.
 
     weights maps a test name to {"seconds": float, "parallel": bool}, as written
@@ -25,10 +25,13 @@ def partition(inventory, total, weights=None, include=None):
     """
     if total < 1:
         raise ValueError("shard total must be positive")
-    names = sorted({line.strip() for line in inventory.splitlines() if re.fullmatch(r"Test\w*", line.strip())})
+    if not kinds or set(kinds) - {"Test", "Example", "Fuzz"}:
+        raise ValueError("unsupported test kinds")
+    name_pattern = r"(?:" + "|".join(kinds) + r")\w*"
+    names = sorted({line.strip() for line in inventory.splitlines() if re.fullmatch(name_pattern, line.strip())})
     if include is not None:
         selected = include.splitlines()
-        if not selected or any(not re.fullmatch(r"Test\w*", name) for name in selected):
+        if not selected or any(not re.fullmatch(name_pattern, name) for name in selected):
             raise ValueError("selection must contain one test name per line")
         if len(selected) != len(set(selected)):
             raise ValueError("selection contains duplicate test names")
@@ -64,6 +67,7 @@ def main():
     parser.add_argument("total", type=int)
     parser.add_argument("--weights", help="JSON file written by go-test-weights.py")
     parser.add_argument("--include", help="File of exact test names to select from the compiled inventory")
+    parser.add_argument("--kinds", nargs="+", choices=("Test", "Example", "Fuzz"), default=["Test"])
     args = parser.parse_args()
     if not 1 <= args.index <= args.total:
         parser.error("shard index must be between one and the shard total")
@@ -76,7 +80,7 @@ def main():
         with open(args.include, encoding="utf-8") as handle:
             include = handle.read()
     try:
-        shards = partition(sys.stdin.read(), args.total, weights, include)
+        shards = partition(sys.stdin.read(), args.total, weights, include, args.kinds)
     except ValueError as error:
         parser.error(str(error))
     print("^(" + "|".join(re.escape(name) for name in shards[args.index - 1]) + ")$")

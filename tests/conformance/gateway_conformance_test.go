@@ -355,9 +355,9 @@ func TestGatewayAPIConformance(t *testing.T) {
 	opts.Implementation = confv1.Implementation{
 		Organization: "haproxy-haptic",
 		Project:      "haptic",
-		URL:          "https://gitlab.com/haproxy-haptic/haptic",
+		URL:          "https://github.com/haproxy-haptic/HAPTIC",
 		Version:      implVersion,
-		Contact:      []string{"https://gitlab.com/haproxy-haptic/haptic/-/issues"},
+		Contact:      []string{"https://github.com/haproxy-haptic/HAPTIC/issues"},
 	}
 	// SkipTests is the right place to opt-out of *individual* upstream
 	// tests when a specific assertion is known broken — never use

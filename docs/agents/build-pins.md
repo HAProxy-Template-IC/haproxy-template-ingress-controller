@@ -23,3 +23,12 @@ The cache key hashes every file listed in `.gitlab/ci/image-build-inputs.txt`,
 including the pin file. A pin change rebuilds the CI images; verify those build
 jobs and the affected test matrix before merging. Preserve snapshot dates and
 checksums when retrying a transient download failure.
+
+GitHub jobs reuse the images recorded in `.github/ci-toolchains.json` when their
+build inputs match. Changed inputs rebuild the toolchain before tests run.
+The native ARM jobs select Go's exact version from the pinned `GO_BUILD_IMAGE`
+metadata and read other tool versions from the same build pins.
+
+When updating Kind, Helm, kubectl, or yq, add the matching ARM64 download checksum
+to `.github/native-tool-checksums.json`. Keep the checksum for its bootstrap yq
+version too. Run `make test-github-verification` to check the complete selection.

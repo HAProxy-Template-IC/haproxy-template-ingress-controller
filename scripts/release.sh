@@ -21,8 +21,8 @@
 # After running this script:
 #   1. Review the commit — especially the promoted changelog section and the
 #      hand-curated artifacthub.io/changes annotation in Chart.yaml
-#   2. Push to a release branch and create an MR
-#   3. Merge the MR to main
+#   2. Push to a release branch and open a pull request
+#   3. Merge the pull request through the merge queue
 #   4. CI creates the v<version> tag and the release pipeline publishes
 #      binaries, container images, the Helm chart, and versioned docs
 
@@ -133,22 +133,12 @@ PREV_ESC=$(printf '%s' "$PREV_VERSION" | sed 's/[][\.^$*]/\\&/g')
 VERSION_DOC_FILES=$(grep -rlF -- "$PREV_VERSION" \
     README.md charts/haptic/README.md docs/site/docs 2>/dev/null || true)
 python3 scripts/update-release-docs.py "$PREV_VERSION" "$VERSION" "$DEFAULT_HAPROXY" $VERSION_DOC_FILES
-# These files ship inside the released chart (Artifact Hub renders README and
-# values.yaml; NOTES.txt prints after install; Chart.yaml carries the Artifact
-# Hub Documentation link), so their hosted-docs links must point at the version
-# being released, not the moving dev docs — and repo-blob links (e.g. the ADR
-# rationale pointer in values.yaml) must pin to the release tag, not the moving
-# main branch. Two patterns per link kind keep this idempotent across releases:
-# the first release rewrites the initial dev/main links; every later release
-# rewrites the previous version's links (same PREV->CURRENT keying as the
-# version-pin rewrites above). The v$VERSION tag doesn't exist yet when this
-# runs (CI creates it after the release MR merges), but the chart is only
-# published by that tag's pipeline, so shipped links always resolve.
+# Shipped chart links must resolve to its release; see docs/site/docs/development/releasing.md.
 sed -i \
     -e "s|haproxy-haptic.org/docs/dev/|haproxy-haptic.org/docs/$VERSION/|g" \
     -e "s|haproxy-haptic.org/docs/$PREV_ESC/|haproxy-haptic.org/docs/$VERSION/|g" \
-    -e "s|gitlab.com/haproxy-haptic/haptic/-/blob/main/|gitlab.com/haproxy-haptic/haptic/-/blob/v$VERSION/|g" \
-    -e "s|gitlab.com/haproxy-haptic/haptic/-/blob/v$PREV_ESC/|gitlab.com/haproxy-haptic/haptic/-/blob/v$VERSION/|g" \
+    -e "s|github.com/haproxy-haptic/HAPTIC/blob/main/|github.com/haproxy-haptic/HAPTIC/blob/v$VERSION/|g" \
+    -e "s|github.com/haproxy-haptic/HAPTIC/blob/v$PREV_ESC/|github.com/haproxy-haptic/HAPTIC/blob/v$VERSION/|g" \
     charts/haptic/README.md \
     charts/haptic/values.yaml \
     charts/haptic/Chart.yaml \
@@ -187,12 +177,12 @@ echo "     - check the promoted [$VERSION] changelog section reads as release no
 echo "     - update the hand-curated artifacthub.io/changes annotation in"
 echo "       charts/haptic/Chart.yaml (summary bullets for the new release)"
 echo "  2. Create release branch: git checkout -b release/v$VERSION"
-echo "  3. Push and create MR: git push -u origin release/v$VERSION"
-echo "  4. Merge the MR to main"
+echo "  3. Push and open a pull request: git push -u origin release/v$VERSION"
+echo "  4. Merge the pull request through the merge queue"
 echo ""
 echo "After merge, CI will automatically:"
 echo "  - Create tag v$VERSION (after the full post-merge pipeline passes)"
 echo "  - Build binaries and Docker images (controller + spoa-hub)"
 echo "  - Package and push the Helm chart to the OCI registry"
-echo "  - Create the GitLab release with the [$VERSION] changelog section"
+echo "  - Create the GitHub release with the [$VERSION] changelog section"
 echo "  - Publish versioned documentation"

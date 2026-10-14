@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 mode="${1:?usage: spoa-release-image.sh prepare|verify}"
 [[ "$mode" == prepare || "$mode" == verify ]] || exit 2
 version="$(<VERSION)"
-repository="${CI_REGISTRY_IMAGE:-registry.gitlab.com/haproxy-haptic/haptic}/spoa-hub"
+repository="${CI_REGISTRY_IMAGE:-ghcr.io/haproxy-haptic/haptic}/spoa-hub"
 release_image="${repository}:${version}"
 input_label=org.haproxy-haptic.spoa.inputs-sha256
 work_dir="$(mktemp -d)"

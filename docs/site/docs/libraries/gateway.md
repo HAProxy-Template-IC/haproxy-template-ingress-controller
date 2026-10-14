@@ -1384,7 +1384,7 @@ TLSRoute and TCPRoute status is written on the `deployed` outcome only (see thei
   and `RegularExpression` path rewrites, which stay structural — see the zero-reload
   table in [Supported configuration](../supported-configuration.md).
 
-TLSRoute- and TCPRoute-specific limitations are listed in their sections above. If one of these gaps matters to you, [open an issue](https://gitlab.com/haproxy-haptic/haptic/-/issues).
+TLSRoute- and TCPRoute-specific limitations are listed in their sections above. If one of these gaps matters to you, [open an issue](https://github.com/haproxy-haptic/HAPTIC/issues).
 
 ---
 

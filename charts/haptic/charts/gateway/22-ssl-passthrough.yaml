@@ -34,6 +34,7 @@ templateSnippets:
         {%- for _, host := range toSlice(dig(route, "spec", "hostnames")) %}
           {%%
             show shared.Publish("backends", "0/http/" + tostring(host), map[string]any{
+              "rank": "0/http/" + namespace + "/" + routeName + "/" + tostring(host),
               "name": "ssl-passthrough-" + namespace + "-" + routeName,
               "sni": host, "namespace": namespace, "route": routeName, "route_type": "httproute",
             })
@@ -45,7 +46,7 @@ templateSnippets:
   util-publish-gateway-tls-ssl-passthrough:
     requires: [gateways, namespaces, referencegrants, services, tlsroutes]
     template: |
-      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection %}
+      {%- import "util-hostname-intersect-gateway" for HostnameSinglePairIntersection, HostnameRank %}
       {%- import "util-reference-grant-permitted" for ReferenceGrantPermitted %}
       {%- import "util-resource-helpers" for ListenerName, ListenerProtocol, ListenerHostname %}
       {%- macro PublishGatewayTLSSSLPassthrough(tlsRoute *resources.tlsroutes.T) %}
@@ -66,6 +67,10 @@ templateSnippets:
             var nameStr = route.Metadata.Name
             var routeHostnames = route.Spec.Hostnames
             var rules = route.Spec.Rules
+            var ageRank = "1/"
+            if route.Metadata.CreationTimestamp != "" {
+              ageRank = "0/" + route.Metadata.CreationTimestamp + "/"
+            }
           %%}
           {%- for ruleIdx, rule := range rules %}
             {%%
@@ -120,9 +125,7 @@ templateSnippets:
                 if len(encoded) >= len(zeroes) { return encoded }
                 return zeroes[:len(zeroes)-len(encoded)] + encoded
               }
-              // One leg per (SNI, listener port): the per-port frontends each
-              // need their own entry, and a listener's mode decides the leg's
-              // backend. The first listener claiming a (SNI, port) wins.
+              // Keep each Gateway attachment even when its SNI and listener port match another.
               var legs = map[string]any{}
             %%}
             {%- for _, parentRef := range route.Spec.ParentRefs %}
@@ -254,17 +257,21 @@ templateSnippets:
                   {%- if inter != "" %}
                     {%- snisForRule[inter] = true %}
                     {%%
-                      var legKey = inter + "\x00" + fixed(lPort)
-                      _, alreadySeen := legs[legKey]
+                      var legKey = prNs + "/" + prName + "\x00" + inter + "\x00" + fixed(lPort)
+                      var routeHostnameRank = toint(HostnameRank(rhStr))
+                      existingLeg, alreadySeen := legs[legKey]
                       if !alreadySeen {
                         legs[legKey] = map[string]any{
                           "sni":               inter,
+                          "route_hostname_rank": routeHostnameRank,
                           "port":              lPort,
                           "mode":              lMode,
                           "listener_hostname": lHost,
                           "gw_namespace":      prNs,
                           "gw_name":           prName,
                         }
+                      } else if routeHostnameRank > toint(dig(existingLeg, "route_hostname_rank")) {
+                        existingLeg.(map[string]any)["route_hostname_rank"] = routeHostnameRank
                       }
                     %%}
                   {%- end %}
@@ -332,8 +339,11 @@ templateSnippets:
                 entry["listener_hostname"] = leg["listener_hostname"]
                 entry["invalid"] = !ruleResolved
                 entry["targets"] = targetsFor(tostring(entry["name"]))
+                var precedence = fixed(1000000000 - toint(leg["route_hostname_rank"])) + "/" + ageRank
+                entry["rank"] = "1/tls/" + precedence + nsStr + "/" + route.Metadata.Name + "/" + fixed(ruleIdx)
                 show shared.Publish("backends", "1/tls/" + nsStr + "/" + route.Metadata.Name + "/" +
-                  fixed(ruleIdx) + "/" + tostring(leg["sni"]) + "/" + fixed(toint(leg["port"])), entry)
+                  fixed(ruleIdx) + "/" + tostring(leg["gw_namespace"]) + "/" + tostring(leg["gw_name"]) + "/" +
+                  tostring(leg["sni"]) + "/" + fixed(toint(leg["port"])), entry)
               %%}
             {%- end %}
           {%- end %}

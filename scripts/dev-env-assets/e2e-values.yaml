@@ -95,6 +95,9 @@ controller:
       enabled: true
     nginxIngress:
       enabled: true
+    kubernetesBackends:
+      podReadinessGate:
+        enabled: true
 
   # Route the rendered SPOA-hub TOML through the validator sidecar at
   # admission time. The webhook dry-renders the prospective config

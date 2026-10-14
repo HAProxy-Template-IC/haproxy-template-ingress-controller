@@ -1,0 +1,52 @@
+name: Gateway benchmark migration proof
+'on':
+  workflow_call: null
+permissions:
+  contents: read
+concurrency:
+  group: gateway-benchmark-proof-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  benchmark:
+    name: gateway-api-benchmark-smoke
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 165
+    env:
+      HAPTIC_E2E_CONTROLLER_STARTUP: parallel
+      HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Install pinned native tools
+      run: bash .github/scripts/install-arm-pilot-tools.sh
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      with:
+        go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
+        cache: true
+        cache-dependency-path: go.sum
+    - name: Install benchmark source inspection tools
+      run: 'sudo apt-get update -qq
+
+        sudo apt-get install -y --no-install-recommends ripgrep
+
+        '
+    - name: Run unchanged benchmark workload and artifact gates
+      run: "export BENCH_CI_OUTPUT=\"$RUNNER_TEMP/gateway-benchmark\"\nmkdir -p \"$BENCH_CI_OUTPUT\"\nexport HAPTIC_E2E_EXTRA_VALUES=\"\
+        $RUNNER_TEMP/benchmark-bootstrap-values.yaml\"\ncat > \"$HAPTIC_E2E_EXTRA_VALUES\" <<'YAML'\ncontroller:\n  extraEnv:\n\
+        \    - {name: GOMAXPROCS, value: '2'}\n    - {name: GOGC, value: '300'}\n    - {name: TMPDIR, value: /v}\n  extraVolumes:\n\
+        \    - name: validation-scratch\n      emptyDir: {medium: Memory, sizeLimit: 512Mi}\n  extraVolumeMounts:\n    - {name:\
+        \ validation-scratch, mountPath: /v}\nYAML\nmake bench-gateway-api-ci\n"
+    - name: Make validated artifacts readable
+      if: always()
+      run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/gateway-benchmark"
+    - name: Retain validated benchmark evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: gateway-api-benchmark-smoke
+        path: ${{ runner.temp }}/gateway-benchmark/
+        include-hidden-files: true
+        retention-days: 1
+        if-no-files-found: error

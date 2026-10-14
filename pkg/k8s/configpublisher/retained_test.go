@@ -19,9 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stesting "k8s.io/client-go/testing"
@@ -36,13 +38,70 @@ import (
 
 func retainedPublishRequest(t *testing.T) PublishRequest {
 	t.Helper()
-	fixture := newConfigPublisherOutputFixture(t)
+	return retainedPublishRequestWithConfig(t, "global\n")
+}
+
+func retainedPublishRequestWithConfig(t *testing.T, config string) PublishRequest {
+	t.Helper()
+	fixture := newConfigPublisherOutputFixtureWithConfig(t, config)
 	req := basePublishRequest()
 	req.OutputSnapshot = fixture.snapshot
 	planID, err := fixture.snapshot.PlanID()
 	require.NoError(t, err)
 	req.ConfirmedPod = &v1.PodDeploymentStatus{PodName: "haproxy-0", PodUID: "pod-uid", PodRuntimeID: "container-id", Checksum: fixture.checksum, AppliedPlanID: planID, RunningPlanID: planID, WorkerOpsPlanID: planID, Mode: "reload"}
 	return req
+}
+
+func alreadyDeletedReaction(tracker k8stesting.ObjectTracker, name string) k8stesting.ReactionFunc {
+	return func(action k8stesting.Action) (bool, runtime.Object, error) {
+		deletion := action.(k8stesting.DeleteAction)
+		if deletion.GetName() != name {
+			return false, nil, nil
+		}
+		if err := tracker.Delete(action.GetResource(), action.GetNamespace(), name); err != nil {
+			return true, nil, err
+		}
+		return true, nil, apierrors.NewNotFound(action.GetResource().GroupResource(), name)
+	}
+}
+
+func TestRetainedRepublishesPrunedCheckpoint(t *testing.T) {
+	for _, alreadyDeleted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("already-deleted=%t", alreadyDeleted), func(t *testing.T) {
+			ctx, _, crd, publisher := newTestPublisher(t)
+			publisher.SetRepublishInterval(time.Hour)
+			first := retainedPublishRequest(t)
+			_, err := publisher.PublishConfig(ctx, &first)
+			require.NoError(t, err)
+			require.NoError(t, publisher.PublishRetained(ctx, &first))
+			original, err := publisher.LoadRetained(ctx, first.TemplateConfigNamespace, first.TemplateConfigName, first.TemplateConfigUID)
+			require.NoError(t, err)
+			require.Len(t, original, 1)
+			name := original[0].Reference.Name
+			if alreadyDeleted {
+				crd.PrependReactor("delete", "haproxycfgs", alreadyDeletedReaction(crd.Tracker(), name))
+			}
+			for _, maxConnections := range []int{1000, 2000} {
+				request := retainedPublishRequestWithConfig(t, fmt.Sprintf("global\n  maxconn %d\n", maxConnections))
+				_, err := publisher.PublishConfig(ctx, &request)
+				require.NoError(t, err)
+				require.NoError(t, publisher.PublishRetained(ctx, &request))
+			}
+			client := crd.HaproxyTemplateICV1alpha1().HAProxyCfgs(first.TemplateConfigNamespace)
+			_, err = client.Get(ctx, name, metav1.GetOptions{})
+			require.True(t, apierrors.IsNotFound(err))
+			_, err = publisher.PublishConfig(ctx, &first)
+			require.NoError(t, err)
+			require.NoError(t, publisher.PublishRetained(ctx, &first))
+			restored, err := publisher.LoadRetained(ctx, first.TemplateConfigNamespace, first.TemplateConfigName, first.TemplateConfigUID)
+			require.NoError(t, err)
+			require.Len(t, restored, 2)
+			assert.Equal(t, original[0].Reference.Checksum, restored[0].Reference.Checksum)
+			assert.Equal(t, name, restored[0].Reference.Name)
+			assert.Equal(t, original[0].ConfirmedPod, restored[0].ConfirmedPod)
+			require.NoError(t, restored[0].Authority.ValidateSnapshot(restored[0].Output))
+		})
+	}
 }
 
 func TestRetainedReferencesPreserveOlderRunningVersions(t *testing.T) {

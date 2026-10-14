@@ -71,6 +71,7 @@ func buildScriggoGlobals(customFilters map[string]FilterFunc, customFunctions ma
 	registerScriggoRuntimeVars(decl)
 	registerScriggoCustomFunctions(decl)
 	registerScriggoBuiltins(decl)
+	certifySynchronousDeclarations(decl)
 
 	// Register any custom filters passed in (wrapped for Scriggo)
 	for name, filter := range customFilters {
@@ -99,7 +100,7 @@ func buildScriggoGlobals(customFilters map[string]FilterFunc, customFunctions ma
 // These are declared with nil pointers so Scriggo knows the TYPE at compile time,
 // but the VALUE is provided at runtime via template.Run(vars).
 func registerScriggoRuntimeVars(decl native.Declarations) {
-	decl[declPathResolver] = (*PathResolver)(nil)
+	decl[declPathResolver] = native.Synchronous((*PathResolver)(nil), "GetBaseDir", "GetPath", "GetPath[1].Error")
 	// `resources` is deliberately NOT declared here. Every engine
 	// consumer in this codebase goes through
 	// helpers.BuildAdditionalDeclarations + typebootstrap, which
@@ -260,14 +261,14 @@ func registerStatusAndEventFunctions(decl native.Declarations) {
 	decl[FuncJSONPathGet] = scriggoJSONPathGet
 	decl[FuncJSONPathSet] = scriggoJSONPathSet
 	decl[FuncDeriveResource] = scriggoDeriveResource
-	decl[FuncIncrementalRender] = scriggoIncrementalRender
-	decl[FuncIncrementalValues] = scriggoIncrementalValues
-	decl[FuncIncrementalRankedFragments] = scriggoIncrementalRankedFragments
-	decl[FuncIncrementalRankedFragmentsJoin] = scriggoIncrementalRankedFragmentsJoin
-	decl[FuncIncrementalRankedTextFragment] = scriggoIncrementalRankedTextFragment
-	decl[FuncIncrementalRankedTextFragmentJoin] = scriggoIncrementalRankedTextFragmentJoin
-	decl[FuncIncrementalRankedFragmentBytes] = scriggoIncrementalRankedFragmentBytes
-	decl[FuncIncrementalValueCount] = scriggoIncrementalValueCount
+	decl[FuncIncrementalRender] = native.Synchronous(scriggoIncrementalRender)
+	decl[FuncIncrementalValues] = native.Synchronous(scriggoIncrementalValues)
+	decl[FuncIncrementalRankedFragments] = native.Synchronous(scriggoIncrementalRankedFragments)
+	decl[FuncIncrementalRankedFragmentsJoin] = native.Synchronous(scriggoIncrementalRankedFragmentsJoin)
+	decl[FuncIncrementalRankedTextFragment] = native.Synchronous(scriggoIncrementalRankedTextFragment)
+	decl[FuncIncrementalRankedTextFragmentJoin] = native.Synchronous(scriggoIncrementalRankedTextFragmentJoin)
+	decl[FuncIncrementalRankedFragmentBytes] = native.Synchronous(scriggoIncrementalRankedFragmentBytes)
+	decl[FuncIncrementalValueCount] = native.Synchronous(scriggoIncrementalValueCount)
 	decl[FuncUntarGz] = scriggoUntarGz
 }
 

@@ -152,7 +152,7 @@ shared fixtures, conditional tests, output targets, and assertion types.
 your cluster. Supply them when templates use typed resource access, including
 the bundled chart templates.
 
-The [source repository](https://gitlab.com/haproxy-haptic/haptic) includes
+The [source repository](https://github.com/haproxy-haptic/HAPTIC) includes
 `tests/schemas` for Kubernetes resources, Gateway API, and HAPTIC's custom resources.
 Copy the bundle for your release into a new working directory. This method
 requires Git and Bash; enter the release version without a leading `v`:
@@ -160,7 +160,7 @@ requires Git and Bash; enter the release version without a leading `v`:
 ```bash
 read -r -p "HAPTIC release version: " haptic_version
 git clone --depth 1 --branch "v${haptic_version}" \
-  https://gitlab.com/haproxy-haptic/haptic.git haptic-source
+  https://github.com/haproxy-haptic/HAPTIC.git haptic-source
 cp -R haptic-source/tests/schemas ./schemas
 ```
 
@@ -185,6 +185,11 @@ haptic validate -f config.yaml --schema-dir ./schemas
 
 # Run specific test
 haptic validate -f config.yaml --schema-dir ./schemas --test test-basic-routing
+
+# Run several bundled Ingress tests with one template compilation
+haptic validate -f config.yaml --schema-dir ./schemas \
+  --test test-ingress-host-map-incremental-order-and-duplicates \
+  --test test-ingress-host-map-incremental-empty
 
 # Output formats
 haptic validate -f config.yaml --schema-dir ./schemas --output json
@@ -220,7 +225,7 @@ GitLab CI (`.gitlab-ci.yml`) — override the image entrypoint so the job's `scr
 ```yaml
 validate-haptic-config:
   image:
-    name: registry.gitlab.com/haproxy-haptic/haptic:0.5.0-haproxy3.4
+    name: ghcr.io/haproxy-haptic/haptic:0.5.0-haproxy3.4
     entrypoint: [""]
   script:
     - haptic validate -f config.yaml --schema-dir ./schemas
@@ -233,7 +238,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     container:
-      image: registry.gitlab.com/haproxy-haptic/haptic:0.5.0-haproxy3.4
+      image: ghcr.io/haproxy-haptic/haptic:0.5.0-haproxy3.4
     steps:
       - uses: actions/checkout@v4
       - run: haptic validate -f config.yaml --schema-dir ./schemas

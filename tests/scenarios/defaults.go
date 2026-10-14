@@ -97,7 +97,7 @@ func (s *Session) installDefaultsChart(ctx context.Context, options *DefaultsOpt
 			return err
 		}
 		if strings.TrimSpace(local.Stdout) != "" {
-			if err := s.Cluster.LoadImages(ctx, options.Image); err != nil {
+			if err := s.loadControllerImage(ctx, options.Image); err != nil {
 				return err
 			}
 		} else {

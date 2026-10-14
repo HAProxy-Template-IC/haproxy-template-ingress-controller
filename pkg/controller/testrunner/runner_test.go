@@ -15,9 +15,11 @@
 package testrunner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -57,9 +59,6 @@ func servicesWatch() map[string]v1alpha1.WatchedResource {
 }
 
 func TestRunner_RunTests(t *testing.T) {
-	// Setup logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
 	tests := []struct {
 		name            string
 		config          *v1alpha1.HAProxyTemplateConfigSpec
@@ -275,6 +274,8 @@ func TestRunner_RunTests(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 			// Create template engine
 			templates := map[string]string{
 				"haproxy.cfg": tt.config.HAProxyConfig.Template,
@@ -313,6 +314,11 @@ func TestRunner_RunTests(t *testing.T) {
 			assert.Equal(t, tt.wantPassedTests, results.PassedTests, "passed tests mismatch")
 			assert.Equal(t, tt.wantFailedTests, results.FailedTests, "failed tests mismatch")
 			assert.Len(t, results.TestResults, tt.wantTotalTests, "test results length mismatch")
+			if tt.wantTotalTests > 0 {
+				assert.Contains(t, logs.String(), `level=INFO msg="Test run completed"`)
+				assert.Contains(t, logs.String(), fmt.Sprintf("total=%d passed=%d failed=%d skipped=%d",
+					results.TotalTests, results.PassedTests, results.FailedTests, results.SkippedTests))
+			}
 
 			// Verify AllPassed() method
 			if tt.wantFailedTests == 0 && tt.wantTotalTests > 0 {

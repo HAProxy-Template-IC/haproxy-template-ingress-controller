@@ -428,19 +428,19 @@ func TestApplyReinitGrace(t *testing.T) {
 		completeIteration(infra)
 
 		infra.NoteIterationStart()
-		now = now.Add(ReinitGraceWindow / 2)
+		now = now.Add(infra.reinitGraceWindow() / 2)
 		id := infra.NoteIterationStart()
 		got := applyReinitGrace(infra, id, unhealthy())
 		assert.True(t, got["initialized"].Healthy,
 			"retry within the original grace window was not tolerated")
 
-		now = start.Add(ReinitGraceWindow - time.Nanosecond)
+		now = start.Add(infra.reinitGraceWindow() - time.Nanosecond)
 		id = infra.NoteIterationStart()
 		got = applyReinitGrace(infra, id, unhealthy())
 		assert.True(t, got["initialized"].Healthy,
 			"grace expired before its original deadline")
 
-		now = start.Add(ReinitGraceWindow)
+		now = start.Add(infra.reinitGraceWindow())
 		id = infra.NoteIterationStart()
 		got = applyReinitGrace(infra, id, unhealthy())
 		assert.False(t, got["initialized"].Healthy,
@@ -453,11 +453,11 @@ func TestApplyReinitGrace(t *testing.T) {
 		completeIteration(infra)
 
 		id := infra.NoteIterationStart()
-		now = start.Add(ReinitGraceWindow / 2)
+		now = start.Add(infra.reinitGraceWindow() / 2)
 		infra.NoteInitialized(id)
 		id = infra.NoteIterationStart()
 
-		now = start.Add(ReinitGraceWindow)
+		now = start.Add(infra.reinitGraceWindow())
 		got := applyReinitGrace(infra, id, unhealthy())
 		assert.False(t, got["initialized"].Healthy,
 			"an unobserved intermediate startup renewed the grace episode")
@@ -481,7 +481,7 @@ func TestApplyReinitGrace(t *testing.T) {
 		assert.False(t, got["initialized"].Healthy,
 			"grace remained active after the iteration settled")
 
-		now = start.Add(2 * ReinitGraceWindow)
+		now = start.Add(2 * infra.reinitGraceWindow())
 		id = infra.NoteIterationStart()
 		got = applyReinitGrace(infra, id, unhealthy())
 		assert.True(t, got["initialized"].Healthy,

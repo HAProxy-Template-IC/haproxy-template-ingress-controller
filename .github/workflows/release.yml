@@ -1,0 +1,164 @@
+name: Publish release
+'on':
+  workflow_dispatch:
+    inputs:
+      verification_run:
+        description: Successful canonical CI run for the tagged release commit
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-publication
+  cancel-in-progress: false
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_RUN: ${{ inputs.verification_run }}
+        run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN" --resolve
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify complete CI evidence for the publication source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_RUN: ${{ inputs.verification_run }}
+        run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN"
+      - id: version
+        run: printf 'version=%s\n' "$(cat VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: publication-source
+          path: .publication/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+  spoa:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      reference: ${{ steps.reference.outputs.reference }}
+    steps:
+      - &release_checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - &login
+        name: Authenticate publication registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Verify and sign the previously tested immutable SPOA bundle
+        env:
+          PUBLICATION_PHASE: spoa
+        run: bash .github/scripts/run-release-publication.sh
+      - id: reference
+        run: printf 'reference=%s\n' "$(cat .publication/spoa-reference.txt)" >> "$GITHUB_OUTPUT"
+      - &evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: publication-${{ github.job }}
+          path: .publication/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+  controller:
+    needs: [source, spoa]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - *release_checkout
+      - *login
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64,arm
+          cache-image: false
+      - name: Publish signed controller binaries, images and SBOMs
+        env:
+          PUBLICATION_PHASE: controller
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/run-release-publication.sh
+      - *evidence
+  conformance:
+    needs: [source, chart]
+    permissions:
+      contents: write
+      actions: read
+      packages: read
+    uses: ./.github/workflows/conformance-report.yml
+    with:
+      source_sha: ${{ needs.source.outputs.sha }}
+      release: true
+  website:
+    needs: [source, chart, conformance]
+    permissions:
+      contents: write
+      actions: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    with:
+      verification_run: ${{ inputs.verification_run }}
+      version: ${{ needs.source.outputs.version }}
+  smoke:
+    needs: [source, spoa]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - *release_checkout
+      - *login
+      - name: Smoke-test the signed bundle on the native architecture
+        env:
+          SPOA_SMOKE_IMAGE: ${{ needs.spoa.outputs.reference }}
+        run: make smoke-spoa-image
+  chart:
+    needs: [source, spoa, controller, smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - *release_checkout
+      - *login
+      - name: Publish the matching signed chart and advance stable image aliases
+        env:
+          PUBLICATION_PHASE: chart
+        run: bash .github/scripts/run-release-publication.sh
+      - *evidence

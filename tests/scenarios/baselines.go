@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"golang.org/x/mod/semver"
-	"sigs.k8s.io/yaml"
 )
 
 const requiredBaseline = "0.2.0-alpha.3"
@@ -56,7 +55,7 @@ func DiscoverUpgradeBaselines(ctx context.Context, client *http.Client, target s
 	var auth struct {
 		Token string `json:"token"`
 	}
-	if err := fetchRegistryJSON(ctx, client, "https://gitlab.com/jwt/auth?service=container_registry&scope=repository:"+chartRegistryPath+":pull", "", &auth); err != nil {
+	if err := fetchRegistryJSON(ctx, client, "https://ghcr.io/token?service=ghcr.io&scope=repository:"+chartRegistryPath+":pull", "", &auth); err != nil {
 		return nil, err
 	}
 	if auth.Token == "" {
@@ -65,7 +64,7 @@ func DiscoverUpgradeBaselines(ctx context.Context, client *http.Client, target s
 	var listing struct {
 		Tags []string `json:"tags"`
 	}
-	if err := fetchRegistryJSON(ctx, client, "https://registry.gitlab.com/v2/"+chartRegistryPath+"/tags/list?n=10000", auth.Token, &listing); err != nil {
+	if err := fetchRegistryJSON(ctx, client, "https://ghcr.io/v2/"+chartRegistryPath+"/tags/list?n=10000", auth.Token, &listing); err != nil {
 		return nil, err
 	}
 	return UpgradeBaselines(listing.Tags, target)
@@ -90,23 +89,7 @@ func fetchRegistryJSON(ctx context.Context, client *http.Client, address, token 
 	return json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(value)
 }
 
-func CheckUpgradeMatrix(published []string, content []byte) error {
-	var config struct {
-		Upgrade struct {
-			Parallel struct {
-				Matrix []struct {
-					Versions []string `json:"BASELINE_CHART_VERSION"`
-				} `json:"matrix"`
-			} `json:"parallel"`
-		} `json:"test-chart-upgrade"`
-	}
-	if err := yaml.Unmarshal(content, &config); err != nil {
-		return err
-	}
-	var matrix []string
-	for _, entry := range config.Upgrade.Parallel.Matrix {
-		matrix = append(matrix, entry.Versions...)
-	}
+func checkUpgradeSelection(published, matrix []string) error {
 	var missing, unknown []string
 	for _, version := range published {
 		if !slices.Contains(matrix, version) {
@@ -118,8 +101,16 @@ func CheckUpgradeMatrix(published []string, content []byte) error {
 			unknown = append(unknown, version)
 		}
 	}
-	if len(published) == 0 || len(missing) != 0 || len(unknown) != 0 {
-		return fmt.Errorf("upgrade matrix differs from published baselines: missing=%v unknown=%v; update test-chart-upgrade.parallel.matrix", missing, unknown)
+	seen := make(map[string]bool, len(matrix))
+	var duplicates []string
+	for _, version := range matrix {
+		if seen[version] {
+			duplicates = append(duplicates, version)
+		}
+		seen[version] = true
+	}
+	if len(published) == 0 || len(missing) != 0 || len(unknown) != 0 || len(duplicates) != 0 {
+		return fmt.Errorf("upgrade matrix differs from published baselines: missing=%v unknown=%v duplicates=%v; update the CI upgrade jobs", missing, unknown, duplicates)
 	}
 	return nil
 }

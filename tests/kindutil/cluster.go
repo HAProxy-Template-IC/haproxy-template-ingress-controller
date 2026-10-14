@@ -20,23 +20,25 @@ import (
 )
 
 type ClusterOptions struct {
-	Name         string
-	Kubeconfig   string
-	Artifacts    string
-	Config       []byte
-	Environment  map[string]string
-	ReadyTimeout time.Duration
+	Name          string
+	Kubeconfig    string
+	Artifacts     string
+	Config        []byte
+	Environment   map[string]string
+	NetworkLabels map[string]string
+	ReadyTimeout  time.Duration
 }
 
 // Cluster owns only nodes bearing its unique mount, including failed startup.
 type Cluster struct {
-	Name         string            `json:"name"`
-	Kubeconfig   string            `json:"kubeconfig"`
-	Artifacts    string            `json:"artifacts"`
-	Owner        string            `json:"owner"`
-	Environment  map[string]string `json:"environment"`
-	ReadyTimeout time.Duration     `json:"readyTimeout,omitempty"`
-	runner       process.Runner
+	Name          string            `json:"name"`
+	Kubeconfig    string            `json:"kubeconfig"`
+	Artifacts     string            `json:"artifacts"`
+	Owner         string            `json:"owner"`
+	Environment   map[string]string `json:"environment"`
+	NetworkLabels map[string]string `json:"networkLabels,omitempty"`
+	ReadyTimeout  time.Duration     `json:"readyTimeout,omitempty"`
+	runner        process.Runner
 }
 
 var clusterNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -44,6 +46,9 @@ var clusterNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 func NewCluster(runner process.Runner, options *ClusterOptions) (*Cluster, error) {
 	if runner == nil || options == nil || !clusterNamePattern.MatchString(options.Name) || !filepath.IsAbs(options.Kubeconfig) || !filepath.IsAbs(options.Artifacts) {
 		return nil, errors.New("cluster needs a runner, a lowercase name, and absolute kubeconfig and artifact paths")
+	}
+	if err := validateNetworkLabels(options.NetworkLabels, options.Environment[dockerNetworkSetting]); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(options.Artifacts, 0o750); err != nil {
 		return nil, err
@@ -53,6 +58,7 @@ func NewCluster(runner process.Runner, options *ClusterOptions) (*Cluster, error
 		return nil, err
 	}
 	c := &Cluster{Name: options.Name, Kubeconfig: options.Kubeconfig, Artifacts: options.Artifacts, Owner: owner, Environment: normalizedDockerEnvironment(options.Environment), ReadyTimeout: options.ReadyTimeout, runner: runner}
+	c.NetworkLabels = maps.Clone(options.NetworkLabels)
 	c.Environment["KUBECONFIG"] = c.Kubeconfig
 	config, err := ownedKindConfig(options.Config, owner, c.Environment["DOCKER_HOST"])
 	if err != nil {

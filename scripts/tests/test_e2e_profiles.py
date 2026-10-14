@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import unittest
 
-from scripts.ci.configuration import instances, job, load
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,7 +15,8 @@ GUARDS = {"cache": "RequireCacheProfile", "rate-limit": "RequireRateLimitProfile
 class FeatureProfileTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.config = load(ROOT / ".gitlab-ci.yml")
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci-speed-proof.yml").read_text())
+        cls.jobs = list(workflow["jobs"].values())
         cls.tests = {}
         for path in (ROOT / "tests/e2e").glob("*_test.go"):
             for function in re.split(r"(?m)^func ", path.read_text())[1:]:
@@ -24,15 +25,16 @@ class FeatureProfileTests(unittest.TestCase):
                     cls.tests[signature[1]] = function
 
     def test_feature_jobs_are_single_required_jobs_with_their_profile(self):
+        runner = (ROOT / ".github/scripts/run-arm-pilot.sh").read_text()
+        self.assertIn("test_target=test-e2e-profile", runner)
         for profile in GUARDS:
-            name = f"test-e2e-{profile}"
-            definition = job(self.config, name)
+            matches = [job for job in self.jobs if job.get("env", {}).get("HAPTIC_E2E_PROFILE") == profile]
             with self.subTest(profile=profile):
-                self.assertEqual(instances(self.config, name), [name])
-                self.assertEqual(definition["script"], ["make test-e2e-profile"])
-                self.assertEqual(definition["variables"]["HAPTIC_E2E_PROFILE"], profile)
-                self.assertFalse(definition.get("allow_failure", False))
-        self.assertEqual(job(self.config, "test-e2e-api-gateway")["variables"]["HAPTIC_E2E_GWAPI_CHANNEL"], "experimental")
+                self.assertEqual([job["name"] for job in matches], [f"e2e-{profile}"])
+                self.assertFalse(matches[0].get("continue-on-error", False))
+                self.assertIn("bash .github/scripts/run-arm-pilot.sh", [step.get("run") for step in matches[0]["steps"]])
+                channel = "experimental" if profile == "api-gateway" else "standard"
+                self.assertEqual(matches[0]["env"]["HAPTIC_E2E_GWAPI_CHANNEL"], channel)
 
     def test_all_profile_gated_cases_and_interaction_checks_are_selected(self):
         for profile, guards in GUARDS.items():

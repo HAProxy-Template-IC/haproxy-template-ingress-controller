@@ -8,9 +8,9 @@
 # first-ever execution (mid-upgrade, issue #58) surfaced four stale-assumption
 # failures at once. This gate makes that class of drift a lint error.
 #
-# The map below mirrors the execution profiles wired in Makefile /
-# .gitlab-ci.yml. When you add a new test directory or build tag, wire a job
-# that runs it AND extend this map in the same MR.
+# The map below mirrors the execution profiles wired in the Makefile and
+# .github/workflows/ci-speed-proof.yml. When you add a new test directory or
+# build tag, wire a job that runs it AND extend this map in the same PR.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,7 +19,7 @@ fail=0
 # expected_tag <path> -> the //go:build expression class this path must carry
 # so that its wired runner actually compiles it.
 #
-# Runners (keep in sync with Makefile targets + .gitlab-ci.yml jobs):
+# Runners (keep in sync with Makefile targets + CI jobs):
 #   (no tag)             -> `make test` (go test ./...)         [CI: test]
 #   e2e                  -> `make test-e2e`                     [CI: test-e2e]
 #   integration          -> `make test-integration`             [CI: test-integration]

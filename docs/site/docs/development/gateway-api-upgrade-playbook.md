@@ -8,13 +8,13 @@ verification. Work through the sections in order.
 
 ## Before the bump
 
-1. Check the nightly canary results. The `nightly-gwapi-canary` CI job runs
-    the conformance suite from gateway-api's `main` branch every night, so the
+1. Check the canary results. The `gateway-canary` CI job runs the
+    conformance suite from gateway-api's `main` branch in every CI run, so the
     next release's breakage should already be filed as canary-flagged
     `needs-triage` issues. Review them before you start:
 
     ```bash
-    glab issue list --label needs-triage
+    gh issue list --repo haproxy-haptic/HAPTIC --label needs-triage
     ```
 
 2. Review the [upstream release notes](https://github.com/kubernetes-sigs/gateway-api/releases)
@@ -78,10 +78,11 @@ verification. Work through the sections in order.
     `make lint` runs `scripts/check-gwapi-version-pins.sh`, which fails if a
     version literal reappears in either place.
 
-6. Update the nightly old-release matrix. If you added a schema bundle in
-    step 3, add the same release tag to the `GWAPI_RELEASE` list of the
-    `nightly-gwapi-matrix` job in `.gitlab-ci.yml` — the list mirrors the
-    `tests/schemas-ga-*` bundles.
+6. Update the old-release matrix. If you added a schema bundle in step 3,
+    add a `gateway-compatibility-<release>` job to
+    `.github/workflows/ci-speed-proof.yml` and its name to `required_jobs` in
+    `.github/ci-verification.json`; then run `make schedule-github-verification`.
+    The list mirrors the `tests/schemas-ga-*` bundles.
 
 ## Suite adaptation
 
@@ -103,8 +104,9 @@ verification. Work through the sections in order.
 3. Expect the shards to rebalance. `scripts/shard-conformance-tests.sh` maps
     each test name to a shard via a CRC32 hash modulo the shard count, so new
     upstream tests shift existing assignments and shard durations change. If
-    a shard outgrows its job timeout, raise the `parallel:` count of the
-    `test-gateway-conformance` job in `.gitlab-ci.yml`.
+    a shard outgrows its job timeout, add a `gateway-<n>` shard job to
+    `.github/workflows/ci-speed-proof.yml` and raise the shard count those
+    jobs pass to `scripts/shard-conformance-tests.sh`.
 
 4. Skip individual broken upstream tests via `opts.SkipTests`, each entry
     with an issue link in a comment. Never `t.Skip()` the whole suite.
@@ -128,18 +130,9 @@ verification. Work through the sections in order.
     ./scripts/test-templates.sh
     ```
 
-2. Estimate the focused nightly jobs' compute cost and agree a CI budget before
-    triggering a nightly style pipeline on the MR branch. Reuse valid results
-    for unchanged sources and retry only failed jobs when their inputs match. This runs
-    `nightly-gwapi-matrix`, churn, scale, and `nightly-gwapi-canary`,
-    proving the matrix and canary jobs live on the new release:
-
-    ```bash
-    glab api --method POST projects/:id/pipeline \
-      -f "ref=$(git branch --show-current)" \
-      -f "variables[][key]=SCHEDULE_KIND" \
-      -f "variables[][value]=nightly"
-    ```
+2. Check the pull request's CI run: it includes the compatibility matrix,
+    churn, scale, and `gateway-canary`, proving them live on the new release.
+    Retry only failed jobs whose inputs match.
 
 3. Debug any failing conformance test locally on a **fresh** kind cluster —
     never take a verdict from a reused cluster:

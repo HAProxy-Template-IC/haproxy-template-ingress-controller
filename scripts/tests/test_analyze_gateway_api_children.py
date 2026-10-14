@@ -14,6 +14,7 @@
 
 import base64
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -25,10 +26,13 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 SCRIPT = Path(__file__).parents[1] / "analyze-gateway-api-children.py"
 RUNNER = Path(__file__).parents[1] / "bench-gateway-api.sh"
-CI_CONFIG = Path(__file__).parents[2] / ".gitlab-ci.yml"
+REPO_ROOT = Path(__file__).parents[2]
+BENCHMARK_WORKFLOW = REPO_ROOT / ".github/workflows/gateway-benchmark-proof.yml"
 SPEC = importlib.util.spec_from_file_location("analyze_gateway_api_children", SCRIPT)
 ANALYZER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = ANALYZER
@@ -169,6 +173,77 @@ def capture(topology):
 
 
 class AnalyzeGatewayAPIChildrenTest(unittest.TestCase):
+    def test_secret_capture_keeps_verified_owners_deleted_during_collection(self):
+        owner = {
+            "apiVersion": "haproxy-haptic.org/v1alpha1", "kind": "HAProxyCfg",
+            "name": "retained-config", "uid": "retained-uid", "controller": True,
+        }
+        secret = {
+            "type": "Opaque",
+            "metadata": {
+                "namespace": "haptic", "name": "certificate",
+                "labels": {"haproxy-haptic.org/type": "ssl-certificate",
+                           "haproxy-haptic.org/runtime-config": "retained-config"},
+                "ownerReferences": [owner],
+            },
+            "data": {key: base64.b64encode(value.encode()).decode() for key, value in {
+                "certificate": "fixture-private-key-material", "path": "default.pem",
+            }.items()},
+        }
+        unverified = copy.deepcopy(secret)
+        unverified["metadata"]["name"] = "unverified-certificate"
+        unverified["metadata"]["ownerReferences"][0]["uid"] = "unknown-uid"
+        config = {"apiVersion": owner["apiVersion"], "kind": owner["kind"],
+                  "metadata": {"namespace": "haptic", "name": owner["name"], "uid": owner["uid"]}}
+        command = r'''
+source "$1"
+trap - EXIT INT TERM
+WORK_DIR="$2"
+kubectl() {
+    if [[ "$2" == secrets ]]; then
+        cat "$WORK_DIR/secrets.json"
+        touch "$WORK_DIR/owner-deleted"
+    elif [[ -e "$WORK_DIR/owner-deleted" ]]; then
+        printf '{"items":[]}'
+    else
+        cat "$WORK_DIR/configs.json"
+    fi
+}
+capture_live_secret_patterns_once
+'''
+        for deleted_before_capture in (False, True):
+            with self.subTest(deleted_before_capture=deleted_before_capture), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "secrets.json").write_text(json.dumps({"items": [secret, unverified]}))
+                (root / "configs.json").write_text(json.dumps({"items": [config]}))
+                if deleted_before_capture:
+                    (root / "owner-deleted").touch()
+                    (root / "runtime-config-history.jsonl").write_text(json.dumps(config) + '\n{"incomplete":')
+                result = subprocess.run(["/usr/bin/bash", "-c", command, "capture-race", str(RUNNER), directory],
+                                        check=False, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                patterns = json.loads((root / "live-secret-patterns.json").read_text())["patterns"]
+                sources = [entry["source"] for entry in patterns]
+                self.assertNotIn("haptic/certificate/path", sources)
+                for source in ("haptic/certificate/certificate", "haptic/unverified-certificate/certificate",
+                               "haptic/unverified-certificate/path"):
+                    self.assertEqual(sources.count(source), 2)
+
+    def test_runtime_config_history_rejects_corrupt_complete_records(self):
+        command = r'''
+source "$1"
+trap - EXIT INT TERM
+WORK_DIR="$2"
+capture_runtime_config_history "$WORK_DIR/captured.json"
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "runtime-config-history.jsonl").write_text('{invalid}\n')
+            result = subprocess.run(["/usr/bin/bash", "-c", command, "capture-history", str(RUNNER), directory],
+                                    check=False, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((root / "captured.json").exists())
+
     def test_secret_patterns_exclude_only_owned_haptic_ssl_path_metadata(self):
         def encoded(value):
             return base64.b64encode(value.encode()).decode()
@@ -354,10 +429,11 @@ cp "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json" "$2/report-5.json"
 
         certificate = "fixture-private-key-material"
         ordinary_path = "ordinary-secret-path"
+        runtime_name = "haptic-config-haproxycfg-retained-" + "a" * 64
         owner = {
             "apiVersion": "haproxy-haptic.org/v1alpha1",
             "kind": "HAProxyCfg",
-            "name": "haptic-config-haproxycfg",
+            "name": runtime_name,
             "uid": "runtime-config-uid",
             "controller": True,
         }
@@ -370,7 +446,7 @@ cp "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json" "$2/report-5.json"
                         "name": "haproxy-cert-default",
                         "labels": {
                             "haproxy-haptic.org/type": "ssl-certificate",
-                            "haproxy-haptic.org/runtime-config": "haptic-config-haproxycfg",
+                            "haproxy-haptic.org/runtime-config": "haptic-" + hashlib.sha256(runtime_name.encode()).hexdigest()[:16],
                         },
                         "ownerReferences": [owner],
                     },
@@ -407,7 +483,7 @@ redact_secret_matches "$4" "$5" "$6"
                                 "kind": "HAProxyCfg",
                                 "metadata": {
                                     "namespace": "haptic",
-                                    "name": "haptic-config-haproxycfg",
+                                    "name": runtime_name,
                                     "uid": "runtime-config-uid",
                                 },
                             }
@@ -993,6 +1069,8 @@ redact_secret_matches "$4" "$5" "$6"
                         "uid": "map-uid",
                         "generation": 1,
                         "resourceVersion": "91",
+                        "ownerReferences": [{"apiVersion": "haproxy-haptic.org/v1alpha1", "kind": "HAProxyCfg",
+                                             "name": "config", "uid": "config-uid", "controller": True}],
                         "annotations": {
                             "haproxy-haptic.org/auxiliary-set-id": "set-id"
                         },
@@ -2045,38 +2123,17 @@ validate_haptic_scale_routes 1 "$3" "$4"
         )
 
     def test_hosted_ci_job_is_an_explicit_bounded_smoke(self):
-        ci_config = CI_CONFIG.read_text(encoding="utf-8")
-        match = re.search(
-            r"(?m)^gateway-api-benchmark-smoke:\n(.*?)(?=^# Upstream Kubernetes Ingress)",
-            ci_config,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(match)
-        job = match.group(1)
+        workflow = yaml.safe_load(BENCHMARK_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertNotIn("pull_request", workflow["on"])
+        self.assertNotIn("schedule", workflow["on"])
+        self.assertIn("workflow_call", workflow["on"])
+        benchmark = workflow["jobs"]["benchmark"]
+        self.assertEqual(benchmark["name"], "gateway-api-benchmark-smoke")
+        self.assertEqual(benchmark["timeout-minutes"], 165)
+        steps = "\n".join(step.get("run", "") for step in benchmark["steps"])
+        self.assertIn("make bench-gateway-api-ci", steps)
+        job = (REPO_ROOT / "scripts/bench-gateway-api-ci.sh").read_text(encoding="utf-8")
         for setting in (
-            "image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4",
-            'timeout: 2 hours 45 minutes',
-            'BENCH_REF: "e81292ed876472804e0a2245876a7c445ab80881"',
-            'BENCH_GATEWAY_API_VERSION: "v1.4.0"',
-            'BENCH_GATEWAYS: "haptic-bench/haptic"',
-            'BENCH_SCENARIOS: "probe,scale,routechange"',
-            'BENCH_PROBE_ROUTES: "300"',
-            'BENCH_PROBE_TIMEOUT: "45m"',
-            'BENCH_DEPLOY_INTERVAL: "100ms"',
-            'BENCH_WATCH_DEBOUNCE: "100ms"',
-            'BENCH_SCALE_NAMESPACES: "50"',
-            'BENCH_SCALE_ROUTES_PER_NAMESPACE: "100"',
-            'BENCH_SCALE_DURATION: "10m"',
-            'BENCH_SCALE_STARTUP_TIMEOUT: "20m"',
-            'BENCH_ROUTECHANGE_ITERATIONS: "20"',
-            'BENCH_ROUTECHANGE_GRACE_PERIOD: "200ms"',
-            'BENCH_ROUTECHANGE_TIMEOUT: "10m"',
-            'HAPROXY_VERSION: "3.4"',
-            'BENCH_KEEP_CLUSTER: "false"',
-            'BENCH_ALLOW_DIRTY: "false"',
-            'BENCH_ALLOW_COSCHEDULED_CLUSTERS: "false"',
-            'REUSE_CLUSTER: "false"',
-            'BUILD_ONLY: "false"',
             'timeout --preserve-status --kill-after=20m 135m ./scripts/bench-gateway-api.sh',
             '.comparison.published_workload_inputs_match == false',
             '.comparison.controlled_default_profile == false',
@@ -2112,7 +2169,6 @@ validate_haptic_scale_routes 1 "$3" "$4"
             "BUILD_ONLY=false",
         ):
             self.assertIn(assignment, job)
-        self.assertNotRegex(ci_config, r"(?m)^gateway-api-benchmark:")
         runner = RUNNER.read_text(encoding="utf-8")
         self.assertIn("readonly DEFAULT_PROBE_ROUTES=3000", runner)
         self.assertIn('BENCH_DEPLOY_INTERVAL="${BENCH_DEPLOY_INTERVAL:-}"', runner)
@@ -2125,6 +2181,10 @@ class HostedBenchmarkArtifactTests(unittest.TestCase):
         command = r"""
 source "$1"
 trap - EXIT INT TERM
+BENCH_OUTPUT_DIR=$(mktemp -d)
+trap 'rm -rf "$BENCH_OUTPUT_DIR"' EXIT
+mkdir "$BENCH_OUTPUT_DIR/cluster"
+printf '{"redacted": []}\n' > "$BENCH_OUTPUT_DIR/cluster/artifact-secret-scan.json"
 calls=0
 scan_artifacts_for_live_secrets() {
     calls=$((calls + 1))
@@ -2132,7 +2192,7 @@ scan_artifacts_for_live_secrets() {
     return 0
 }
 rc=0
-scan_cleanup_artifacts || rc=$?
+verify_artifact_secrets || rc=$?
 printf '%s\n' "$calls"
 exit "$rc"
 """
@@ -2150,10 +2210,8 @@ exit "$rc"
                 self.assertEqual(result.stdout.strip(), str(expected_calls))
 
     def test_ci_retains_failed_diagnostics_only_after_security_and_provenance_checks(self):
-        ci = CI_CONFIG.read_text(encoding="utf-8")
-        start = ci.index("      trusted=false", ci.index("gateway-api-benchmark-smoke:"))
-        end = ci.index('      exit "$runner_rc"', start) + len('      exit "$runner_rc"')
-        staging = textwrap.dedent(ci[start:end])
+        wrapper = (REPO_ROOT / "scripts/bench-gateway-api-ci.sh").read_text(encoding="utf-8")
+        staging = wrapper[wrapper.index("trusted=false"):wrapper.index('exit "$runner_rc"') + len('exit "$runner_rc"')]
         for case in (
             "complete", "aborted", "one-scan", "redacted", "untrusted",
             "wrong-profile", "false-success", "false-measurement", "symlink",

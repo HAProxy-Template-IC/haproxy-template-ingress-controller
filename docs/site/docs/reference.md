@@ -51,7 +51,7 @@ workflows too.
 | `haproxyVersion` | string | `"3.4"` | HAProxy major.minor series. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
 | `haproxyPatchVersions` | map | See values.yaml | Tested Community Edition patch versions for each HAProxy series. |
 | `haproxyEnterprisePatchVersions` | map | See values.yaml | Per-`haproxyVersion` enterprise revision pins (for example `"3.2": "3.2r1"`). Used when `haproxy.enterprise.enabled=true` |
-| `controller.image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic` | Controller image repository |
+| `controller.image.repository` | string | `ghcr.io/haproxy-haptic/haptic` | Controller image repository |
 | `controller.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `controller.image.tag` | string | `""` | Controller image tag *without* the HAProxy-series suffix; empty uses the chart `appVersion`. The rendered reference is always `<tag>-haproxy<haproxyVersion>`, so the suffix is appended to an explicit value too |
 | `nameOverride` | string | `""` | Override chart name |
@@ -80,6 +80,7 @@ workflows too.
 |-----------|------|---------|-------------|
 | `controller.templateLibraries.base.enabled` | bool | `true` | Core HAProxy configuration. Disabling drops the `haproxyConfig` template the other libraries plug into; leave on unless you supply a complete replacement |
 | `controller.templateLibraries.kubernetesBackends.enabled` | bool | `true` | Shared Kubernetes Service port and EndpointSlice backend resolution used by the bundled routing libraries |
+| `controller.templateLibraries.kubernetesBackends.podReadinessGate.enabled` | bool | `false` | Set the `haproxy-haptic.org/load-balancer-ready` readiness gate on pods that list it; see [Roll out without dropped requests](operations/pod-readiness-gate.md) |
 | `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
 | `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTP, gRPC, TLS and TCP routes) |
@@ -551,7 +552,7 @@ Configure controller placement, pod metadata, and runtime settings under `contro
 | `controller.startupProbe.periodSeconds` | int | `10` | Probe period |
 | `controller.startupProbe.timeoutSeconds` | int | `1` | Probe timeout |
 | `controller.startupProbe.successThreshold` | int | `1` | Success threshold |
-| `controller.startupProbe.failureThreshold` | int | `30` | Failure threshold (with `periodSeconds: 10` this gives 5 minutes for startup) |
+| `controller.startupProbe.failureThreshold` | int | `30` | Failure threshold (with `periodSeconds: 10` this gives 5 minutes for startup). Startup validation may use 80% of the window; raise it if a large set of validation tests needs longer |
 
 ## Resources & scheduling
 
@@ -793,7 +794,7 @@ One `PodMonitor` for every metrics endpoint on the HAProxy pod. See [Where to sc
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `spoaHub.enabled` | bool/null | `null` | Master enable. `null` auto-derives from `spoaHub.plugins.*.enabled`. Set `true` to force the sidecar on with no plugins enabled (test rendering); set `false` to force it off even when a plugin is enabled |
-| `spoaHub.image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub` | SPOA hub image repository |
+| `spoaHub.image.repository` | string | `ghcr.io/haproxy-haptic/haptic/spoa-hub` | SPOA hub image repository |
 | `spoaHub.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `spoaHub.image.tag` | string | `""` | Override the tag; empty uses `.Chart.AppVersion` |
 | `spoaHub.resources.requests.cpu` | string | `50m` | SPOA hub CPU request |

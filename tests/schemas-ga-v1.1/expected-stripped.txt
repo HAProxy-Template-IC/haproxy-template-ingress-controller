@@ -116,6 +116,13 @@ test-tlsroute-invalid-backend-rejects-on-frontend
 test-tlsroute-no-tls-listener
 test-tlsroute-passthrough-basic
 test-tlsroute-passthrough-nondefault-port-frontend
+test-tlsroute-precedence-dedicated-port
+test-tlsroute-precedence-equal-age-name
+test-tlsroute-precedence-equal-host-oldest
+test-tlsroute-precedence-exact-over-wildcard
+test-tlsroute-precedence-multiple-hostnames
+test-tlsroute-precedence-specific-wildcard
+test-tlsroute-precedence-unrestricted-listener
 test-tlsroute-same-sni-on-two-passthrough-ports
 test-tlsroute-section-name-no-match
 test-tlsroute-status-parent-ports
@@ -125,3 +132,7 @@ test-tlsroute-weighted-backends
 test-tlsroute-weighted-invalid-ref-share-rejected
 test-tlsroute-weighted-terminate-listener
 test-tlsroute-wildcard-listener-exact-route
+test-tlsroute-gateway-address-isolation
+test-tlsroute-multiple-gateway-parents
+test-tlsroute-static-gateway-address-isolation
+test-tlsroute-terminate-gateway-address-isolation

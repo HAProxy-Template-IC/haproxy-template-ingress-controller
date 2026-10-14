@@ -1,0 +1,34 @@
+{
+  "bootstrap": "ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad",
+  "images": {
+    "ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000": {
+      "kind": "ci",
+      "haproxy": "3.0",
+      "build_input_hash": "fb4e7ba559a0a22cef440c64fc4e7d56e93c4cfdaec4c7472ec95064b7f021c3"
+    },
+    "ghcr.io/haproxy-haptic/haptic-ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae": {
+      "kind": "ci",
+      "haproxy": "3.1",
+      "build_input_hash": "fb4e7ba559a0a22cef440c64fc4e7d56e93c4cfdaec4c7472ec95064b7f021c3"
+    },
+    "ghcr.io/haproxy-haptic/haptic-ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07": {
+      "kind": "ci",
+      "haproxy": "3.2",
+      "build_input_hash": "fb4e7ba559a0a22cef440c64fc4e7d56e93c4cfdaec4c7472ec95064b7f021c3"
+    },
+    "ghcr.io/haproxy-haptic/haptic-ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102": {
+      "kind": "ci",
+      "haproxy": "3.3",
+      "build_input_hash": "fb4e7ba559a0a22cef440c64fc4e7d56e93c4cfdaec4c7472ec95064b7f021c3"
+    },
+    "ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad": {
+      "kind": "ci",
+      "haproxy": "3.4",
+      "build_input_hash": "fb4e7ba559a0a22cef440c64fc4e7d56e93c4cfdaec4c7472ec95064b7f021c3"
+    },
+    "ghcr.io/haproxy-haptic/haptic-ci@sha256:bd8734af3450c5c7a62260e80a8fe9b9d2aa563a4d89afc5fa19dea5c0237695": {
+      "kind": "docs",
+      "build_input_hash": "fb4e7ba559a0a22cef440c64fc4e7d56e93c4cfdaec4c7472ec95064b7f021c3"
+    }
+  }
+}

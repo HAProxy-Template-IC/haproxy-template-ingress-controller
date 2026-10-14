@@ -127,13 +127,13 @@ from the code*, and at a different level of detail than the code.
 **Length is capped by intent, not by taste:**
 
 - One line is the default. Two is a lot. **A paragraph means it belongs elsewhere.**
-- Long rationale goes to an ADR, a docs page, or the MR description; the code keeps
+- Long rationale goes to an ADR, a docs page, or the PR description; the code keeps
   **one line and a pointer**. Document once, reference it — never restate it.
 - Applies equally to `validationTests` `description:` fields and any prose inside a
   chart template — those DO ship in the CR.
 
 If you catch yourself explaining a hard-won debugging insight inline, that is the
-signal to write it in the MR or an ADR and leave one line behind.
+signal to write it in the PR or an ADR and leave one line behind.
 
 Sources: [Google TotT — To Comment or Not to Comment?](https://testing.googleblog.com/2017/07/code-health-to-comment-or-not-to-comment.html),
 [Google C++ style](https://google.github.io/styleguide/cppguide.html#Comments),
@@ -286,7 +286,7 @@ Pre-commit hooks run automatically via git hooks and enforce:
 - Formatting issues (gofmt/goimports)
 - Test failures
 
-Bypassing pre-commit hooks with `--no-verify` only delays the problem until CI runs, wasting time and blocking MR merges.
+Bypassing pre-commit hooks with `--no-verify` only delays the problem until CI runs, wasting time and blocking merges.
 
 ### Fixing Common Issues
 
@@ -305,51 +305,37 @@ govulncheck ./...
 make check-all
 ```
 
-**If extensive refactoring is needed**: Create separate commits/MRs for linting fixes rather than bypassing checks.
+**If extensive refactoring is needed**: Create separate commits or PRs for linting fixes rather than bypassing checks.
 
-### CI minutes
+### CI and merging
 
-Follow [CI spending and merge verification](docs/agents/ci.md) before pushing,
-starting or retrying CI, or merging. Batch local fixes, account for active pipelines,
-and reserve one final train run for the reviewed candidate. Never skip CI to make a
-merge affordable. A budget shortfall leaves the MR unmerged with the reason reported.
+Follow [CI and merge verification](docs/agents/ci.md) before pushing, starting or
+retrying CI, or merging. Batch local fixes before pushing; every pull request runs
+the complete matrix. Merges go through the merge queue, never around it.
 
-### GitLab CLI (glab) Commands
+### GitHub CLI (gh) Commands
 
-Common `glab` commands for development workflow:
+Issues and pull requests live in `haproxy-haptic/HAPTIC`; see
+[issue tracking](docs/agents/issue-tracker.md). Historical GitLab issue and MR URLs
+stay valid as references.
 
 ```bash
-# Create merge request
-glab mr create --title "Fix template rendering" --description "Fixes issue with..."
+# Create a pull request
+gh pr create --repo haproxy-haptic/HAPTIC --title "Fix template rendering" --body-file body.md
 
-# View MR details
-glab mr view 123
+# View a pull request, its conversation, and its checks
+gh pr view 123 --repo haproxy-haptic/HAPTIC --comments
+gh pr checks 123 --repo haproxy-haptic/HAPTIC
 
-# List open MRs
-glab mr list
+# List workflow runs and view a failed job's log
+gh run list --repo haproxy-haptic/HAPTIC --branch "$branch"
+gh run view "$run_id" --repo haproxy-haptic/HAPTIC --log-failed
 
-# Check CI pipeline status
-glab ci view
+# Download a run's artifacts for debugging CI failures
+gh run download "$run_id" --repo haproxy-haptic/HAPTIC --dir artifacts
 
-# View failed job logs
-glab ci view --job-id 12345
-
-# Create issue
-glab issue create --title "Bug: ..." --description "..."
-
-# View CI configuration
-glab ci lint .gitlab-ci.yml
-
-# Download job artifacts for debugging CI failures
-# Replace <JOB_ID> with the numeric job ID from the GitLab job URL
-glab api --method GET "projects/haproxy-haptic%2Fhaptic/jobs/<JOB_ID>/artifacts" > artifacts.zip
-unzip artifacts.zip
-
-# View job trace/log
-glab api --method GET "projects/haproxy-haptic%2Fhaptic/jobs/<JOB_ID>/trace"
-
-# Get job details (status, artifacts info, ref, etc)
-glab api projects/haproxy-haptic%2Fhaptic/jobs/<JOB_ID>
+# Create an issue
+gh issue create --repo haproxy-haptic/HAPTIC --title "Bug: ..." --body-file body.md
 ```
 
 ## Event-Driven Architecture Principles
@@ -748,7 +734,7 @@ The source hash covers all `.go` files in `pkg/` and `cmd/`, `go.mod`, `go.sum`,
 
 - `haproxyVersion` in `values.yaml` selects the version (must be one CI builds)
 - This single value drives both:
-    - Controller image tag: `registry.gitlab.com/.../haptic:0.2.0-alpha.1-haproxy3.4`
+    - Controller image tag: `ghcr.io/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4`
     - HAProxy image tag: `haproxytech/haproxy-debian:3.4`
 - This guarantees the controller and HAProxy pod always use matching versions
 
@@ -1100,7 +1086,7 @@ To prepare a release:
 
 1. **Curate `CHANGELOG.md` [Unreleased]** - Rewrite the accumulated entries into user-facing release notes (merge related entries, drop items that never shipped in a release); also update the hand-curated `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml`
 2. **Run `./scripts/release.sh <version>`** - Promotes `[Unreleased]` to the version section and updates every version-bearing file (VERSION, Chart.yaml, install examples) in one commit; the docs-site changelog page is generated from `CHANGELOG.md` at mkdocs build time and needs no release-time sync
-3. **Merge the release MR to main** - CI creates the `v<version>` tag after the verified train and post-merge publication checks pass; the tag pipeline publishes binaries, images, the chart, and versioned docs
+3. **Merge the release PR to main** - after the merge-queue and post-merge CI runs pass, `release-tag.yml` creates the `v<version>` tag, and the release workflow publishes binaries, images, the chart, and versioned docs
 
 See `docs/site/docs/development/releasing.md` for the full process.
 
@@ -1131,7 +1117,8 @@ For detailed development context on specific packages, see:
 
 ### Issue tracker
 
-Issues live as GitLab issues on `gitlab.com:haproxy-haptic/haptic`. Use the `glab` CLI. See `docs/agents/issue-tracker.md`.
+Issues live as GitHub issues in `haproxy-haptic/HAPTIC`. Use the `gh` CLI. See
+`docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

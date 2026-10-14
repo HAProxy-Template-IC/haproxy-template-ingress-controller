@@ -26,6 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 func TestSnapshotBranchRetainsSelectedRevisionsAndExactJournal(t *testing.T) {
@@ -169,4 +171,84 @@ func TestSnapshotBranchRetriesTransientLazyReadFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "accepted", cachedSnapshotDataValue(t, items[0]))
 	require.EqualValues(t, 2, gets.Load())
+}
+
+func TestSnapshotBranchRepeatedCapturePreservesRejectedChanges(t *testing.T) {
+	for _, backend := range []string{"memory", "cached"} {
+		t.Run(backend, func(t *testing.T) {
+			live := newBranchCaptureStore(t, backend)
+			capture := func(base *SnapshotBranch) []BranchChange {
+				snapshot, err := live.Pin()
+				require.NoError(t, err)
+				changes, err := base.Changes(t.Context(), snapshot, []string{"metadata.namespace", "metadata.name"})
+				require.NoError(t, err)
+				return changes
+			}
+			for _, name := range []string{"changed", "deleted", "healthy", "stable"} {
+				require.NoError(t, live.Add(cachedSnapshotResource("default", name, "1", "before"), []string{"default", name}))
+			}
+			base := NewSnapshotBranch(2)
+			base = base.Apply(capture(base))
+			for _, name := range []string{"changed", "healthy"} {
+				require.NoError(t, live.Update(cachedSnapshotResource("default", name, "2", "after"), []string{"default", name}))
+			}
+			require.NoError(t, live.Delete("default", "deleted", []string{"default", "deleted"}))
+			changes := capture(base)
+			require.Len(t, changes, 3)
+			require.Equal(t, "healthy", changes[2].Name())
+			accepted := base.Apply(changes[2:])
+			for range 3 {
+				pending := capture(accepted)
+				require.Len(t, pending, 2)
+				require.Equal(t, "changed", pending[0].Name())
+				require.False(t, pending[0].Deleted())
+				require.Equal(t, "deleted", pending[1].Name())
+				require.True(t, pending[1].Deleted())
+			}
+			complete := accepted.Apply(capture(accepted))
+			require.Empty(t, capture(complete))
+			require.Len(t, capture(base), 3, "a sibling trial must not advance the accepted baseline")
+		})
+	}
+}
+
+func TestSnapshotBranchCaptureDistinguishesStoreSources(t *testing.T) {
+	for _, backend := range []string{"memory", "cached"} {
+		t.Run(backend, func(t *testing.T) {
+			base := NewSnapshotBranch(2)
+			var oldRevision stores.Revision
+			for _, value := range []string{"first", "replacement"} {
+				live := newBranchCaptureStore(t, backend)
+				require.NoError(t, live.Add(cachedSnapshotResource("default", "target", "1", value), []string{"default", "target"}))
+				snapshot, err := live.Pin()
+				require.NoError(t, err)
+				changes, err := base.Changes(t.Context(), snapshot, []string{"metadata.namespace", "metadata.name"})
+				require.NoError(t, err)
+				require.Len(t, changes, 1, "equal sequence numbers from different stores are different inputs")
+				require.NotEqual(t, oldRevision, changes[0].Revision())
+				oldRevision = changes[0].Revision()
+				base = base.Apply(changes)
+			}
+		})
+	}
+}
+
+type branchCaptureStore interface {
+	stores.SnapshotProvider
+	Add(any, []string) error
+	Update(any, []string) error
+	Delete(string, string, []string) error
+}
+
+func newBranchCaptureStore(t *testing.T, backend string) branchCaptureStore {
+	t.Helper()
+	if backend == "memory" {
+		return NewMemoryStore(2)
+	}
+	client := fake.NewSimpleDynamicClient(runtime.NewScheme())
+	client.PrependReactor("get", "*", func(k8stesting.Action) (bool, runtime.Object, error) {
+		t.Error("capturing revisions must not fetch resource bodies")
+		return true, nil, errors.New("unexpected body fetch")
+	})
+	return newProjectedSnapshotStore(t, client)
 }

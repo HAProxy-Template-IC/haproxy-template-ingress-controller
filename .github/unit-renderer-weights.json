@@ -1,0 +1,3746 @@
+{
+  "FuzzExtractMapReferencesMatchesLegacyPattern": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "FuzzResourceCodecCanonicalRoundTrip": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestARereadAfterStagingIsHeldToTheOverlaidValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestARereadThatDisagreesWithTheRenderIsRefused": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAbortedLeaseChangeLeavesAccountingConsistent": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestAbortedNewerOutputReservationLeavesOlderCandidateUsable": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAdmissionCommitAcceptsUnrelatedSameStoreMutation": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestAdmissionCommitRejectsVisibleSameStoreMutation": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestAdmissionOverlayCommitAcceptsMutationMaskedByOverlay": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestAdmissionOverlayCommitAcceptsUnrelatedSameStoreMutation": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestAdmissionOverlayCommitRejectsVisibleSameStoreMutation": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestAdmissionRenderBeginsWhileCommitHoldsTheFence": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestAdmissionRenderSlotsAreHalfTheCPUs": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAdmissionRendersInterleaveWithReconcileCommits": {
+    "parallel": false,
+    "seconds": 4.03
+  },
+  "TestAdmissionSlotRefusesAnExpiredWait": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAdmissionSourceOverlayCommitAcceptsMaskedSourceMutation": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestAdmissionSourceOverlayCommitRejectsMembershipMutation": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestAdmissionWaitsForTheColdReconcileRender": {
+    "parallel": false,
+    "seconds": 0.12
+  },
+  "TestAnnotationConflictChartFailedRendersDoNotPoisonReconcileState": {
+    "parallel": false,
+    "seconds": 0.14
+  },
+  "TestAnnotationConflictChartFamilyPropsInvalidateAndRetireBindings": {
+    "parallel": false,
+    "seconds": 0.14
+  },
+  "TestAnnotationConflictChartReplaysEffectsWithoutUnwarrantedExecution": {
+    "parallel": false,
+    "seconds": 0.14
+  },
+  "TestAssembleIncrementalGroupOrdersSourcesCanonically": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAssembleIncrementalGroupRejectsPoisonedResults": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAssembleIncrementalGroupTransfersWinnerWithoutReexecution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAssemblyReuseTransition_OscillationIsNotFirstSight": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAttemptExtraContextSharesGuardedCopyUntilConfigChanges": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAuthenticateComponentProjectionPreservesExactCertificateOrFailsClosed": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAuthenticatedFreshComponentResultRejectsPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestAuxiliaryRootsReuseTheirOutputWhenTheyObservedNothingNew": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestBackendServerNamePreservesRegexpReplacement": {
+    "parallel": false,
+    "seconds": 0.11
+  },
+  "TestBackendServersResultPreservesLegacyBytesWithoutSharedMutation": {
+    "parallel": false,
+    "seconds": 0.45
+  },
+  "TestBackendTimeoutChartReplaysEventsAndAdmissionAbortDoesNotPublish": {
+    "parallel": false,
+    "seconds": 0.32
+  },
+  "TestBackendTimeoutChartReusesCleanIngressesAndTransfersWinners": {
+    "parallel": false,
+    "seconds": 0.34
+  },
+  "TestBundledChartAmbientReadsStayBehindExactBoundaries": {
+    "parallel": false,
+    "seconds": 2.83
+  },
+  "TestCachePublicationSurvivesAnInputMovingAfterThePin": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCachedInputLegacyObserverCannotMutateCachedString": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCapabilitiesFanoutSeedsAndUpdatesEveryService": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCacheBuildImmediateSuccessorMatchesColdOracleBeforeReadiness": {
+    "parallel": false,
+    "seconds": 0.66
+  },
+  "TestColdCacheBuildObserverPairsExactLifecycle": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestColdCacheBuildObserverPanicsAreIsolated": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestColdCacheBuildObserverReportsSupersededAndSuccessExactlyOnce": {
+    "parallel": false,
+    "seconds": 0.95
+  },
+  "TestColdCacheBuildPanicPublishesNoPartialCache": {
+    "parallel": false,
+    "seconds": 0.08
+  },
+  "TestColdCacheBuildPublishesAfterAuthoritativeResult": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestColdCacheCommittedSuccessorCancelsBeforeStart": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestColdCacheCommittedSuccessorRejectsTerminalPublication": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestColdCacheDeferredCallbackPanicDiscardsOptionalPublication": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestColdCacheDraftCancellationCannotPublishOlderGeneration": {
+    "parallel": false,
+    "seconds": 0.35
+  },
+  "TestColdCacheDraftConcurrentTransferHasOneOwner": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCacheDraftFailurePublishesNoPartialCache": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestColdCacheDraftMaterializesBeforeGraphPreparation": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestColdCacheDraftRejectsPartialForeignAndStaleTransfers": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCacheDraftRejectsPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCacheDraftRejectsPoisonedBuildIdentity": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestColdCacheDraftRejectsTransferredOwnershipPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCacheDraftSupersededBeforeMaterializationIsRevoked": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestColdCachePendingReadinessFailsClosed": {
+    "parallel": false,
+    "seconds": 1.98
+  },
+  "TestColdCachePublicationPreflightPanicPublishesNothing": {
+    "parallel": false,
+    "seconds": 0.14
+  },
+  "TestColdCacheRaceLoserStillAcceptsItsCandidates": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestColdCacheReadyStateRejectsLiveSignal": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestColdCacheRequiredPublicationPanicPublishesNothing": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestColdCacheReservedSuccessorDoesNotCancelBeforeStart": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestColdCacheReservedSuccessorDoesNotRejectTerminalPublication": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestColdCacheSynchronousPreparationPanicAborts": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestColdCacheUnexpectedMutatorPanicPoisonsAndUnlocksState": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestColdCarrierGraphLaterWaveFailurePublishesNothingAndRetryReexecutesEveryWave": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestColdCarrierGraphRunsOnePersistentRendererPerWorkerAcrossEveryWave": {
+    "parallel": false,
+    "seconds": 0.34
+  },
+  "TestColdCarrierGraphScheduleRejectsAmbiguousOwnership": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCarrierGraphStageOrderCanonicalizesInterleavedGroups": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCarrierGraphStageSelectionRejectsDuplicatePlanMember": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCarrierGraphWaveRootsInvalidateWarmConsumersExactly": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestColdCarrierLaneFinalizationContainsPanic": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdCarrierResolverReadsDistinctResourceInputsConcurrently": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestColdCommitLosingTheGenerationRaceReleasesItsLocks": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestColdComponentCarrierMultiShardFinalizationFailureCannotPoisonRetry": {
+    "parallel": false,
+    "seconds": 0.35
+  },
+  "TestColdComponentVectorExecutesEachEntryPointOnce": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestColdComponentVectorFinalizationFailureCannotPoisonRetry": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestColdComponentVectorPreflightsEveryEntryPointBeforeFallback": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestColdGraphAuthorityRejectsChangedProducerState": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdGraphReadyPartitionsUsesExactBulkBoundary": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdGraphSchedulerDrainsSmallPrerequisitesBeforeBulkWaves": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdGroupAdditionsPrepareConcurrentlyAndInstallAtomically": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdGroupBatchInvalidLastResultLeavesSessionRootsUnchanged": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalHTTPCanonicalizationMatchesWarmExecution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalHTTPRejectsNativeArgumentsWithoutCallingMethods": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalRenderAcceptsNonComparableEngine": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalRenderRefusesAnotherPairsAnalysis": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalRenderRefusesNonComparableSharedAnalysis": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalRenderReplaysDerivationAndEvent": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestColdIncrementalRenderSubject": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalResourceLookupCanonicalizationMatchesWarmExecution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalResourceLookupRejectsNativeArgumentsWithoutCallingMethods": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalResourceReadsShareOneImmutableSnapshot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalResourceViewKeepsRequiresAsAvailabilityMetadata": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalResourceViewRejectsControllerAliasConflict": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalResourceViewRejectsNativeSourceValuesWithoutCallingMethods": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalResourceViewSnapshotsAvailableUndeclaredResources": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalResourceViewSnapshotsControllerResources": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdIncrementalValidateCallsRejectsBindingPlanDrift": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdReconcileRenderPastTheRenderTimeoutConverges": {
+    "parallel": false,
+    "seconds": 0.62
+  },
+  "TestColdRenderKeepsTheRenderTimeoutWithoutOptIn": {
+    "parallel": false,
+    "seconds": 0.61
+  },
+  "TestColdResourceMaterializationReusesTypedSnapshotValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaAuthenticatesSlotsAndHTTPEffects": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaBindCompletedPoisonLeavesEverySlotPending": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaBulkTransferPreflightsDestination": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaCompleteStagedWaveConcurrentWinnerIsWhole": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaCompleteStagedWavePoisonHasNoValidPrefix": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaCompleteWaveConcurrentWinnerIsWhole": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaCompleteWavePoisonHasNoValidPrefix": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaConcurrentInitializationAndRevocationPublishesNothing": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestColdResultArenaInitializeStagedManyRejectsForgedFinalSlot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaInitializeStagedManyRejectsPartialWave": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaInstallPreflightsEverySlot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaRejectsDuplicateQueries": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaRejectsForgedMembership": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaRejectsOwnedValuePoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaRevocationClearsPartialStaging": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestColdResultArenaRevocationInvalidatesPartialWave": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCombinedInputTransactionCancellationAbortsEveryCandidate": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestCombinedInputTransactionCancellationDuringFencePreservesCause": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestCombinedInputTransactionCleanupFailurePrecedesEveryPublication": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestCombinedInputTransactionCommitReportsPriorAbort": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestCombinedInputTransactionConcurrentAbortNeverReportsSuccess": {
+    "parallel": false,
+    "seconds": 0.29
+  },
+  "TestCombinedInputTransactionPreparationFailureAbortsEveryCandidate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCombinedInputTransactionReleasesRenderSessionReferences": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestCommitIncrementalOutputIsConcurrentAndBaseExact": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCommitIncrementalOutputPublishesAuthenticatedChildDeltas": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCommitIncrementalOutputRejectsMismatchedBasesAndMissingDeltas": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCommitIncrementalOutputRejectsUnpairedCompanionChanges": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCommitIncrementalOutputReusesExactNoopRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestComponentQueryKeyMatcherRejectsNoncanonicalKeys": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestComponentSeesWithheldContentAsPending": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestCriticalHTTPSourceFailsTheRenderHoweverTheTemplateShowsIt": {
+    "parallel": false,
+    "seconds": 1.56
+  },
+  "TestCurrentConfigExactRootSurvivesEquivalentACKClone": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfigProjectionIsConservativeForUnknownUsage": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfigProjectionIsConservativeWithoutIntrospection": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfigProjectionUsesCompiledGlobalUsage": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_AckedPlanOutranksTheRenderTimeFallback": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_AdmissionRenderNeverBecomesTheFallback": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_NoPlanAndNoStoreYieldsNothing": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_OwnsPlansAcrossTrustBoundaries": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_RenderTimeFallbackStopsAfterTheFirstAck": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_RenderTimePlanIsTheFreshInstallFallback": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_ReturnedProjectionCannotMutateStoredPlan": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_SetAckedPlanIgnoresNil": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCurrentConfig_StagedPlanPublishesOnlyAfterCommit": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestCustomCRDChartFirstRouteAfterEmptyRenderMatchesColdOracle": {
+    "parallel": false,
+    "seconds": 0.34
+  },
+  "TestCustomCRDChartIncrementalLifecycleMatchesColdOracle": {
+    "parallel": false,
+    "seconds": 0.8
+  },
+  "TestCustomCRDChartRoutesWithoutAFrontendConsumerRender": {
+    "parallel": false,
+    "seconds": 0.18
+  },
+  "TestDecodeIncrementalBindingsAcceptsEmptyObject": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodeIncrementalBindingsRejectsInvalidData": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodeIncrementalBindingsReturnsSortedDetachedBindings": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodeIncrementalResourceProjectionFailsClosed": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodeOpaqueMatchesCanonicalLengthFraming": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestDecodeResourceValueNormalizesIntegersAndRejectsTrailingValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedComponentInputOnlyReturnsDetachedEncodingWhenRequested": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedComponentInterningKeepsDistinctDependencyRoots": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedInputCacheFallbackReauthenticatesBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedInputCacheObserverRejectsSameRevisionWithDifferentBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedInputCacheSharesOneAuthenticatedSnapshot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedInputCachesOwnCanonicalBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedPublicationInputCacheRejectsCrossRevisionReuse": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedPublicationInputCacheRejectsPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedPublicationInputCacheReusesAuthenticatedValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedPublicationInputsShareCertifiedValueConcurrently": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestDecodedPublicationInterningKeepsDistinctDependencyRoots": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedResourceInputCacheObserverRejectsSameRevisionWithDifferentBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedResourceInterningKeepsDistinctDependencyRoots": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDecodedValueCachesReauthenticateSeals": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestDefaultBackendPublicationTracksExactServiceAndEndpointDependencies": {
+    "parallel": false,
+    "seconds": 0.29
+  },
+  "TestDerivedOwnerBindingTransitionsInvalidateCrossResourceReads": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestDerivedStageDirectItemMatchesSameSourceGetSingleAcrossMutations": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestDerivedStageDirectItemTracksOwnerProps": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestDerivedStageOrdinaryProjectionPrecedesOwnerCall": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestDerivedStageProjectionAcrossConcurrentRoots": {
+    "parallel": false,
+    "seconds": 0.1
+  },
+  "TestDerivedStageProjectionPrecedesOwnerCall": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestDerivedStageProjectionWithinOneGroup": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestDerivedStageProjectsDirectItem": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestDerivedStageRejectsLegacyDerivationAfterPreparation": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestDerivedStageWarmEvaluatesOnlyAffectedOwners": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestEncodeOpaqueMatchesCanonicalLengthFraming": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestEqualIncrementalBindingPlanMatchesDeepEqual": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestEquivalentOutputPublicationsCommitInEitherOrderWithoutOverwrite": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestEquivalentStaleOutputPublicationCancellationPreservesCause": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestExactBytesRevisionSeparatesKindAndValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestExactCycleCollectionObservationDetectsSameKeyReorder": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestExactCycleHTTPObservationCommitFenceRejectsMutationAfterMatch": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestExactCycleHTTPObservationIgnoresUnobservedPendingState": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestExactCycleHTTPObservationRejectsUncacheableNegativeRead": {
+    "parallel": false,
+    "seconds": 0.5
+  },
+  "TestExactCycleHTTPObservationReplaysOnlyExactAcceptedState": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestExactCycleLegacySharedRequiresEveryStoreRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestExactCycleListObservationUsesObservableOrder": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestExactCycleMatchingEvaluatesInheritedIndexes": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestExactCycleObservationDetectsContentChangeUnderSameKeys": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestExtractMapReferencesPreservesConverterBoundaries": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestFinalizedComponentInstallPreflightsEveryAuthority": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestFinishIncrementalVectorRenderIsAtomic": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestFinishIncrementalVectorRenderPublishesIndependentTypedResults": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestFreshColdStartDoesNotReplaceExistingGeneration": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestFreshColdStartRejectsZeroGenerationSnapshotState": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestFreshResultAuthorityIgnoresCallerNestedPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestFreshResultAuthorityRejectsSameValueDifferentRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestFreshResultAuthorityReturnsDetachedMaterializations": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestFreshResultEffectsCertificateBindsGeneratedPolicyAndIdentity": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestGatewayBackendChartAbortAdmissionAndConcurrencyStayIsolated": {
+    "parallel": false,
+    "seconds": 2.08
+  },
+  "TestGatewayBackendChartCachesExactRouteDependencies": {
+    "parallel": false,
+    "seconds": 2.08
+  },
+  "TestGatewayBackendChartHTTPRouteExecutionScaling": {
+    "parallel": false,
+    "seconds": 21.24
+  },
+  "TestGatewayBackendChartPolicySelectorsAndFilesStayExact": {
+    "parallel": false,
+    "seconds": 2.22
+  },
+  "TestGatewayBackendChartSameNameRouteKindsRemainIndependent": {
+    "parallel": false,
+    "seconds": 2.04
+  },
+  "TestGatewayFeaturePublicationColdProjectionMatchesLegacyLoops": {
+    "parallel": false,
+    "seconds": 3.56
+  },
+  "TestGatewayFeaturePublicationsActivationAndDeletion": {
+    "parallel": false,
+    "seconds": 2.029
+  },
+  "TestGatewayFeaturePublicationsAdmissionAndFailureDoNotPoisonCache": {
+    "parallel": false,
+    "seconds": 3.92
+  },
+  "TestGatewayFeaturePublicationsScaleByChangedGateway": {
+    "parallel": false,
+    "seconds": 35.95
+  },
+  "TestGatewayFeatureResourceDependenciesAreExactAndDetectABA": {
+    "parallel": false,
+    "seconds": 1.99
+  },
+  "TestGatewayHTTPRouteIncrementalRootPartition": {
+    "parallel": false,
+    "seconds": 0.18
+  },
+  "TestGatewayHTTPSSLPassthroughSurvivesUnavailableTLSRouteSchema": {
+    "parallel": false,
+    "seconds": 1.51
+  },
+  "TestGatewayHostMapAdmissionAndRootAbortDoNotPoisonCache": {
+    "parallel": false,
+    "seconds": 1.81
+  },
+  "TestGatewayHostMapExecutionScaling": {
+    "parallel": false,
+    "seconds": 10.76
+  },
+  "TestGatewayHostMapMissingGatewayAndListenerSetTransitions": {
+    "parallel": false,
+    "seconds": 3.59
+  },
+  "TestGatewayHostMapPortScopeSelectorsTrackOnlyValueTransitions": {
+    "parallel": false,
+    "seconds": 1.85
+  },
+  "TestGatewayHostnameClaimAbortDoesNotPublishSpeculativeValue": {
+    "parallel": false,
+    "seconds": 3.15
+  },
+  "TestGatewayHostnameClaimCollisionPromotesCachedProducer": {
+    "parallel": false,
+    "seconds": 1.58
+  },
+  "TestGatewayHostnameClaimExecutionScaling": {
+    "parallel": false,
+    "seconds": 11.75
+  },
+  "TestGatewayHostnameClaimListenerSetInvalidatesOnlyItsGateway": {
+    "parallel": false,
+    "seconds": 1.67
+  },
+  "TestGatewayHostnameClaimPresenceTracksEmptyGateway": {
+    "parallel": false,
+    "seconds": 1.56
+  },
+  "TestGatewayHostnameSuffixExecutionScaling": {
+    "parallel": false,
+    "seconds": 11.05
+  },
+  "TestGatewayHostnameSuffixOrdersMostSpecificAndPromotesCachedDuplicate": {
+    "parallel": false,
+    "seconds": 1.56
+  },
+  "TestGatewayMTLSOverridePresenceSurvivesAdmissionAndAbort": {
+    "parallel": false,
+    "seconds": 5.87
+  },
+  "TestGatewayMTLSOverrideTracksCADeletionAndRecreation": {
+    "parallel": false,
+    "seconds": 11.67
+  },
+  "TestGatewayMTLSReferenceGrantAndCALifecycle": {
+    "parallel": false,
+    "seconds": 17.6
+  },
+  "TestGatewayMTLSWithoutReferenceGrantSchemaKeepsLocalValidation": {
+    "parallel": false,
+    "seconds": 3.77
+  },
+  "TestGatewayPodPortDeletionAdmissionAndAbortStayExact": {
+    "parallel": false,
+    "seconds": 1.83
+  },
+  "TestGatewayPodPortMetadataOnlyExecutionScaling": {
+    "parallel": false,
+    "seconds": 19.26
+  },
+  "TestGatewayRouteAnalysisAdmissionAndRootAbortDoNotPoisonCache": {
+    "parallel": false,
+    "seconds": 2.09
+  },
+  "TestGatewayRouteAnalysisCollisionFanoutAndDeletionPromotion": {
+    "parallel": false,
+    "seconds": 2.11
+  },
+  "TestGatewayRouteAnalysisDoesNotScanWholeStores": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestGatewayRouteAnalysisExecutionScaling": {
+    "parallel": false,
+    "seconds": 29.09
+  },
+  "TestGatewayRouteAnalysisMissingGatewayTransitions": {
+    "parallel": false,
+    "seconds": 2.08
+  },
+  "TestGatewayRouteAnalysisRetainsCrossRouteGetSingleDependency": {
+    "parallel": false,
+    "seconds": 2.21
+  },
+  "TestGatewayRouteAnalysisUnrelatedInputsDoNotExecute": {
+    "parallel": false,
+    "seconds": 2.02
+  },
+  "TestGatewayRouteCandidatePublicationsScaleByChangedRoute": {
+    "parallel": false,
+    "seconds": 11.55
+  },
+  "TestGatewayRoutePathsRetainsGroupedRouteGetSingleDependency": {
+    "parallel": false,
+    "seconds": 1.69
+  },
+  "TestGatewaySSLPassthroughBackendRetainsExactComponentDependencies": {
+    "parallel": false,
+    "seconds": 3.39
+  },
+  "TestGatewaySSLPassthroughHTTPBackendActivationTracksFilters": {
+    "parallel": false,
+    "seconds": 3.36
+  },
+  "TestGatewaySSLPassthroughPromotesCachedHTTPWinnerAndTracksTLSGateway": {
+    "parallel": false,
+    "seconds": 3.38
+  },
+  "TestGatewaySSLPassthroughPublicationsScaleByChangedRoute": {
+    "parallel": false,
+    "seconds": 10.79
+  },
+  "TestGatewaySSLPassthroughTLSBackendTracksExactRouteAndEndpoints": {
+    "parallel": false,
+    "seconds": 3.36
+  },
+  "TestGatewaySchemaStrippedRootKeepsOnlyServedSourceComponents": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestGatewayStatusAttachedRouteColdAdmissionAndAbortStayIsolated": {
+    "parallel": false,
+    "seconds": 1.65
+  },
+  "TestGatewayStatusAttachedRouteExecutionScaling": {
+    "parallel": false,
+    "seconds": 10.46
+  },
+  "TestGatewayStatusAttachedRouteListenerSetNamespaceRules": {
+    "parallel": false,
+    "seconds": 1.64
+  },
+  "TestGatewayStatusAttachedRouteMissingPresentDeletionAndParentMultiplicity": {
+    "parallel": false,
+    "seconds": 1.66
+  },
+  "TestGatewayTCPRouteClaimPromotesCachedLoserAndSurvivesAbort": {
+    "parallel": false,
+    "seconds": 3.68
+  },
+  "TestGatewayTCPRouteClaimsExecuteOnlyChangedRouteAcrossScale": {
+    "parallel": false,
+    "seconds": 15.89
+  },
+  "TestGatewayTCPRouteClaimsTrackBackendTLSIdentity": {
+    "parallel": false,
+    "seconds": 1.84
+  },
+  "TestGatewayTCPRouteClaimsTrackExactEndpointDependenciesAndAbort": {
+    "parallel": false,
+    "seconds": 1.89
+  },
+  "TestGatewayTLSReferenceGrantLifecycle": {
+    "parallel": false,
+    "seconds": 11.6
+  },
+  "TestGatewayTLSWithoutReferenceGrantSchemaKeepsLocalCertificate": {
+    "parallel": false,
+    "seconds": 3.75
+  },
+  "TestGatewayWeightedMapColdMatchesWholeStoreGenerator": {
+    "parallel": false,
+    "seconds": 3.15
+  },
+  "TestGatewayWeightedMapExecutionScaling": {
+    "parallel": false,
+    "seconds": 22.05
+  },
+  "TestGatewayWeightedMapHTTPAndGRPCBindingsRetireIndependently": {
+    "parallel": false,
+    "seconds": 1.61
+  },
+  "TestGovernanceChartDefaultHTTPSInvalidatesOnlyTLSBinding": {
+    "parallel": false,
+    "seconds": 0.09
+  },
+  "TestGovernanceChartDerivesAnnotationsWithoutMutatingWatchedResources": {
+    "parallel": false,
+    "seconds": 0.28
+  },
+  "TestGovernanceChartRuleNamespaceScopeReevaluatesWarmItems": {
+    "parallel": false,
+    "seconds": 0.09
+  },
+  "TestGovernanceDerivedSnapshotAuthenticatesSourceAndBindingLineage": {
+    "parallel": false,
+    "seconds": 0.2
+  },
+  "TestHAProxyIngressIncrementalSweepAbortsDoNotPoisonCache": {
+    "parallel": false,
+    "seconds": 2.66
+  },
+  "TestHAProxyIngressIncrementalSweepMatchesDetachedLegacy": {
+    "parallel": false,
+    "seconds": 9.53
+  },
+  "TestHAProxyIngressIncrementalSweepScalesWithChangedResources": {
+    "parallel": false,
+    "seconds": 15.84
+  },
+  "TestHAProxyIngressUniqueOnlyComponentsKeepAbortCachesIsolated": {
+    "parallel": false,
+    "seconds": 1.86
+  },
+  "TestHAProxyIngressUniqueOnlyComponentsReuseExactResourceFragments": {
+    "parallel": false,
+    "seconds": 2.06
+  },
+  "TestHAProxyTechAuthPublicationsDoNotPoisonWinnerCache": {
+    "parallel": false,
+    "seconds": 1.94
+  },
+  "TestHAProxyTechGatedComponentsSkipAnnotationFreeIngresses": {
+    "parallel": false,
+    "seconds": 6.29
+  },
+  "TestHAProxyTechSetHostColdMatchesLegacyPublicationReplay": {
+    "parallel": false,
+    "seconds": 3.45
+  },
+  "TestHAProxyTechSetHostSharedGroupCollisionAndPromotion": {
+    "parallel": false,
+    "seconds": 1.79
+  },
+  "TestHTTPInputChangeLookupUsesExactURLDescriptorIndex": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestHTTPInputReferencesRetireCredentialsAfterLastCommittedConsumer": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestHTTPReferenceDeltasPublishOnlyWithSuccessfulSession": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestHTTPReferenceDeltasScaleWithChangedEffects": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestHTTPSourceModeForRender": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestHaproxyIngressAuthMapChartAdmissionFailuresDoNotPoisonCache": {
+    "parallel": false,
+    "seconds": 0.45
+  },
+  "TestHaproxyIngressAuthMapChartFailedRootRenderDoesNotPublishScratchRows": {
+    "parallel": false,
+    "seconds": 0.15
+  },
+  "TestHaproxyIngressAuthMapChartKeepsFirstContributorForDuplicateIdentity": {
+    "parallel": false,
+    "seconds": 0.16
+  },
+  "TestHaproxyIngressAuthMapChartReusesCleanIngressesAndRetiresDeletedRows": {
+    "parallel": false,
+    "seconds": 0.18
+  },
+  "TestHaproxyIngressAuthMapChartSkipsInvalidRowsAndReplaysEvents": {
+    "parallel": false,
+    "seconds": 0.15
+  },
+  "TestHapticAnnotationsAuthHeaderPublicationsStayExactAndTransactional": {
+    "parallel": false,
+    "seconds": 0.25
+  },
+  "TestHapticAnnotationsHSTSColdDifferentialAndPromotionStayExact": {
+    "parallel": false,
+    "seconds": 0.18
+  },
+  "TestHapticAnnotationsHSTSFailuresCannotPoisonCommittedState": {
+    "parallel": false,
+    "seconds": 0.13
+  },
+  "TestHapticAnnotationsWAFPublicationsStayChangeLocalAndTransactional": {
+    "parallel": false,
+    "seconds": 0.46
+  },
+  "TestHapticRawConfigChartReusesCleanIngressesAndTransfersHeaderOwnership": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestHapticRawConfigChartSkipsInactiveProducersWithoutAFrontend": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestIncrementalActivationBackdatesUnchangedPredicate": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalActivationClearsDeclaredEffects": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestIncrementalActivationColdWarmParity": {
+    "parallel": false,
+    "seconds": 0.1
+  },
+  "TestIncrementalActivationDynamicBindingTransitionsAreTransactional": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalActivationInactiveScale": {
+    "parallel": false,
+    "seconds": 2.5
+  },
+  "TestIncrementalActivationInvalidPathFailsClosedWithoutObjects": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalActivationRetiresPredicateWithComponent": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalActivationSharesOneSignatureAcrossComponents": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalActivationTracksGovernanceWithoutMutatingStore": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalActivationTransactionsDoNotPoisonCache": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestIncrementalActivationUnmountedGroupRetiresCachedResults": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalActivationUnmountedGroupValidation": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestIncrementalActivationWildcardTracksAnyArrayElement": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestIncrementalActiveGroupProofConcurrentCandidatesStayIsolated": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestIncrementalActiveGroupProofRejectsPoisonedCache": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalBackendPlanFirstWinnerIsGlobalAndDeterministic": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanFirstWinnerUsesCanonicalIdentityOrder": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanFreshTokensProduceStableConfig": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanIndexDeepClonesNestedDeclarations": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanLogicalTokenClassification": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanLosingProfileIsNotReplayed": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanOperationOrderBreaksIdentityTies": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanRejectsCorruptedEffects": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanRejectsPersistentNonlogicalOutput": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanRejectsWinningUndeclaredProfile": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanResolvesWinningProfileAcrossInstancesOnce": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanRootScopeIsMainOnly": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanTokenIsDeterministicWhenObservedAsData": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendPlanWinnerRetirementPromotesCachedCandidate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendWhenAnyCachedConditionsFailClosed": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBackendWhenAnyRejectsMissingPublications": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchBoundResourceFrameDrainsBeforeRevocation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchBoundResourceFrameRejectsCrossGeneration": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchBoundResourceFrameRejectsForeignAuthority": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchBoundResourceFrameRejectsRevokedLease": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchCapabilityCancellationIsStickyWhenSwallowed": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchCapabilityPanicReleasesAcceptedSharedCall": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchCapabilityRevocationDrainsAcceptedResourceCall": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchCapabilityRevocationDrainsAcceptedSharedCall": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchControllerCapabilityRejectsRetainedCrossGenerationCall": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchDeriveCapabilityPreflightsBeforeInvalidPath": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchEventCapabilityPreflightsBeforeInvalidResource": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchEventCapabilityRejectsRetainedContextEffect": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchHTTPCapabilityRejectsSwallowedCrossGenerationEffect": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchHTTPCapabilitySupportsConcurrentActiveCalls": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchNativePreflightRejectsRetainedCallbackBeforeBody": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchPlanCapabilityRejectsSwallowedCrossGenerationEffect": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchPublicationRequiresRevokedLease": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchResourceCapabilitiesAreGenerationIsolatedInParallel": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchResourceCapabilityCannotMutatePublishedResult": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchResourceCapabilityRejectsGoroutineCrossingItemEnd": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchResourceCapabilityRejectsRetainedCallAfterBatch": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchResourceCapabilityRejectsRetainedCrossGenerationCall": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchRevokedCapabilitiesRejectConcurrentSwallowedCalls": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchSelectorCapabilityRejectsSwallowedCrossGenerationRead": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchSharedCapabilityPreflightsBeforeInvalidValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchSharedCapabilityRejectsSwallowedCrossGenerationEffect": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchStatusCapabilityPreflightsBeforeInvalidVariants": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBatchStatusCapabilityRejectsRetainedContextEffect": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBindingPlanCacheTracksEveryPlannerInputExactly": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalBindingPlanCacheTransactionsCannotPoisonCommittedPlan": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestIncrementalBindingPlanPrecomputesStaticBindings": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBindingPlanRejectsMultipleActiveDeriveOwners": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBindingPlannerErrorsUseConfiguredName": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalBindingSnapshotOwnsCanonicalProps": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalBindingSnapshotRejectsLeafSubstitution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCacheOutputReservationGetterRequiresTerminalSuccess": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCacheOutputReservationRejectsPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCarrierPlannerAcceptsAuthenticatedMissingOptionalDependency": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCarrierPlannerHTTPRoute3000Shape": {
+    "parallel": false,
+    "seconds": 1.13
+  },
+  "TestIncrementalCarrierPlannerKeyPreflightRejectsDuplicate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCarrierPlannerOwnsComponentMetadata": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCarrierPlannerPreservesColdDependencyFrames": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCarrierPlannerRejectsPoisonedTopologyAndQueries": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCarrierPlannerRetainsEmptyProducerWave": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCarrierPlannerSeparatesSourceIdentities": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdAndWarmExposeAvailableUndeclaredResources": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalColdAndWarmExposeControllerResources": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalColdCarrierWaveSourceWorkersAreDeterministic": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalColdCarrierWaveSourceWorkersLoseOrDuplicateNothing": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdCarrierWaveSourceWorkersRejectMalformedTopology": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalColdCarrierWavesHTTPRoute3000Shape": {
+    "parallel": false,
+    "seconds": 3.47
+  },
+  "TestIncrementalColdCarrierWavesKeepsEveryWorkerInEveryBarrier": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalColdCarrierWorkerLimitUsesEverySchedulerThread": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdSourceFramesConcurrentMaterialization": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalColdSourceFramesFallbackReaderComparesCompleteValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdSourceFramesKeepDerivedOwnerReadsPerQuery": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdSourceFramesObserveEveryQueryExactly": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdSourceFramesPreserveLazyDependencyReads": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdSourceFramesRandomizedPreparationParity": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestIncrementalColdSourceFramesRejectPoisonedObservationsAndFrames": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdSourceFramesReleaseRevokedOwnership": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalColdSourceFramesShareCachedRepresentations": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdSourceTransactionsCoLocateHeterogeneousArbitraryCRDSource": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalColdSourceTransactionsHTTPRoute3000Shape": {
+    "parallel": false,
+    "seconds": 1.69
+  },
+  "TestIncrementalColdSourceTransactionsSplitPropsWithoutSplittingSourceAuthority": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCommitFenceRejectsMissingRelease": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCommitFenceValidatesEverySourceAlias": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalCommitFencesMutationThroughStatePublication": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalComponentErrorsUseConfiguredName": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalComponentQueryCacheAuthenticationDoesNotAllocate": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalComponentQueryCacheReauthenticatesCanonicalIdentity": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalComponentsEqualMatchesDeepEqual": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalConditionalBackendIncludesNonPlanCompetitorsAndIsolatesGroups": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalConditionalBackendUsesAnyOwnedKey": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalConditionalBackendUsesPublicationOwner": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDecodedCacheComputesDistinctKeysConcurrently": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDecodedCacheComputesOneExactKeyOnce": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDecodedCacheConcurrentFailureUnblocksWaiters": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDecodedCachePanicUnblocksWaitersAndRetries": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDecodedCacheRejectsPoisonAndRetriesFailures": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDerivedProjectionBuildsViewForExactOwner": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDerivedProjectionBypassDoesNotObserveUnwarrantedOwner": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDerivedProjectionBypassObservesExactOwnerAbsence": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDerivedProjectionRejectsStaleAbsenceProof": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDerivedProjectionRejectsUnauthenticatedOwnerProof": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDerivedResourceResolverMaterializesDetachedBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDerivedResourceSealsCallerBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecConcurrentExactKey": {
+    "parallel": false,
+    "seconds": 0.08
+  },
+  "TestIncrementalDirectBoundResourceSpecHashCollisionKeepsExactKeys": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecNormalizesEmptyKeys": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecRejectsCopiedAndForeignEntry": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecRejectsCopiedStaleAndABAArena": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecRejectsPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecRejectsTamperedDeclaration": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecReusesExactShape": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecSeparatesDeclarationShape": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectBoundResourceSpecUsesExactKeyBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionCannotCrossGeneration": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionConcurrentPublication": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionFallsBackForIncompatibleResultShape": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionKeepsEmptyReadOwnerFree": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionRejectsInternallyConsistentPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionRejectsOwnerPublication": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionRejectsPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionRejectsWrongResource": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalDirectResourceProjectionReobservesOwnerAbsence": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGraphWarmFollowsTheCommittedCache": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalGroupAuthenticationDetachesIndexedPayloads": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupAuthenticationRejectsApplyOnPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupAuthenticationRejectsEquivalentRootSubstitution": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalGroupAuthenticationRejectsNilAndUnsealedIndexes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupAuthenticationRejectsPublicationCorruption": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalGroupAuthenticationRejectsStaleSeal": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalGroupAuthenticationValidatesChangedPublicationPaths": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupAuthorizationIsScopeLocal": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexAcceptsCopiedNestedOutputHandle": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexAggregatesEffects": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexDropsRetiredHTTPOnlyEffect": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexKeepsExactEventTuplesAndHTTPWinnerSemantics": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexMatchesCanonicalAssembly": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexOrdersSourcesCanonically": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexPreservesExactOutputRoots": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexRandomizedDifferential": {
+    "parallel": false,
+    "seconds": 0.39
+  },
+  "TestIncrementalGroupIndexRejectsDifferentInitialCandidates": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexRejectsInvalidOrInconsistentUpdates": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupIndexTracksHTTPOnlyEffectChange": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupLocationKeyForInstanceKeyMatchesCanonicalEncoding": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMainMountAuthorizesAuxiliarySelector": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalGroupMemoBoundsLatestGenerationToCurrentCells": {
+    "parallel": false,
+    "seconds": 0.31
+  },
+  "TestIncrementalGroupMemoConcurrentFill": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoDetachedMutationDoesNotPoisonWarmValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoDoesNotRetainDelimiterVariants": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoForkedFillsAreIndependent": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoMultiHopWinnerRestoration": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoParentAndChildConcurrentReads": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestIncrementalGroupMemoPreservesEqualReplacement": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoPreservesUnchangedWinner": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoRankedGenerationRetention": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoRejectsCopiedRankedPayload": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoRejectsCrossCellProjectionAlias": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoRejectsEquivalentProjectionRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoRejectsNilStateRoots": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoRejectsSubstitutionAndCorruptEntries": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoRetainsEveryCurrentCell": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalGroupMemoReusesOnlyUnchangedCells": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoSiblingInvalidationsAreIndependent": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMemoUsesCanonicalEmptyValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalGroupMountsTextThreeTimesAndEffectsOnce": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalGroupRejectsCrossAuxiliaryAuthorization": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalGroupRejectsInvalidSecondMount": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestIncrementalGroupSelectorRequiresCompletedMount": {
+    "parallel": false,
+    "seconds": 0.11
+  },
+  "TestIncrementalHTTPChangeLookupIsExactAcrossDeclarationsForOneURL": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalHTTPCommitFenceRejectsOnlyLateRelevantChanges": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestIncrementalHTTPEffectCacheOwnsCallerValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalHTTPEffectDuplicateFailsAtomically": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalHTTPEffectSnapshotRejectsLeafSubstitution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalHTTPNegativeProofRejectsExactABAAndJournalLoss": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestIncrementalHTTPNewerSiblingConflictCannotRepublishLeaseToken": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalHTTPRelevantChangeIsAcknowledgedOnlyByCachePublication": {
+    "parallel": false,
+    "seconds": 0.11
+  },
+  "TestIncrementalHTTPStaleEquivalentCacheLoserCannotRepublishLeaseToken": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalKeyParsersRejectNoncanonicalAliases": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalOrderedTuplePreservesExactEscapedBytes": {
+    "parallel": false,
+    "seconds": 0.26
+  },
+  "TestIncrementalOrderedTuplePreservesStringOrder": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanBootstrapKeepsMissingProfileFailure": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanBootstrapLateFailureIsAtomic": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanBootstrapMatchesSequentialPermutations": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestIncrementalPreparedPlanBootstrapRejectsIncompleteAuthority": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanBootstrapRejectsPoisonedProvenance": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalPreparedPlanBootstrapRejectsValidWrongValueRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanBootstrapSupportsWarmTransitions": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalPreparedPlanColdBuilderBatchIsAtomicAndBound": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalPreparedPlanColdBuilderFallsBackOnIncompleteCoverage": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanColdBuilderMatchesExactBootstrap": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalPreparedPlanColdBuilderOwnsProjectedValues": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanColdBuilderPreparesGroupsConcurrently": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanColdBuilderRejectsSwappedStructuredResult": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanOutputMemoAcceptsCopiedCachedOutputHandle": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanOutputMemoAppliesLosingInstanceDelta": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanOutputMemoChainsAcrossBackendChanges": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanOutputMemoFlattensAtMaxDepth": {
+    "parallel": false,
+    "seconds": 0.1
+  },
+  "TestIncrementalPreparedPlanOutputMemoRejectsAuthenticatedCachedOutputSubstitution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanOutputMemoRejectsFieldSubstitution": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanOutputMemoRejectsShallowCopy": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanOutputMemoReusesExactOutputAcrossRegistries": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanOutputMemoSeparatesForeignAuthorities": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanPromotesAndReplacesOneCandidate": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPreparedPlanRejectsEquivalentRootSubstitution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPreparedPlanRejectsStaleGroupLink": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalProtocolInputsBackdateAwayAndBackExactly": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationCountTracksWinnersAndRejectsCorruption": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationIdentityRejectsMixedRanking": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationProjectionKeysPreserveExactOrdering": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationSnapshotConcurrentCapture": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestIncrementalPublicationSnapshotConcurrentCaptureAndRevoke": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPublicationSnapshotConcurrentSelect": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPublicationSnapshotGenerationHasNoSessionOwnership": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationSnapshotLiveSourceCount": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationSnapshotNormalizationErrorParity": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationSnapshotNormalizationParity": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPublicationSnapshotObservesExactInputEveryRead": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationSnapshotOwnsPublishedValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationSnapshotPersistedFallbackParity": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationSnapshotRandomizedNormalizationParity": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestIncrementalPublicationSnapshotRejectsPoisonReplayAndRevocation": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalPublicationSnapshotRejectsPoisonedObservation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationSnapshotSeparatesIdenticalCanonicalBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationWinnerProjectionAdmissionAbortIsAtomic": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationWinnerProjectionConcurrentAdmissionsAndReads": {
+    "parallel": false,
+    "seconds": 0.23
+  },
+  "TestIncrementalPublicationWinnerProjectionRejectsRootPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationWinnerProjectionReturnsFreshDetachedValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublicationWinnerProjectionsPromoteAndDeleteCollisions": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublishMixesOnlyWithLogicalBackendPlan": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublishRecorderDetachesAndRejectsInvalidValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublishedValuesIndexesFailClosedOnPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalPublishedValuesRandomizedDifferential": {
+    "parallel": false,
+    "seconds": 0.18
+  },
+  "TestIncrementalPublishedValuesWinnerOrderPromotionAndFreshDetach": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRankedFragmentsJoinPreservesDelimiterBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRankedFragmentsOrderPromotionAndStableOwnerTie": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRankedFragmentsRejectsUnauthenticatedIndex": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRankedFragmentsRejectsUnrankedAndNonStringValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRankedPublishedValuesUseRankThenStableOwner": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRankedTextFragmentRejectsDetachedProjection": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRankedTextFragmentRetainsExactChangedRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRecorderConcurrentEventsAreDeduplicated": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRecorderEventsMatchEventCollector": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRecorderRejectsInvalidEventsLikeEventCollector": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRecorderRejectsMixedOutput": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRecorderResultDetachesEffects": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalRenderingMatchesModelAcrossResourceChurn": {
+    "parallel": false,
+    "seconds": 3.24
+  },
+  "TestIncrementalResourceCatalogConcurrentExactAccess": {
+    "parallel": false,
+    "seconds": 0.08
+  },
+  "TestIncrementalResourceCatalogRejectsAwayAndBackMutationReplay": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceCatalogRejectsCandidateAndMutationTampering": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceCatalogRejectsCopiedAndForeignOwnership": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceCatalogRejectsCopiedSnapshot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceCatalogRejectsPoisonedEntry": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceCatalogShardCollisionKeepsExactKeys": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceDeriverRecordsExactChain": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceDeriverRejectsInvalidChainsWithoutPoisoning": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceFramePayloadHasNoRenderOwnerReachability": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalResourceFramesReleaseIsIdempotent": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalSelectorValuesInputIsExactDetachedAndAuthenticated": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalSessionRejectsGroupIndexResultMismatch": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalSourceTransactionReleasesSessionAfterNativeClosure": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestIncrementalSourceTransactionsAbortPartialArenaWithoutFallback": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestIncrementalSourceTransactionsAllOutputAndEffectClassesMatchDisabledControl": {
+    "parallel": false,
+    "seconds": 0.49
+  },
+  "TestIncrementalSourceTransactionsDistinctPropsAndSharedWinnerMatchDisabledControl": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestIncrementalSourceTransactionsHTTPObservationsMatchDisabledControl": {
+    "parallel": false,
+    "seconds": 0.08
+  },
+  "TestIncrementalSourceTransactionsRejectForgedAndStaleChildAuthorities": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestIncrementalSourceTransactionsRejectForgedChildSelector": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestIncrementalStatePreparationFailsBeforeInputPublication": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStateSnapshotAuthenticationRejectsCopiedAuthority": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStateSnapshotAuthenticationRejectsRootPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchCallPreservesLineageAcrossBothDecoders": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchPlanBootstrapPublishesOnlyAfterCompleteBuild": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchPlanBulkBuildMatchesSequentialPlan": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchPlanBulkBuildRejectsLateConflictAtomically": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchPlanBulkBuildRejectsPreparedCallSubstitution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchPlanReplacesOnlyChangedInstance": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchProjectionOutputCannotPoisonWarmReplay": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchProjectionOverwritesDirectBaselineWithoutConflict": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchProjectionPreflightsConflictsBeforeCollectorMutation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchProjectionRejectsCopiedPreparedCall": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchProjectionRejectsMemoPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchProjectionRejectsPreparedCallSubstitution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchProjectionReusesOnlyUnchangedGroupRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchReplayPreservesMissingLineage": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalStatusPatchReplayRejectsCrossPhaseLineageConflictAtomically": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalTransitionTimeAdmissionAndAbortNeverPublish": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalTransitionTimeFailureDoesNotPublishCache": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestIncrementalTransitionTimeIsUnavailableToNonStatusComponents": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestIncrementalTransitionTimeTransactionCapability": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestIncrementalValuesEarlyReadsDoNotRequestOrReplayGroupEffects": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorAbortDrainsActiveCapability": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorBoundResourceFrameDrainsBeforeRevocation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorBoundResourceFrameRejectsCrossExecutionLease": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorBoundResourceFrameRejectsCrossItemContext": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorBoundResourceFrameUsesOneInflightGate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorCapabilitiesRejectNilContext": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorCapabilityCannotCrossItem": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceConcurrentCalls": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceDrainsBeforeTerminalTransition": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceEndRejectsActiveRead": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceExhaustionDoesNotRetain": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceNormalizesReflectionValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceReadPanicCompletesInvocation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRecordsExactRead": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsABAReplay": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsConcurrentDuplicateRead": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsDoubleEnd": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsForeignInvocation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsGenerationWrap": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsInvalidBegin": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsReadReplay": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsRetainedCall": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceRejectsStaleItem": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectBoundResourceZeroReadEnd": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectCallDrainsBeforeEnd": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorDirectCallRejectsAnotherItem": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionAbortIsTerminal": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionAuthenticatesSourceTransactionSelector": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionCompletesEachItemOnce": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionDrainsActiveCapability": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionFinalizesOnce": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionHonorsCancellation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionLeaseAuthenticatesActiveItemContext": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionLeaseRejectsStaleItemContext": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorExecutionRejectsForeignContext": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorLifecycleViolationIsTerminal": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorRecorderKeepsItemEffectsSeparate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIncrementalVectorStoreInvocationDrainsBeforeEnd": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestIngressAnnotationDefaultBackendsInvalidateOnlyExactReferences": {
+    "parallel": false,
+    "seconds": 2.029
+  },
+  "TestIngressBackendChartAdmissionAndConcurrentRendersStayIsolated": {
+    "parallel": false,
+    "seconds": 2.07
+  },
+  "TestIngressBackendChartCachesExactDependenciesAndEffects": {
+    "parallel": false,
+    "seconds": 2.11
+  },
+  "TestIngressBackendChartFileConflictsAndAbortsDoNotPoisonCache": {
+    "parallel": false,
+    "seconds": 2.07
+  },
+  "TestIngressBackendChartReplaysAndClearsDegradedMarker": {
+    "parallel": false,
+    "seconds": 2.0
+  },
+  "TestIngressDefaultBackendChartPromotesExactNewestWinner": {
+    "parallel": false,
+    "seconds": 1.76
+  },
+  "TestIngressFeatureComponentsStayConstantAcrossScale": {
+    "parallel": false,
+    "seconds": 58.93
+  },
+  "TestIngressFeatureFailedRendersAndAdmissionCannotPoisonCache": {
+    "parallel": false,
+    "seconds": 1.89
+  },
+  "TestIngressHeaderWinnerPromotionAndRemovalStayExact": {
+    "parallel": false,
+    "seconds": 1.94
+  },
+  "TestIngressPathChartAbortAdmissionAndABADoNotPoisonSelectors": {
+    "parallel": false,
+    "seconds": 1.8
+  },
+  "TestIngressPathChartSelectorsStayExactAndPromoteLoser": {
+    "parallel": false,
+    "seconds": 1.77
+  },
+  "TestIngressPathChartWarmAndColdOutputsMatch": {
+    "parallel": false,
+    "seconds": 3.51
+  },
+  "TestIngressStatusChartGlobalLoadBalancerFallbackAndColdParity": {
+    "parallel": false,
+    "seconds": 0.1
+  },
+  "TestIngressStatusChartIncrementalLifecycleAndFanout": {
+    "parallel": false,
+    "seconds": 0.12
+  },
+  "TestIngressTLSExactSecretDependenciesAndWinnerPromotion": {
+    "parallel": false,
+    "seconds": 1.92
+  },
+  "TestInitialHTTPCandidateRendersThroughWarmGraph": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestInitialHTTPCandidateWarmRenderAcceptsAgainstItsSnapshot": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestInputIsolationAdmissionAcrossIdenticalSiblingSnapshots": {
+    "parallel": false,
+    "seconds": 2.1
+  },
+  "TestInputIsolationAdmissionRetainsWarmGraphAfterConcurrentAcceptance": {
+    "parallel": false,
+    "seconds": 2.04
+  },
+  "TestInputIsolationBranchesPreserveWarmRendering": {
+    "parallel": false,
+    "seconds": 2.05
+  },
+  "TestInputIsolationJournalSupportsBatchesWithoutAcceptingSiblingHistory": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestInputIsolationMembershipPinUsesSnapshotIdentity": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestInvalidGatewayTLSOptionsDoNotRejectUnrelatedAdmission": {
+    "parallel": false,
+    "seconds": 2.18
+  },
+  "TestJournalChangesThroughStopsAtPinnedSequence": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestKubernetesBackendPublicationConfigPropsSelectExactTarget": {
+    "parallel": false,
+    "seconds": 0.41
+  },
+  "TestLateOverlayMembershipProofHonorsMaskedBaseChanges": {
+    "parallel": false,
+    "seconds": 0.11
+  },
+  "TestLateOverlayMembershipProofIsIndependentOfStoreSize": {
+    "parallel": false,
+    "seconds": 1.19
+  },
+  "TestLateResourceCollectionProofIsIndependentOfStoreSize": {
+    "parallel": false,
+    "seconds": 3.89
+  },
+  "TestMTLSAdmissionOverlayCannotPoisonReconcilePublications": {
+    "parallel": false,
+    "seconds": 0.24
+  },
+  "TestMTLSPublicationFileConflictFailsWithoutPoisoning": {
+    "parallel": false,
+    "seconds": 0.23
+  },
+  "TestMTLSPublicationsPreserveOccurrenceOrderAndPromoteOnDelete": {
+    "parallel": false,
+    "seconds": 0.25
+  },
+  "TestMaterializeIncrementalTextFragment": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestMaterializeIncrementalTextFragmentKeepsRootsAndDelimitersDistinct": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestMaterializedResourceInputDefersImmutableCertificate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestMembershipQueryKeyRegistersOnlyUngatedComponents": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestMigratedChartRootsDoNotReadWatchedResourcesDirectly": {
+    "parallel": false,
+    "seconds": 0.09
+  },
+  "TestMigratedChartRootsHaveNoAmbientBackendOrTrustedCatalogReads": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestNewIncrementalResourceDeriverValidatesSource": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestNewRenderService": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestNewRenderService_CrtListDir": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestNginxCanaryChartReusesCleanIngressesAndRemovesStaleMembership": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestNginxFrontendFailedRootAndAdmissionCannotPoisonCache": {
+    "parallel": false,
+    "seconds": 3.78
+  },
+  "TestNginxFrontendPublicationDeletionOnSharedHost": {
+    "parallel": false,
+    "seconds": 5.34
+  },
+  "TestNginxFrontendPublicationsMatchColdRenderAcrossChanges": {
+    "parallel": false,
+    "seconds": 5.49
+  },
+  "TestNginxFrontendPublicationsStayConstantWithInactiveIngresses": {
+    "parallel": false,
+    "seconds": 4.16
+  },
+  "TestNginxRewriteTargetCaptureReplacementPreservesRegexpBytes": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestNginxRootPublicationDeletionReaddAndDuplicatePromotion": {
+    "parallel": false,
+    "seconds": 1.75
+  },
+  "TestNginxRootPublicationFailuresCannotPoisonCommittedState": {
+    "parallel": false,
+    "seconds": 1.76
+  },
+  "TestNginxRootPublicationsStayConstantWithInactiveIngresses": {
+    "parallel": false,
+    "seconds": 15.81
+  },
+  "TestObservationKeyMatchesTupleOfFormattedParts": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOpaquePrefixesSelectOnlyExactFramedParts": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOptimizedIncrementalResourceBindingExpandsWholeValueEscapes": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestOptimizedIncrementalResourceBindingKeepsConcurrentGenerationsIsolated": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestOptimizedIncrementalResourceBindingRejectsEquivalentRootBeforeActivation": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestOptimizedIncrementalResourceBindingRejectsRetainedGeneration": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestOptimizedIncrementalResourceBindingRevocationDrainsAcceptedCall": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestOutputMismatchDiagnosticDoesNotLogContents": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputMismatchDiagnosticIgnoresUnrelatedErrors": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputMismatchDiagnosticRetainsEvidenceWithoutPlan": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationAckedPlanOutranksStagedFallback": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationAdmissionCommitNeverPublishesCompositeRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationFailuresPreserveCommittedCompositeRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationGenerationExhaustionCannotWrapAndPublish": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationGenerationZeroFailsClosed": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationLateOlderCommitCannotOverwriteNewerCompositeRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationNilTransactionCommitsAuthenticatedRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationOlderMayCommitBeforeNewerCandidate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputPublicationSuccessfulCommitPublishesCompositeRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputReservationFailedTransactionBindingRevokesCandidate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputReservationRejectsCandidateAuthorityReplacement": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputReservationRejectsCandidateBindingPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputReservationRejectsCopiedAndForeignHandles": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestOutputReservationRetainsAndReclaimsConcurrentAttempts": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPendingHTTPOverlayRequiresMatchingSourceAndValidationMode": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestPendingHTTPOverlayValidatesFrozenContentWithoutPublishing": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestPinIncrementalStoreSnapshotsColdFallsBackForAnyAvailableUnsupportedStore": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPinIncrementalStoreSnapshotsColdFallsBackForUnsupportedNonRequiredOverlay": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPinIncrementalStoreSnapshotsDeletionKeepsNonUniqueWinner": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPinIncrementalStoreSnapshotsProjectsArbitraryOverlayIndex": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPinnedColdIncrementalTransitionTimeReusesWarmValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPinnedOrdinaryAndIncrementalReadsShareOneRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPlainColdIncrementalResourceRejectsNativeValuesWithoutCallingMethods": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPlanPublicationCommitReportsPriorAbort": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationAbortIsSticky": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationAbortsWhenInputCommitFails": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationCancellationAbortsEverything": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationCommitsWithoutOtherInputs": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationExistingBoundaryFailureAbortsEveryCandidate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationFollowsSuccessfulInputCommit": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationJoinsExistingPublicationBoundary": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationLateStagingIsRejected": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPostProcessPublicationSharesCombinedInputCommitOutcome": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestPostProcessPublicationWaitsForEveryReversiblePublication": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedColdBackendPlanBatchCommitsAfterSessionPreflight": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedColdGroupAdditionsReauthenticatesEveryInputAtomically": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedColdGroupAdditionsRejectsAnotherSession": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedColdGroupAdditionsRejectsOuterPoisonAtomically": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedEmptyGroupBatchColdThenWarmLifecycle": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedEmptyGroupBatchLateFailureIsAtomic": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedEmptyGroupBatchRejectsPoisonedOrNonemptyProvenance": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedEmptyGroupBatchSupportsPristineAndExplicitResetIndexes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedGroupBatchAuthenticatesEmptyInput": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedGroupBatchDetachesCertifiedFreshOwnership": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedGroupBatchInvalidLastItemDoesNotMutateCallerInstances": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedGroupBatchMatchesSequentialPermutations": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestPreparedGroupBatchPreservesOrInvalidatesWarmMemoByWinner": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedIncrementalStateCommitRejectsDerivedLeafSubstitution": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPreparedIncrementalStateCommitRejectsSnapshotPoison": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestPublicationCallbacksDoNotRunAfterRejectedCommit": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestPublicationCallbacksRunExactlyOnceAfterSuccessfulCommit": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRecorderFreshResultCertificateRejectsUnpublishedBackendCondition": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRecorderOwnedFreshResultDetachesRecorderState": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRegisterK8sResourceDocsAcceptsYAMLTimestamps": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderCancelsOnDemandStoreFetch": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderResultCompatibilityResourcesAreDeeplyDetached": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderResultMaterializesDetachedEventSnapshot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderResultMaterializesDetachedRenderedResourceSnapshot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderServiceAdmissionInvalidatesOnlyExactDynamicSubject": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceAmbientServiceInputsInvalidateCommittedComponents": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestRenderServiceCapabilityIdentityInvalidatesComponentsAtomically": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceColdIncrementalRejectsNativeSourceValuesWithoutCallingMethods": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceColdRestartRejectsExtraContextMutationWithoutPublication": {
+    "parallel": false,
+    "seconds": 3.05
+  },
+  "TestRenderServiceCurrentConfigAdvancesAcrossChangesBeforeACK": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderServiceDerivedOwnerBindingRetirement": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestRenderServiceDocumentOutputChangedLeafMatchesFullOracle": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderServiceDocumentOutputColdMatchesFullOracle": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderServiceDocumentOutputNoOpReusesExactRoot": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderServiceDynamicBindingsRejectInvalidPlannerResults": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceDynamicBindingsTrackAliasesAndPropsExactly": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceEqualProjectionDoesNotInvalidateDownstreamComponent": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceExactComponentRootPreservesABAHistory": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceExactCycleCandidateAcceptanceToleratesMovedInputs": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleCapturesFirstAcceptedHTTPAtCommit": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleDirectHTTPRejectsAcceptedABA": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleDirectHTTPRejectsCorruptedObservationAuthority": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleDirectHTTPSkipsRootAcrossUnrelatedWatchedChange": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleDiscardsTamperedCandidateAndPublishesSuccessor": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleForceColdPublishesOutputOnlySuccessor": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestRenderServiceExactCycleHTTPCommitRebasesOnlyOnPublication": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleInitialHTTPAbortPublishesNeitherCandidateNorLease": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleLateResourceCommitPublishesAtPinnedRoots": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceExactCycleNonemptyOverlayCannotPublishOrReuse": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleOutputOnlyMismatchRendersThroughGraph": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceExactCycleRebaseStaysWithinJournalHorizon": {
+    "parallel": false,
+    "seconds": 0.61
+  },
+  "TestRenderServiceExactCycleRebasesRepeatedUnrelatedStoreChanges": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceExactCycleRejectsHTTPMutationImmediatelyAfterAuthorityRelease": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceExactCycleReusesOnlyCommittedCandidate": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceExactCycleSharedLoserAndUnrelatedChangesReuse": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceGovernanceEffectsLifecycle": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestRenderServiceGovernanceEffectsSourceAndBindingRemoval": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceGovernanceEffectsTransactionsDoNotPoisonCache": {
+    "parallel": false,
+    "seconds": 0.09
+  },
+  "TestRenderServiceGovernanceEventOnlyChangeBackdatesProjection": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceHTTPCommitFailureDoesNotPublishIncrementalState": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalBackendPlanConcurrentSessions": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalBackendPlanLifecycle": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalBackendPlanRejectsConditionalUnconsumedGroup": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalBackendPlanRejectsCorruptedCache": {
+    "parallel": false,
+    "seconds": 0.16
+  },
+  "TestRenderServiceIncrementalBackendPlanRejectsNonMainRoot": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderServiceIncrementalBackendPlanStaticColdReplay": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderServiceIncrementalCommitVerifiesExactAmbientScope": {
+    "parallel": false,
+    "seconds": 0.08
+  },
+  "TestRenderServiceIncrementalCommitVerifiesSourceSemantics": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalConcurrentTransactionsVerifyBeforeDiscardingCache": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalCountSelectorAbortAdmissionAndColdStayIsolated": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalCountSelectorConcurrentLosers": {
+    "parallel": false,
+    "seconds": 0.18
+  },
+  "TestRenderServiceIncrementalCountSelectorLifecycleABAAndPromotion": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalCountSelectorMissingOptionalAndUnauthorized": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalFailsClosedForUnsupportedLiveInputs": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceIncrementalHTTPAbortDoesNotPublishSpeculativeReferences": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalHTTPAcceptedABABackdatesExactConsumer": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalHTTPDeletePromotesCachedOwnerAndReaddRestoresWinner": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalHTTPDoesNotCacheNonCriticalFailure": {
+    "parallel": false,
+    "seconds": 1.08
+  },
+  "TestRenderServiceIncrementalHTTPDoesNotExecuteForUnrelatedSemanticChange": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalHTTPSharedConsumersAcceptTokenOnlyRevision": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceIncrementalIgnoresUnreadControllerResourceChanges": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalInvalidatesExactDependencies": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalObservedResourceBackdatesABAWithoutRequires": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalObservedResourceRecoversFromJournalLoss": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalRankedFragmentsAbortAndAdmissionStayIsolated": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceIncrementalRankedFragmentsLifecycle": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceIncrementalRankedFragmentsRequiresCanonicalCalls": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalRankedFragmentsStaticColdMatchesWarm": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalRankedFragmentsSurviveReorderWithinOneItem": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceIncrementalRejectsResourceResultMutation": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderServiceIncrementalReloadsObservedAliasWhenBindingActivates": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalRetainsObservedResourceWithoutRequires": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalRetiresUnreferencedResourceCursor": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalSelectorAbortDoesNotPublish": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceIncrementalSelectorAuthenticatedOptionalProducerAbsentThenPresent": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceIncrementalSelectorInvalidatesExactConsumers": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalSelectorRejectsMutation": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalSelectorRejectsOutOfOrderConsumer": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceIncrementalSelectorValuesTracksObservableValues": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalSelectorWinnerOwnerChangeWithSameValueDoesNotInvalidate": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalTracksActiveHTTPInputsWithoutReplay": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServiceIncrementalTracksControllerResourceDependencies": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceIncrementalUsesRealStoreProvider": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceInvalidatedEqualComponentReusesCanonicalExactRoot": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceLateOlderGenerationCannotOverwriteNewerOutput": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestRenderServicePersistentGroupIndexLifecycle": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceProgramReloadDoesNotReuseOldComponentResults": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceProgramReloadRejectsStaleIncrementalCache": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServicePublishedStatusPatchResultCannotPoisonWarmValues": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServicePublishedValuesAbortRetryAndConcurrentCommit": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestRenderServicePublishedValuesAdmissionDoesNotPublish": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServicePublishedValuesLifecycleAndPromotion": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestRenderServicePublishedValuesRejectsPoisonedCache": {
+    "parallel": false,
+    "seconds": 0.07
+  },
+  "TestRenderServicePublishedValuesRejectsUnknownGroupAndCellShape": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServicePublishedValuesStaticCold": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceRejectsHistoricalSameValueComponentRoot": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceResourceChangeAfterTheRenderStillAcceptsInitialHTTPCandidate": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceRetiresIncrementalHTTPLeaseSet": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceSchemaTypeDeclarationChangeRevokesCacheAcrossABA": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderServiceSchemaTypeDeclarationChangeStartsColdForArbitraryCRD": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceSchemaTypeDeclarationRejectsForgedIdentity": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceSchemaTypeDeclarationRejectsStaleIdentity": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceSchemaTypeDeclarationRejectsStaleIncrementalCache": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceStatusPatchAdmissionDoesNotPublish": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceStatusPatchColdAndWarmUseOneGlobalOrder": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestRenderServiceStatusPatchPlanCommitAbortAndRecurrence": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceStatusPatchPlanFailsClosedAfterStateSubstitution": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceStatusPatchRejectsCrossGroupPhaseConflictAcrossRoots": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestRenderServiceStatusPatchSameGroupOwnersLifecycle": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestRenderServiceTerminalPublicationCompletionReleasesLock": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderServiceTerminalPublicationOwnsLockThroughRollback": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderServiceTerminalPublicationRollsBackWhenInnerAbortPanics": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderServiceUnsupportedStoreReplacementKeepsCommittedCache": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRenderService_RenderNeverReusesUncommittedOutput": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_RenderReusesOnlyExactCommittedOutput": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_RenderStagesCurrentConfigUntilCommit": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_CallCurrentFilesOverridesDefault": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_Error": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_FailsClosedOnResourceReadError": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_GeneralFileReloadOnPushFalse": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_PathResolverAvailable": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_SimpleConfig": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_WithGeneralFiles": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_WithMapFiles": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_Render_WithStores": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderService_buildRenderingContext_PropagatesIndexBy": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRenderSourceMapsExecutesIncrementalComponentsCold": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestRequestValidationFailedRootAndAdmissionCannotPoisonPublications": {
+    "parallel": false,
+    "seconds": 0.09
+  },
+  "TestRequestValidationPublicationsTrackExactDependenciesAndPromoteOnDelete": {
+    "parallel": false,
+    "seconds": 0.09
+  },
+  "TestResourceCodecAllowsSharedAcyclicValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceCodecPreservesPlainDeterministicTree": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceCodecRejectsExcessiveDepth": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceCodecRejectsNativeValuesWithoutCallingMethods": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceCodecRejectsNonPlainValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceCodecRejectsReferenceCycles": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceIdentityReadsOnlyPlainMaps": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationAuthenticatesNegativeRead": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationBreaksSharedMutableAliases": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationCannotCrossGeneration": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationCanonicalizesAuthenticatedStoreValueWithoutMutation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationFailsClosedOnPoison": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestResourceMaterializationNormalizesValues": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationOwnsForeignSnapshotValue": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationRejectsSameRevisionDifferentBytes": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationSingleFlightOwnsOneDetachedRead": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceMaterializationUsesAuthenticatedStoreProjection": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestResourceProjectionBindingChangeRetiresOldSelection": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestResourceProjectionRejectsAmbiguousSelection": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestResourceProjectionRemainsDemandDrivenAlongsideColdCarrierGroup": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestResourceProjectionRetainsExactResultWhileUnmounted": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestResourceProjectionTracksExactSelectionWithoutScriggoExecution": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestResourceProofVerificationAuthenticatesBorrowedGraphInput": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestRetireIncrementalCacheCancelsAndJoinsBuilder": {
+    "parallel": false,
+    "seconds": 0.33
+  },
+  "TestRootCallBookkeepingRestoresScopeValidation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestSSLDefaultCertificateECDSAProjectionIsLazyBehindGatewayDefault": {
+    "parallel": false,
+    "seconds": 1.59
+  },
+  "TestSSLDefaultCertificateOneSecretCanPublishBothCells": {
+    "parallel": false,
+    "seconds": 1.56
+  },
+  "TestSSLDefaultCertificatePublicationsTrackSeparateCellsAndABA": {
+    "parallel": false,
+    "seconds": 1.6
+  },
+  "TestSSLPassthroughChartAbortedAdmissionAndConcurrentRendersStayIsolated": {
+    "parallel": false,
+    "seconds": 0.6
+  },
+  "TestSSLPassthroughChartRequiresExactTrueAndFirstUsablePath": {
+    "parallel": false,
+    "seconds": 0.55
+  },
+  "TestSSLPassthroughChartRestoresDegradedMarkerOnlyForCurrentWinner": {
+    "parallel": false,
+    "seconds": 0.57
+  },
+  "TestSSLPassthroughChartReusesCleanResourcesAndPromotesCachedLoser": {
+    "parallel": false,
+    "seconds": 0.73
+  },
+  "TestSSLPassthroughChartUpdatesBindTopologyOnIngressCreateAndDelete": {
+    "parallel": false,
+    "seconds": 0.56
+  },
+  "TestSchemaDefinedCustomCRDAdmissionStatusCannotPublish": {
+    "parallel": false,
+    "seconds": 0.38
+  },
+  "TestSchemaDefinedCustomCRDMembershipAndStatusMatchCold": {
+    "parallel": false,
+    "seconds": 3.1
+  },
+  "TestSealedResourceInputKeyFallsBackAfterTampering": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestSecondReconcileRenderWaitsForTheColdOneAndRendersWarm": {
+    "parallel": false,
+    "seconds": 0.62
+  },
+  "TestSelectorStagingJudgesDependentsOnTheSessionBase": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestSessionLeasePinnedAtBeginSurvivesACommit": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestSessionRestartsWhenTheBaseMovesBeforeItsGraphSession": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestShardIncrementalColdVectorGroupsPreservesEveryItem": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestSharedResourcesFacadeIsBuiltOncePerRender": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestStagedRenderPublicationsConcurrentStageHasExactOutcome": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestStagedRenderPublicationsDrainReentrantFinalizers": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestStagedRenderPublicationsPanicAbortsEveryCandidate": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestStagingTheAdmissionOverlayReplacesTheBaseRead": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestStaticIncrementalBindingUsesDetachedEmptyProps": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestTCPRouteBackendAndCallersStripTogetherWithoutEndpoints": {
+    "parallel": false,
+    "seconds": 0.01
+  },
+  "TestUncertifiedFreshResultStillReceivesFullEffectValidation": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestValidateAuxiliaryFilesConsistency": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestValidateIncrementalCallsRequiresCompleteCanonicalGroup": {
+    "parallel": false,
+    "seconds": 0
+  },
+  "TestVarnishBackendPublicationTracksExactServiceAndEndpointDependencies": {
+    "parallel": false,
+    "seconds": 0.26
+  },
+  "TestWAFSelfServiceCatalogPublicationSelectionAndDisabledStateStayExact": {
+    "parallel": false,
+    "seconds": 0.06
+  },
+  "TestWAFSelfServiceCatalogPublicationsAbortAdmissionAndColdStayIsolated": {
+    "parallel": false,
+    "seconds": 0.09
+  },
+  "TestWAFSelfServiceCatalogPublicationsScaleAndStayChangeLocal": {
+    "parallel": false,
+    "seconds": 8.98
+  },
+  "TestWAFTrustedCatalogMalformedBindingsFailAtAuthoritativeValidation": {
+    "parallel": false,
+    "seconds": 0.02
+  },
+  "TestWAFTrustedCatalogPublicationPropsSelectExactConfigMap": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestWAFTrustedCatalogPublicationsDetectDeleteRecreateAndAbort": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestWAFTrustedCatalogPublicationsTrackExactTargetAndIgnoreUnrelatedOutput": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestWarmCacheRequiredPublicationPanicRollsBackCallerAndGraph": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestWarmGraphMutationPanicPublishesNoHTTPOrPostProcessState": {
+    "parallel": false,
+    "seconds": 0.05
+  },
+  "TestWarmGraphTerminalReservationCorruptionPublishesNothing": {
+    "parallel": false,
+    "seconds": 0.03
+  },
+  "TestWarmGraphVisibilityWaitsForTerminalStatePublication": {
+    "parallel": false,
+    "seconds": 0.04
+  },
+  "TestWithheldCandidateRendersWarmWithoutTheContent": {
+    "parallel": false,
+    "seconds": 0.04
+  }
+}

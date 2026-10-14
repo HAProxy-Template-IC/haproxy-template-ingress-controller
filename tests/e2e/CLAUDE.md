@@ -102,6 +102,11 @@ enables the chart's matching experimental-field validation tests.
 `KIND_NODE_IMAGE` selects the node image when creating a cluster; it does not
 replace an existing cluster. Omit it to use Kind's bundled default.
 
+The test cluster uses a five-second kubelet sync interval so certificate-rotation
+tests spend less time waiting for mounted Secrets. Projection still happens
+automatically through Kubernetes; the tests retain every rotation and revocation
+check. See [Secret projection](https://kubernetes.io/docs/concepts/configuration/secret/#using-secrets-as-files-from-a-pod).
+
 ## CI
 
 CI enumerates the compiled tests with `go test -list` before creating clusters.
@@ -123,5 +128,9 @@ HAPTIC_E2E_PROFILE=rate-limit make test-e2e-profile
 HAPTIC_E2E_PROFILE=api-gateway HAPTIC_E2E_GWAPI_CHANNEL=experimental make test-e2e-profile
 ```
 
-See [scheduled verification](../../docs/agents/ci.md#scheduled-verification) for
-the focused nightly and complete weekly schedules.
+See [feature and matrix coverage](../../docs/agents/ci.md#feature-and-matrix-coverage)
+for how CI runs them.
+
+### Constrained runner startup
+
+`HAPTIC_E2E_CONTROLLER_STARTUP=staged` installs the requested Helm values with one controller replica, then restores the rendered replica count through Kubernetes scaling. All hooks run and every replica completes its full startup validation before tests begin, within the existing five-minute installation deadline. Helm's stored Deployment manifest records the initial replica count; this option is for ephemeral E2E clusters, not upgrade testing.

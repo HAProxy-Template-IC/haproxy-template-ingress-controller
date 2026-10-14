@@ -16,7 +16,7 @@ kubectl get deployment haptic-controller --namespace haptic \
 
 Release binaries support Linux on AMD64, ARM64, and ARMv7. The following Bash
 commands require `curl` and `sha256sum`. Enter the version from the
-[releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases), without its
+[releases page](https://github.com/haproxy-haptic/HAPTIC/releases), without its
 leading `v`. The download is an executable, not an archive.
 
 ```bash
@@ -30,7 +30,7 @@ leading `v`. The download is an executable, not an archive.
   esac
   read -r -p "HAPTIC release version: " haptic_version
   haptic_asset="haptic-${haptic_version}-linux-${haptic_arch}"
-  haptic_download="https://gitlab.com/haproxy-haptic/haptic/-/releases/v${haptic_version}/downloads"
+  haptic_download="https://github.com/haproxy-haptic/HAPTIC/releases/download/v${haptic_version}"
   haptic_tmp=$(mktemp -d)
   trap 'rm -rf "$haptic_tmp"' EXIT
   cd "$haptic_tmp"

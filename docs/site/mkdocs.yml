@@ -7,9 +7,9 @@ site_name: "HAPTIC - HAProxy Ingress Controller"
 site_url: !ENV [DOCS_SITE_URL, 'https://haproxy-haptic.org/docs/dev/']
 site_description: "Documentation for HAPTIC, a template-driven HAProxy ingress controller for Kubernetes with Ingress and Gateway API support."
 
-repo_name: haproxy-haptic/haptic
-repo_url: https://gitlab.com/haproxy-haptic/haptic
-edit_uri: -/edit/main/docs/site/docs/
+repo_name: haproxy-haptic/HAPTIC
+repo_url: https://github.com/haproxy-haptic/HAPTIC
+edit_uri: edit/main/docs/site/docs/
 
 docs_dir: docs
 
@@ -53,7 +53,7 @@ extra_css:
   - /shared/playground-embed.css
 
 extra_javascript:
-  - javascripts/stable-version.js
+  - javascripts/development-notice.js
   - /shared/playground-embed.js
 
 markdown_extensions:
@@ -110,6 +110,7 @@ nav:
       - Validate before deploying: operations/validate-before-deploy.md
       - Configure HAProxy pods and access: haproxy-deployment.md
       - High availability: operations/high-availability.md
+      - Roll out without dropped requests: operations/pod-readiness-gate.md
       - Resource sizing: operations/performance.md
       - Networking: operations/networking.md
     - Observe and troubleshoot:

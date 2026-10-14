@@ -295,11 +295,7 @@ func runBaselines(ctx context.Context, root string, options *options, output io.
 		return err
 	}
 	if options.name == checkBaselinesScenario {
-		content, err := repository.ReadFile(".gitlab-ci.yml")
-		if err != nil {
-			return err
-		}
-		if err := scenarios.CheckUpgradeMatrix(baselines, content); err != nil {
+		if err := checkUpgradeWorkflows(repository, baselines); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintln(output, "Upgrade matrix covers:", strings.Join(baselines, ", "))
@@ -312,6 +308,18 @@ func runBaselines(ctx context.Context, root string, options *options, output io.
 		if err := runScenario(ctx, root, &selected, output); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func checkUpgradeWorkflows(repository *os.Root, baselines []string) error {
+	const workflow = ".github/workflows/ci-speed-proof.yml"
+	content, err := repository.ReadFile(workflow)
+	if err != nil {
+		return err
+	}
+	if err := scenarios.CheckGitHubUpgradeMatrix(baselines, content); err != nil {
+		return fmt.Errorf("%s: %w", workflow, err)
 	}
 	return nil
 }

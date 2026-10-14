@@ -96,8 +96,8 @@ The upgrade pilot compares old and new drivers on separate fresh clusters with
 the same immutable images and baselines, including negative controls. The old
 drivers were removed after the comparisons passed. Hosted CI retains one matrix.
 
-Complete local E2E verification uses the three selections from
-`.test-e2e-sharded` in `.gitlab-ci.yml`, with a fresh cluster per selection.
+Complete local E2E verification runs every shard of an `e2e-hp*` job group in
+`.github/workflows/ci-speed-proof.yml`, with a fresh cluster per shard.
 The serial lifecycle tests can exceed one invocation's deadline; split coverage
 without increasing the existing deadlines.
 

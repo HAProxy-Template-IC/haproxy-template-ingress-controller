@@ -1,0 +1,15 @@
+{
+  "bootstrap_yq_version": "4.53.3",
+  "kind": {
+    "0.32.0": "b92cd615e97585de8ddade28ed5cd7feb4248d717c233eea5b03c37298900f5d"
+  },
+  "helm": {
+    "3.20.1": "56b9d1b0e0efbb739be6e68a37860ace8ec9c7d3e6424e3b55d4c459bc3a0401"
+  },
+  "kubectl": {
+    "1.36.3": "3d86f24401c41ae5a46ac50eef8865fe891d3647d324a0836f6c63757a126e62"
+  },
+  "yq": {
+    "4.53.3": "578648e463a11c1b6db6010cbf41eafed6bee79466fcffa1bb446672cf7945ea"
+  }
+}

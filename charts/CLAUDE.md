@@ -104,6 +104,7 @@ The loader iterates a fixed ordered list of library files. The order is a system
 
 ```yaml
 {{- define "haptic.prepareLibraries" -}}
+{{- $context := .context }}
 {{- $prepared := list }}
 {{- range $file := include "haptic.libraryFiles" $context | fromYamlArray }}
   {{- $library := $context.Files.Get $file | fromYaml }}   {# or subchart / split-dir #}
@@ -116,9 +117,15 @@ The loader iterates a fixed ordered list of library files. The order is a system
     {{- $prepared = append $prepared (dict "name" <slug> "config" $library) }}
   {{- end }}
 {{- end }}
-{{- dict "libraries" $prepared | toYaml }}
+{{- $_ := set .result "libraries" $prepared }}
 {{- end }}
 ```
+
+The loader accepts `dict "context" $ "result" $prepared` and writes the parsed
+libraries into `$prepared.libraries`. Each call owns its maps so the config
+emitter's removal of `statusPatch` cannot change RBAC or webhook generation.
+`haptic.filterTests` mutates its library map directly; neither helper serializes
+the library collection between processing steps.
 
 **One helper drives both the objects and their order**: `haptic.prepareLibraries`
 emits the `HAProxyTemplateLibrary` objects *and* the `spec.libraryRefs` list on the

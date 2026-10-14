@@ -273,6 +273,13 @@ test-tlsroute-mixed-termination-protocol-conflict
 test-tlsroute-no-tls-listener
 test-tlsroute-passthrough-basic
 test-tlsroute-passthrough-nondefault-port-frontend
+test-tlsroute-precedence-dedicated-port
+test-tlsroute-precedence-equal-age-name
+test-tlsroute-precedence-equal-host-oldest
+test-tlsroute-precedence-exact-over-wildcard
+test-tlsroute-precedence-multiple-hostnames
+test-tlsroute-precedence-specific-wildcard
+test-tlsroute-precedence-unrestricted-listener
 test-tlsroute-same-sni-on-two-passthrough-ports
 test-tlsroute-section-name-no-match
 test-tlsroute-status-parent-ports
@@ -325,3 +332,7 @@ test-gateway-policy-waf-unknown-default-admission
 test-gateway-policy-waf-unknown-default-configuration
 test-httproute-regex-path-early-close-rejected
 test-httproute-regex-path-stays-on-host
+test-tlsroute-gateway-address-isolation
+test-tlsroute-multiple-gateway-parents
+test-tlsroute-static-gateway-address-isolation
+test-tlsroute-terminate-gateway-address-isolation

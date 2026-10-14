@@ -198,18 +198,12 @@ func fetchAndValidateInitialConfig(
 	return bundle, nil
 }
 
-// initialValidationTestsRunTimeout is the suite budget for the LOAD-path
-// validationTests gate below. It is deliberately much larger than the live
-// change gate's default (validator.validationTestsRunTimeout, 25s): the live
-// gate answers a scatter-gather aggregation and must self-report before the
-// coordinator's configValidationTimeout, while the load gate is bounded by the
-// startup probe on a fresh pod and by ReinitGraceWindow on a reinit.
-// On a cold, contended node (CI runners provisioning a whole cluster at
-// once) the engine compile plus dozens of `haproxy -c` checks legitimately
-// exceed 25s — observed as "validationTests did not complete within the
-// suite timeout" crash-looping an otherwise healthy install. 120s leaves
-// room for one retry iteration inside the startup probe window.
-const initialValidationTestsRunTimeout = 120 * time.Second
+// defaultLoadGateTimeout is the LOAD-path validationTests budget when
+// LOAD_GATE_TIMEOUT is unset. Unlike the live change gate
+// (validator.validationTestsRunTimeout) it runs the whole suite, so its cost
+// grows with the test count; the chart derives LOAD_GATE_TIMEOUT from the
+// startup probe window that actually bounds it on a fresh pod.
+const defaultLoadGateTimeout = 120 * time.Second
 
 // validateInitialConfig runs the complete config-validator contract before an
 // iteration adopts a freshly loaded or re-resolved effective config.
@@ -219,10 +213,10 @@ func validateInitialConfig(
 	bundle *InitialConfigBundle,
 	k8sClient *client.Client,
 	bootstrap validator.TypeBootstrapper,
+	timeout time.Duration,
 	logger *slog.Logger,
 ) error {
-	failures := validator.ValidateConfigSync(
-		ctx, cfg, bootstrap, initialValidationTestsRunTimeout, logger)
+	failures := validator.ValidateConfigSync(ctx, cfg, bootstrap, timeout, logger)
 	if len(failures) == 0 {
 		return nil
 	}

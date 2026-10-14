@@ -96,7 +96,7 @@ In a working directory without an existing `chart` directory, download the
 matching chart:
 
 ```bash
-helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm pull oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --untar --untardir ./chart-download
 mv ./chart-download/haptic ./chart
 ```

@@ -20,14 +20,14 @@ For a first installation and an optional sample route, follow [Getting started](
 ## Installation
 
 ```bash
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic --create-namespace
 ```
 
 With custom values:
 
 ```bash
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic --create-namespace \
   -f haptic-values.yaml
 ```
@@ -105,7 +105,7 @@ gatewayClass:
 ```
 
 ```bash
-helm install haptic-team-b oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install haptic-team-b oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 \
   --namespace haptic-team-b --create-namespace \
   -f team-b-values.yaml
@@ -121,7 +121,7 @@ Pass your complete values file when upgrading. If you configured the release wit
 `--set` and have no saved file, [export its values first](#change-settings):
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic \
   -f haptic-values.yaml
 ```
@@ -129,7 +129,7 @@ helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/hapti
 For an installation with no custom settings, you can upgrade without a values file:
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic
 ```
 

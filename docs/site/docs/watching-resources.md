@@ -456,7 +456,7 @@ validation error, so check the spelling if the observed delay differs from your 
 
 ## See also
 
-- [Bring-your-own-CRD example](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd) — a runnable, self-validating example: watch a custom CRD, route on it, and write status back, with no Go
+- [Bring-your-own-CRD example](https://github.com/haproxy-haptic/HAPTIC/tree/main/examples/byo-crd) — a runnable, self-validating example: watch a custom CRD, route on it, and write status back, with no Go
 - [CRD Reference](./crd-reference.md#watchedresources) — field-level documentation
 - [Templating Guide — The `resources` Variable](./template-resources.md#the-resources-variable) — `.List()` / `.Fetch()` / `.GetSingle()` semantics from the template side
 - [Performance](./operations/performance.md) — deciding when to narrow the watch versus scale the controller

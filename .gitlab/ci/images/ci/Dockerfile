@@ -1,5 +1,5 @@
 # CI image with Go, HAProxy, Docker CLI, and Kubernetes tools
-# All version ARGs should be passed from .gitlab-ci.yml to keep versions in sync
+# Every version ARG is supplied from .gitlab/ci/build-pins.yml (scripts/build-ci-image.sh)
 #
 # Uses haproxytech/haproxy-debian as the base image so HAProxy is natively
 # available for all versions without depending on haproxy.debian.net.
@@ -73,14 +73,14 @@ RUN . /etc/os-release \
        brotli gzip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL -o /tmp/docker.tgz \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/docker.tgz \
         "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_STATIC_VERSION}.tgz" \
     && echo "${DOCKER_STATIC_SHA256}  /tmp/docker.tgz" | sha256sum --check - \
     && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
     && install /tmp/docker/docker /usr/local/bin/docker \
     && rm -rf /tmp/docker /tmp/docker.tgz \
     && mkdir -p /usr/local/lib/docker/cli-plugins \
-    && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx \
+    && curl -fsSL --retry 7 --retry-all-errors -o /usr/local/lib/docker/cli-plugins/docker-buildx \
         "https://github.com/docker/buildx/releases/download/v${DOCKER_BUILDX_VERSION}/buildx-v${DOCKER_BUILDX_VERSION}.linux-amd64" \
     && echo "${DOCKER_BUILDX_SHA256}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum --check - \
     && chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
@@ -97,37 +97,37 @@ RUN node --test /opt/markdownlint/shims/braces/index.test.js \
     && ln -s /opt/markdownlint/node_modules/.bin/markdownlint-cli2 /usr/local/bin/markdownlint-cli2
 
 # Install vale (prose linter for the docs site)
-RUN curl -fsSL -o /tmp/vale.tar.gz \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/vale.tar.gz \
         "https://github.com/errata-ai/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" \
     && echo "${VALE_SHA256}  /tmp/vale.tar.gz" | sha256sum --check - \
     && tar -xzf /tmp/vale.tar.gz -C /usr/local/bin vale \
     && rm /tmp/vale.tar.gz
 
 # Install kind
-RUN curl -fsSL -o /usr/local/bin/kind \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /usr/local/bin/kind \
     "https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64" \
     && echo "${KIND_SHA256}  /usr/local/bin/kind" | sha256sum --check - \
     && chmod +x /usr/local/bin/kind
 
 # Install kubectl
-RUN curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /usr/local/bin/kubectl \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /usr/local/bin/kubectl \
     "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
     && echo "${KUBECTL_SHA256}  /usr/local/bin/kubectl" | sha256sum --check - \
     && chmod +x /usr/local/bin/kubectl
 
 # Install Helm
-RUN curl -fsSL -o /tmp/helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
     && echo "${HELM_SHA256}  /tmp/helm.tar.gz" | sha256sum --check - \
     && tar -xzf /tmp/helm.tar.gz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
     && rm /tmp/helm.tar.gz
-RUN curl -fsSL -o /tmp/helm-min.tar.gz "https://get.helm.sh/helm-v${HELM_MIN_VERSION}-linux-amd64.tar.gz" \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/helm-min.tar.gz "https://get.helm.sh/helm-v${HELM_MIN_VERSION}-linux-amd64.tar.gz" \
     && echo "${HELM_MIN_SHA256}  /tmp/helm-min.tar.gz" | sha256sum --check - \
     && tar -xzf /tmp/helm-min.tar.gz -C /tmp --strip-components=1 linux-amd64/helm \
     && mv /tmp/helm /usr/local/bin/helm-min \
     && rm /tmp/helm-min.tar.gz
 
 # Install yq
-RUN curl -fsSL -o /usr/local/bin/yq \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /usr/local/bin/yq \
     "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" \
     && echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum --check - \
     && chmod +x /usr/local/bin/yq
@@ -141,7 +141,7 @@ RUN cd /opt/ci-tools \
 
 # Install chart-testing (ct) with configuration files
 RUN mkdir -p /etc/ct \
-    && curl -fsSL -o /tmp/chart-testing.tar.gz \
+    && curl -fsSL --retry 7 --retry-all-errors -o /tmp/chart-testing.tar.gz \
         "https://github.com/helm/chart-testing/releases/download/v${CT_VERSION}/chart-testing_${CT_VERSION}_linux_amd64.tar.gz" \
     && echo "${CT_SHA256}  /tmp/chart-testing.tar.gz" | sha256sum --check - \
     && tar -xzf /tmp/chart-testing.tar.gz -C /tmp \
@@ -150,7 +150,7 @@ RUN mkdir -p /etc/ct \
     && rm -rf /tmp/etc /tmp/chart-testing.tar.gz
 
 # Helm 3 rejects the release archive's Helm 4-only platformHooks field.
-RUN curl -fsSL -o /tmp/helm-unittest.tar.gz \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/helm-unittest.tar.gz \
         "https://github.com/helm-unittest/helm-unittest/releases/download/v${HELM_UNITTEST_VERSION}/helm-unittest-linux-amd64-${HELM_UNITTEST_VERSION}.tgz" \
     && echo "${HELM_UNITTEST_SHA256}  /tmp/helm-unittest.tar.gz" | sha256sum --check - \
     && plugin_dir="$(helm env HELM_PLUGINS)/helm-unittest" \
@@ -160,27 +160,27 @@ RUN curl -fsSL -o /tmp/helm-unittest.tar.gz \
     && rm /tmp/helm-unittest.tar.gz
 
 # Install kubeconform
-RUN curl -fsSL -o /tmp/kubeconform.tar.gz \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/kubeconform.tar.gz \
         "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
     && echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum --check - \
     && tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform \
     && rm /tmp/kubeconform.tar.gz
 
 # Install goreleaser
-RUN curl -fsSL -o /tmp/goreleaser.tar.gz \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/goreleaser.tar.gz \
         "https://github.com/goreleaser/goreleaser/releases/download/v${GORELEASER_VERSION}/goreleaser_Linux_x86_64.tar.gz" \
     && echo "${GORELEASER_SHA256}  /tmp/goreleaser.tar.gz" | sha256sum --check - \
     && tar -xzf /tmp/goreleaser.tar.gz -C /usr/local/bin goreleaser \
     && rm /tmp/goreleaser.tar.gz
 
 # Install cosign
-RUN curl -fsSL -o /usr/local/bin/cosign \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /usr/local/bin/cosign \
     "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
     && echo "${COSIGN_SHA256}  /usr/local/bin/cosign" | sha256sum --check - \
     && chmod +x /usr/local/bin/cosign
 
 # Install syft for SBOM generation
-RUN curl -fsSL -o /tmp/syft.tar.gz \
+RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/syft.tar.gz \
         "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
     && echo "${SYFT_SHA256}  /tmp/syft.tar.gz" | sha256sum --check - \
     && tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft \

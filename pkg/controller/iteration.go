@@ -383,7 +383,7 @@ func loadAcceptedIterationConfig(
 		return nil, nil, err
 	}
 	if !alreadyValidated {
-		if err := validateInitialConfig(setup.IterCtx, cfg, bundle, k8sClient, typeBootstrapper, logger); err != nil {
+		if err := validateInitialConfig(setup.IterCtx, cfg, bundle, k8sClient, typeBootstrapper, infra.loadGateBudget(), logger); err != nil {
 			return nil, nil, fmt.Errorf("initial HAProxyTemplateConfig %q failed validation on load: %w", crdName, err)
 		}
 	}

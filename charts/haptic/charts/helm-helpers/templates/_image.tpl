@@ -9,7 +9,7 @@ share the volume group with HAProxy.
 {{/*
 Controller image
 Combines base tag (defaults to Chart.AppVersion) with HAProxy version suffix
-Example: registry.gitlab.com/haproxy-haptic/haptic:0.1.0-alpha.12-haproxy3.2
+Example: ghcr.io/haproxy-haptic/haptic:0.1.0-alpha.12-haproxy3.2
 */}}
 {{- define "haptic.controller.image" -}}
 {{- printf "%s:%s-haproxy%s" .Values.controller.image.repository (.Values.controller.image.tag | default .Chart.AppVersion) .Values.haproxyVersion -}}

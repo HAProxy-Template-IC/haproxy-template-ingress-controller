@@ -1,0 +1,22 @@
+controller:
+  resources:
+    requests:
+      cpu: 600m
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  extraEnv:
+    - name: GOMAXPROCS
+      value: "2"
+    - name: GOGC
+      value: "300"
+    - name: TMPDIR
+      value: /v
+  extraVolumes:
+    - name: validation-scratch
+      emptyDir:
+        medium: Memory
+        sizeLimit: 512Mi
+  extraVolumeMounts:
+    - name: validation-scratch
+      mountPath: /v

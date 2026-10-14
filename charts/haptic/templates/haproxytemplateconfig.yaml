@@ -20,12 +20,13 @@
        The in-file document order IS the merge order: `validate -f` and the
        preflight hook consume this stream and merge in document order, so the
        library objects come first and the operator's last. */ -}}
-{{- $prepared := (include "haptic.prepareLibraries" . | fromYaml).libraries | default list }}
+{{- $prepared := dict }}
+{{- $_ := include "haptic.prepareLibraries" (dict "context" . "result" $prepared) }}
 {{- /* Ordered: the range below fills it in merge order, and the config's own
        inline content wins after every ref. */ -}}
 {{- $libraryRefs := dict }}
 {{- $refOrder := list }}
-{{- range $library := $prepared }}
+{{- range $library := $prepared.libraries }}
 {{- $refOrder = append $refOrder $library.name }}
 {{- /* statusPatch is a Helm-only field on a watchedResource — the ClusterRole
        turns it into a status/patch rule and the CRD has no such property. */ -}}

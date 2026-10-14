@@ -34,7 +34,7 @@ immediately.
 The merge uses the same primitive Helm's `mustMergeOverwrite` does, so the result
 is what a chart-side merge would have produced. `validationTests` from every source are combined — a test name
 defined by two sources is an error naming both. See
-[ADR-0017](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/docs/adr/0017-template-library-kind.md).
+[ADR-0017](https://github.com/haproxy-haptic/HAPTIC/blob/main/docs/adr/0017-template-library-kind.md).
 
 One object per library exists because the single merged object had reached 99.4%
 of the ~1.5 MiB limit Kubernetes enforces per object. `make cr-size-check` gates

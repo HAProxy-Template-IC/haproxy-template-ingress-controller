@@ -397,6 +397,7 @@ func loadKubernetesBackendPublicationSnippets(
 		"util-backend-servers-helpers": true,
 		"util-service-port-resolution": true, "util-webhook-reject-or-warn": true,
 		"util-backend-servers-result": true,
+		"util-gated-pod-routable":     true,
 		component:                     true,
 	}
 	result := make(map[string]config.TemplateSnippet, len(wanted))

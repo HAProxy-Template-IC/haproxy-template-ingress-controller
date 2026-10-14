@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs a command up to four times with a growing pause. For registry access in
-# CI: registry.gitlab.com resets connections transiently.
+# CI: container registries reset connections transiently.
 # Usage: scripts/retry.sh <command> [args...]
 attempt=1
 until "$@"; do

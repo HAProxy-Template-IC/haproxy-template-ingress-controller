@@ -26,12 +26,13 @@ import (
 	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
-func memoryBranchEntries(ctx context.Context, snapshot *memoryReadSnapshot, indexBy []string) (map[string]*branchEntry, error) {
+func memoryBranchEntries(ctx context.Context, snapshot *memoryReadSnapshot, indexBy []string, previous *SnapshotBranch) (map[string]*branchEntry, error) {
 	idx, err := indexer.New(indexer.Config{IndexBy: indexBy})
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]*branchEntry, snapshot.root.locations.Len())
+	result := make(map[string]*branchEntry)
+	indexBy = slices.Clone(indexBy)
 	iterator := snapshot.root.data.Root().Iterator()
 	for {
 		if err := ctx.Err(); err != nil {
@@ -42,29 +43,46 @@ func memoryBranchEntries(ctx context.Context, snapshot *memoryReadSnapshot, inde
 			break
 		}
 		for index, value := range bucket.items {
-			identity, identified := identifyResource(value)
-			if !identified {
-				return nil, stores.ErrSnapshotUnsupported
-			}
-			keys, err := idx.ExtractKeys(value)
+			key, entry, err := snapshot.changedBranchEntry(value, idx, indexBy, previous)
 			if err != nil {
 				return nil, err
 			}
-			entry := &branchEntry{
-				identity: identity, keys: keys, value: value,
-				origin: snapshot.IdentityRevision(identity.namespace, identity.name),
+			if entry == nil {
+				continue
 			}
 			if bucket.encoded {
 				entry.encoded = bucket.encodedItems[index]
 			}
-			result[resourceCacheKey(identity.namespace, identity.name)] = entry
+			result[key] = entry
 		}
 	}
 	return result, nil
 }
 
-func cachedBranchEntries(ctx context.Context, snapshot *cachedReadSnapshot) (map[string]*branchEntry, error) {
-	result := make(map[string]*branchEntry, snapshot.root.locations.Len())
+func (snapshot *memoryReadSnapshot) changedBranchEntry(value any, idx *indexer.Indexer, indexBy []string, previous *SnapshotBranch) (string, *branchEntry, error) {
+	identity, identified := identifyResource(value)
+	if !identified {
+		return "", nil, stores.ErrSnapshotUnsupported
+	}
+	key := resourceCacheKey(identity.namespace, identity.name)
+	version, _ := snapshot.root.identityVersions.Get([]byte(key))
+	old, _ := previous.entries.Get([]byte(key))
+	if matchesObservedRevision(old, snapshot.RevisionSource(), version) && slices.Equal(old.indexBy, indexBy) {
+		return key, nil, nil
+	}
+	keys, err := idx.ExtractKeys(value)
+	if err != nil {
+		return "", nil, err
+	}
+	return key, &branchEntry{
+		identity: identity, keys: keys, value: value,
+		origin: snapshot.IdentityRevision(identity.namespace, identity.name),
+		source: snapshot.RevisionSource(), version: version, indexBy: indexBy,
+	}, nil
+}
+
+func cachedBranchEntries(ctx context.Context, snapshot *cachedReadSnapshot, previous *SnapshotBranch) (map[string]*branchEntry, error) {
+	result := make(map[string]*branchEntry)
 	iterator := snapshot.root.locations.Root().Iterator()
 	for {
 		if err := ctx.Err(); err != nil {
@@ -73,6 +91,11 @@ func cachedBranchEntries(ctx context.Context, snapshot *cachedReadSnapshot) (map
 		key, ref, found := iterator.Next()
 		if !found {
 			break
+		}
+		version, _ := snapshot.root.identityVersions.Get(key)
+		old, _ := previous.entries.Get(key)
+		if matchesObservedRevision(old, snapshot.RevisionSource(), version) {
+			continue
 		}
 		warm := iradix.New[cachedSnapshotValue]()
 		if value, found := snapshot.root.warm.Get(key); found {
@@ -86,10 +109,15 @@ func cachedBranchEntries(ctx context.Context, snapshot *cachedReadSnapshot) (map
 		result[string(key)] = &branchEntry{
 			identity: resourceIdentity{namespace: ref.namespace, name: ref.name},
 			keys:     slices.Clone(ref.indexKeys), origin: snapshot.IdentityRevision(ref.namespace, ref.name),
+			source: snapshot.RevisionSource(), version: version,
 			lazy: lazy, ref: cloneResourceRef(&ref),
 		}
 	}
 	return result, nil
+}
+
+func matchesObservedRevision(entry *branchEntry, source stores.RevisionSource, version uint64) bool {
+	return entry != nil && entry.source == source && entry.version == version
 }
 
 func compareBranchIdentity(a, b resourceIdentity) int {

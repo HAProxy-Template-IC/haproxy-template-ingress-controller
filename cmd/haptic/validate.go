@@ -52,7 +52,7 @@ import (
 
 var (
 	validateConfigFiles     []string
-	validateTestName        string
+	validateTestNames       []string
 	validateOutputFormat    string
 	validateVerbose         bool
 	validateDumpRendered    bool
@@ -116,7 +116,7 @@ func init() {
 	validateCmd.Flags().StringArrayVarP(&validateConfigFiles, "file", "f", nil,
 		"Path to a HAProxyTemplateConfig YAML file (required). Repeatable, and each file may hold several documents; "+
 			"all of them are merged in order, later wins — the same merge the controller performs over its CRD_NAME list.")
-	validateCmd.Flags().StringVar(&validateTestName, "test", "", "Run specific test by name (optional)")
+	validateCmd.Flags().StringArrayVar(&validateTestNames, "test", nil, "Run a specific test by name; repeat to select several tests")
 	validateCmd.Flags().StringVarP(&validateOutputFormat, "output", "o", "summary", "Output format: summary, json, yaml")
 	validateCmd.Flags().BoolVar(&validateVerbose, "verbose", false, "Show rendered content preview for failed assertions")
 	validateCmd.Flags().BoolVar(&validateDumpRendered, "dump-rendered", false,
@@ -520,9 +520,13 @@ func runValidationTests(
 	// Run tests
 	logger.Info("Running validation tests",
 		"total_tests", len(cfg.ValidationTests),
-		"filter", validateTestName)
+		"filter", validateTestNames)
 
-	results, err := runner.RunTests(ctx, validateTestName)
+	selectedNames := validateTestNames
+	if len(selectedNames) == 1 && selectedNames[0] == "" {
+		selectedNames = nil
+	}
+	results, err := runner.RunNamedTests(ctx, selectedNames)
 	if err != nil {
 		return nil, fmt.Errorf("test execution failed: %w", err)
 	}

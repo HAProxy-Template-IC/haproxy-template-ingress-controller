@@ -1,0 +1,770 @@
+{
+  "TestAccessControlRouteAddRemoveIsReloadFree": {
+    "seconds": 24.7,
+    "parallel": false
+  },
+  "TestAgentCertificateExpiryRecovery": {
+    "seconds": 28.2,
+    "parallel": false
+  },
+  "TestAgentCertificateRenewal": {
+    "seconds": 18.6,
+    "parallel": false
+  },
+  "TestAgentTLSRotation": {
+    "seconds": 87.0,
+    "parallel": false
+  },
+  "TestApplyRollbackOnCorruptCertificate": {
+    "seconds": 14.6,
+    "parallel": false
+  },
+  "TestAuxiliaryContentSchema": {
+    "seconds": 2.9,
+    "parallel": true
+  },
+  "TestAvailabilityMonitorStartupEvidence": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestAvailabilityMonitorStopPreservesFailureAndRunsOnce": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestCORSRouteAddRemoveIsReloadFree": {
+    "seconds": 45.8,
+    "parallel": false
+  },
+  "TestConfigMarkerEvidenceRejectsPartialContent": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestConfigShape": {
+    "seconds": 0.5,
+    "parallel": false
+  },
+  "TestControllerCPUSecondsDelta": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestControllerIdentityPodsRejectIncompleteEvidence": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestControllerShutdownPreservesAdmission": {
+    "seconds": 187.2,
+    "parallel": false
+  },
+  "TestControllerStatsRequireEverySelectedPodAndMetric": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestCustomCRDRouteAddRemoveIsReloadFree": {
+    "seconds": 75.1,
+    "parallel": false
+  },
+  "TestDefaultTrafficUsesExistingHostPorts": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestExhaustedRateLimitHeadersRequireEveryField": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestGRPCOverTLS": {
+    "seconds": 11.5,
+    "parallel": true
+  },
+  "TestGRPCRouteHostnamePrecedence": {
+    "seconds": 25.2,
+    "parallel": true
+  },
+  "TestGatewayAPICRDUpgradeInPlace": {
+    "seconds": 225.3,
+    "parallel": false
+  },
+  "TestGatewayAPIHelmArgs": {
+    "seconds": 0.0,
+    "parallel": true
+  },
+  "TestGatewayAPIInstallArgs": {
+    "seconds": 0.0,
+    "parallel": true
+  },
+  "TestGatewayAPIReleaseMatrix": {
+    "seconds": 1,
+    "parallel": false
+  },
+  "TestGatewayBackendNamespaceIsolation": {
+    "seconds": 12.4,
+    "parallel": true
+  },
+  "TestGatewayBackendTLSIdentity": {
+    "seconds": 20.3,
+    "parallel": true
+  },
+  "TestGatewayChurn": {
+    "seconds": 1,
+    "parallel": false
+  },
+  "TestGatewayExternalAuth": {
+    "seconds": 0.1,
+    "parallel": true
+  },
+  "TestGatewayFrontendMTLSCAReferences": {
+    "seconds": 46.3,
+    "parallel": false
+  },
+  "TestGatewayFrontendMTLSOverrides": {
+    "seconds": 36.5,
+    "parallel": false
+  },
+  "TestGatewayRouteAddRemoveIsReloadFree": {
+    "seconds": 74.8,
+    "parallel": false
+  },
+  "TestGatewayRouteKindIsolation": {
+    "seconds": 15.9,
+    "parallel": true
+  },
+  "TestGatewayRoutePolicyAuthentication": {
+    "seconds": 50.9,
+    "parallel": true
+  },
+  "TestGatewayRoutePolicyCacheIsolation": {
+    "seconds": 14.0,
+    "parallel": true
+  },
+  "TestGatewayRoutePolicySharedRateLimit": {
+    "seconds": 21.2,
+    "parallel": false
+  },
+  "TestGatewayRoutePolicyWAF": {
+    "seconds": 159.3,
+    "parallel": false
+  },
+  "TestGatewaySessionPersistence": {
+    "seconds": 0.1,
+    "parallel": true
+  },
+  "TestGatewayTCPBackendTLS": {
+    "seconds": 10.4,
+    "parallel": true
+  },
+  "TestGatewayTLSTerminate": {
+    "seconds": 18.5,
+    "parallel": true
+  },
+  "TestHAProxyJSONAccessLog": {
+    "seconds": 9.7,
+    "parallel": true
+  },
+  "TestHAProxyJSONAccessLogGatewayResource": {
+    "seconds": 25.8,
+    "parallel": true
+  },
+  "TestHAProxyPodDeletionZeroDowntime": {
+    "seconds": 60.0,
+    "parallel": false
+  },
+  "TestHAProxyReloadDrainsHTTPConnections": {
+    "seconds": 51.1,
+    "parallel": false
+  },
+  "TestHAProxyTemplateConfigCompleteness": {
+    "seconds": 0.1,
+    "parallel": false
+  },
+  "TestHTTPRouteBasic": {
+    "seconds": 15.5,
+    "parallel": true
+  },
+  "TestHTTPRouteCombined": {
+    "seconds": 19.9,
+    "parallel": true
+  },
+  "TestHTTPRouteHeaders": {
+    "seconds": 14.3,
+    "parallel": true
+  },
+  "TestHTTPRouteMethods": {
+    "seconds": 16.6,
+    "parallel": true
+  },
+  "TestHTTPRoutePaths": {
+    "seconds": 15.5,
+    "parallel": true
+  },
+  "TestHTTPRoutePrecedence": {
+    "seconds": 26.2,
+    "parallel": true
+  },
+  "TestHTTPRouteQuery": {
+    "seconds": 16.0,
+    "parallel": true
+  },
+  "TestHTTPRouteSplit": {
+    "seconds": 18.3,
+    "parallel": true
+  },
+  "TestHapticAPIKey": {
+    "seconds": 6.1,
+    "parallel": true
+  },
+  "TestHapticAPIKeyMissingSecretFailsClosed": {
+    "seconds": 14.0,
+    "parallel": true
+  },
+  "TestHapticAPIKeyUnderscoreConsumerHeader": {
+    "seconds": 10.6,
+    "parallel": true
+  },
+  "TestHapticAllowedMethods": {
+    "seconds": 6.6,
+    "parallel": true
+  },
+  "TestHapticAllowedMethodsRouteAddRemoveIsReloadFree": {
+    "seconds": 22.6,
+    "parallel": false
+  },
+  "TestHapticBackendTLS": {
+    "seconds": 10.3,
+    "parallel": true
+  },
+  "TestHapticBackendTLSRouteAddRemoveIsReloadFree": {
+    "seconds": 26.4,
+    "parallel": false
+  },
+  "TestHapticBasicAuth": {
+    "seconds": 9.4,
+    "parallel": true
+  },
+  "TestHapticBasicAuthRouteAddRemoveIsReloadFree": {
+    "seconds": 19.4,
+    "parallel": false
+  },
+  "TestHapticCORS": {
+    "seconds": 10.1,
+    "parallel": true
+  },
+  "TestHapticCanary": {
+    "seconds": 20.6,
+    "parallel": true
+  },
+  "TestHapticCanaryWeightStepIsReloadFree": {
+    "seconds": 27.3,
+    "parallel": false
+  },
+  "TestHapticClientMTLS": {
+    "seconds": 6.0,
+    "parallel": true
+  },
+  "TestHapticCompression": {
+    "seconds": 9.0,
+    "parallel": true
+  },
+  "TestHapticCompressionDefault": {
+    "seconds": 6.7,
+    "parallel": true
+  },
+  "TestHapticCompressionOptOut": {
+    "seconds": 10.5,
+    "parallel": true
+  },
+  "TestHapticConsumerGroups": {
+    "seconds": 9.7,
+    "parallel": true
+  },
+  "TestHapticConsumerGroupsMissingSecretFailsClosed": {
+    "seconds": 17.2,
+    "parallel": true
+  },
+  "TestHapticCookieRewriteRouteAddRemoveIsReloadFree": {
+    "seconds": 24.7,
+    "parallel": false
+  },
+  "TestHapticExternalAuth": {
+    "seconds": 15.2,
+    "parallel": true
+  },
+  "TestHapticForwardForRouteAddRemoveIsReloadFree": {
+    "seconds": 21.8,
+    "parallel": false
+  },
+  "TestHapticHMAC": {
+    "seconds": 10.5,
+    "parallel": true
+  },
+  "TestHapticHMACBodyIntegrity": {
+    "seconds": 11.0,
+    "parallel": true
+  },
+  "TestHapticHSTS": {
+    "seconds": 10.3,
+    "parallel": true
+  },
+  "TestHapticHeaders": {
+    "seconds": 11.3,
+    "parallel": true
+  },
+  "TestHapticJWT": {
+    "seconds": 7.2,
+    "parallel": true
+  },
+  "TestHapticJWTClaimConstraints": {
+    "seconds": 11.7,
+    "parallel": true
+  },
+  "TestHapticMirrorTarget": {
+    "seconds": 6.7,
+    "parallel": false
+  },
+  "TestHapticMockResponse": {
+    "seconds": 8.0,
+    "parallel": true
+  },
+  "TestHapticPathRewrite": {
+    "seconds": 36.6,
+    "parallel": true
+  },
+  "TestHapticPathRewriteRouteAddRemoveIsReloadFree": {
+    "seconds": 21.8,
+    "parallel": false
+  },
+  "TestHapticProxyProtocol": {
+    "seconds": 12.0,
+    "parallel": true
+  },
+  "TestHapticRateLimit": {
+    "seconds": 9.8,
+    "parallel": true
+  },
+  "TestHapticRedirects": {
+    "seconds": 24.4,
+    "parallel": true
+  },
+  "TestHapticRequestCaptureRouteAddRemoveIsReloadFree": {
+    "seconds": 25.3,
+    "parallel": false
+  },
+  "TestHapticRequestID": {
+    "seconds": 10.8,
+    "parallel": true
+  },
+  "TestHapticRequestIDAcceptInboundRejectsMalformed": {
+    "seconds": 6.8,
+    "parallel": true
+  },
+  "TestHapticRequestTermination": {
+    "seconds": 7.0,
+    "parallel": true
+  },
+  "TestHapticRequestValidation": {
+    "seconds": 8.9,
+    "parallel": true
+  },
+  "TestHapticRequireHeaders": {
+    "seconds": 11.0,
+    "parallel": true
+  },
+  "TestHapticSSLPassthrough": {
+    "seconds": 10.7,
+    "parallel": true
+  },
+  "TestHapticSSLRedirect": {
+    "seconds": 11.3,
+    "parallel": true
+  },
+  "TestHapticSatisfyAnyRouteAddRemoveIsReloadFree": {
+    "seconds": 21.6,
+    "parallel": false
+  },
+  "TestHapticSessionAffinity": {
+    "seconds": 9.4,
+    "parallel": true
+  },
+  "TestHapticSharedRateLimit": {
+    "seconds": 81.2,
+    "parallel": false
+  },
+  "TestHapticSourceRange": {
+    "seconds": 19.4,
+    "parallel": true
+  },
+  "TestHapticTimeouts": {
+    "seconds": 6.2,
+    "parallel": true
+  },
+  "TestHapticVarnishCache": {
+    "seconds": 18.9,
+    "parallel": true
+  },
+  "TestHapticVarnishCacheFaultRecovery": {
+    "seconds": 32.9,
+    "parallel": false
+  },
+  "TestHapticVarnishCacheTimeoutUpdateIsReloadFree": {
+    "seconds": 20.7,
+    "parallel": false
+  },
+  "TestHapticVarnishGeneratedVCLCompiles": {
+    "seconds": 0.5,
+    "parallel": false
+  },
+  "TestHapticVarnishRuntimeMemory": {
+    "seconds": 0.7,
+    "parallel": false
+  },
+  "TestHapticVarnishSharedMappingProbe": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestHapticWAFPolicies": {
+    "seconds": 21.5,
+    "parallel": true
+  },
+  "TestHasTCPListener": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestIngressAnnotations": {
+    "seconds": 0.0,
+    "parallel": true
+  },
+  "TestIngressAppRoot": {
+    "seconds": 9.8,
+    "parallel": true
+  },
+  "TestIngressAuthHeadersFail": {
+    "seconds": 10.0,
+    "parallel": true
+  },
+  "TestIngressAuthHeadersRequest": {
+    "seconds": 0.0,
+    "parallel": true
+  },
+  "TestIngressAuthHeadersSucceed": {
+    "seconds": 10.3,
+    "parallel": true
+  },
+  "TestIngressAuthMethod": {
+    "seconds": 9.8,
+    "parallel": true
+  },
+  "TestIngressAuthTLSSecret": {
+    "seconds": 11.9,
+    "parallel": true
+  },
+  "TestIngressAuthTLSSecretNginx": {
+    "seconds": 9.8,
+    "parallel": true
+  },
+  "TestIngressAuthURLPrefixSubpath": {
+    "seconds": 6.1,
+    "parallel": false
+  },
+  "TestIngressAuthURLRegexPath": {
+    "seconds": 6.4,
+    "parallel": false
+  },
+  "TestIngressAuthURLWildcardHostSubpath": {
+    "seconds": 6.0,
+    "parallel": false
+  },
+  "TestIngressBackendMTLS": {
+    "seconds": 10.3,
+    "parallel": true
+  },
+  "TestIngressBackendMTLSHaproxyIngress": {
+    "seconds": 15.6,
+    "parallel": true
+  },
+  "TestIngressBackendSSL": {
+    "seconds": 9.7,
+    "parallel": true
+  },
+  "TestIngressBasic": {
+    "seconds": 10.7,
+    "parallel": true
+  },
+  "TestIngressBasicAuth": {
+    "seconds": 10.3,
+    "parallel": true
+  },
+  "TestIngressBasicAuthHaproxyIngress": {
+    "seconds": 5.2,
+    "parallel": true
+  },
+  "TestIngressBasicAuthNginx": {
+    "seconds": 9.2,
+    "parallel": true
+  },
+  "TestIngressCORS": {
+    "seconds": 8.5,
+    "parallel": true
+  },
+  "TestIngressCombined": {
+    "seconds": 6.5,
+    "parallel": true
+  },
+  "TestIngressExternalAuth": {
+    "seconds": 10.6,
+    "parallel": true
+  },
+  "TestIngressHSTS": {
+    "seconds": 10.7,
+    "parallel": true
+  },
+  "TestIngressHTTP3": {
+    "seconds": 12.7,
+    "parallel": true
+  },
+  "TestIngressHTTPStoreDemo": {
+    "seconds": 10.6,
+    "parallel": true
+  },
+  "TestIngressHaproxyIngressTimeouts": {
+    "seconds": 10.9,
+    "parallel": true
+  },
+  "TestIngressHaproxyIngressWafDeny": {
+    "seconds": 13.4,
+    "parallel": false
+  },
+  "TestIngressHaproxyRedirectTo": {
+    "seconds": 15.5,
+    "parallel": true
+  },
+  "TestIngressHostRenameMapOnly": {
+    "seconds": 13.6,
+    "parallel": true
+  },
+  "TestIngressLimitRateRouteAddRemoveIsReloadFree": {
+    "seconds": 27.7,
+    "parallel": false
+  },
+  "TestIngressModSecuritySnippetEnforced": {
+    "seconds": 8.1,
+    "parallel": false
+  },
+  "TestIngressModSecuritySnippetHotReload": {
+    "seconds": 5.7,
+    "parallel": false
+  },
+  "TestIngressModSecuritySnippetRejectedByAdmission": {
+    "seconds": 1.9,
+    "parallel": false
+  },
+  "TestIngressModSecuritySnippetWildcardHost": {
+    "seconds": 8.3,
+    "parallel": false
+  },
+  "TestIngressNginxCanary": {
+    "seconds": 6.5,
+    "parallel": true
+  },
+  "TestIngressNginxCustomHTTPErrors": {
+    "seconds": 15.6,
+    "parallel": true
+  },
+  "TestIngressNginxPermanentRedirect": {
+    "seconds": 10.4,
+    "parallel": true
+  },
+  "TestIngressNginxRegexRewrite": {
+    "seconds": 12.4,
+    "parallel": true
+  },
+  "TestIngressNginxTemporalRedirect": {
+    "seconds": 10.8,
+    "parallel": true
+  },
+  "TestIngressPathRewrite": {
+    "seconds": 9.3,
+    "parallel": true
+  },
+  "TestIngressPathRewriteRouteAddRemoveIsReloadFree": {
+    "seconds": 25.3,
+    "parallel": false
+  },
+  "TestIngressPodNamedServerScaling": {
+    "seconds": 0.0,
+    "parallel": true
+  },
+  "TestIngressProxyProtocol": {
+    "seconds": 10.6,
+    "parallel": true
+  },
+  "TestIngressRateLimit": {
+    "seconds": 15.3,
+    "parallel": true
+  },
+  "TestIngressRateLimitRouteAddRemoveIsReloadFree": {
+    "seconds": 22.5,
+    "parallel": false
+  },
+  "TestIngressRedirect": {
+    "seconds": 10.4,
+    "parallel": true
+  },
+  "TestIngressResponseHeaders": {
+    "seconds": 10.1,
+    "parallel": true
+  },
+  "TestIngressRollingRestartZeroDowntime": {
+    "seconds": 22.2,
+    "parallel": true
+  },
+  "TestIngressRouteAddRemoveIsReloadFree": {
+    "seconds": 76.0,
+    "parallel": false
+  },
+  "TestIngressSSLPassthrough": {
+    "seconds": 11.2,
+    "parallel": true
+  },
+  "TestIngressSSLRedirect": {
+    "seconds": 11.5,
+    "parallel": true
+  },
+  "TestIngressServerProtoH2": {
+    "seconds": 12.8,
+    "parallel": true
+  },
+  "TestIngressStickySession": {
+    "seconds": 5.4,
+    "parallel": false
+  },
+  "TestIngressTLS": {
+    "seconds": 12.3,
+    "parallel": true
+  },
+  "TestIngressTLSCombined": {
+    "seconds": 6.5,
+    "parallel": true
+  },
+  "TestIngressTLSMulti": {
+    "seconds": 5.6,
+    "parallel": true
+  },
+  "TestInvalidSecretDoesNotBlockOtherInputs": {
+    "seconds": 200.6,
+    "parallel": false
+  },
+  "TestInvalidTrafficEndpointCannotBeSelected": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestIsolatedTrafficNeverFallsBackToAnotherClustersHostPorts": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestKindConfigHostPortPolicy": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestLeaderChangeReloadsNothing": {
+    "seconds": 60.5,
+    "parallel": false
+  },
+  "TestLoadDefaults": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestLoadIsolationOverrides": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestLoadNetworkLabels": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestLoadRejectsEmptyIsolationOverrides": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestLoadRejectsInvalidExposeHostPorts": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestLoadRejectsPartialIsolationOverrides": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestLoadRejectsProtectedClusterNames": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestLoadRejectsUnsafeIsolationTuple": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestPublicationStatusConcurrentWriters": {
+    "seconds": 0.8,
+    "parallel": false
+  },
+  "TestRateLimitBurstPreservesUnjudgeableMeasurements": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestRateLimitFallbackRequiresEveryPodAndOutcome": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestRouteParentsRequireEveryCurrentGeneration": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestSPOAHubReloadOnConfigPush": {
+    "seconds": 6.5,
+    "parallel": false
+  },
+  "TestScale": {
+    "seconds": 1,
+    "parallel": false
+  },
+  "TestStageControllerStartupPreservesRequestedManifests": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestStageControllerStartupRejectsAmbiguousOrInvalidInput": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestTLSRouteWeightedBackends": {
+    "seconds": 19.3,
+    "parallel": true
+  },
+  "TestVectorSidecar": {
+    "seconds": 34.2,
+    "parallel": false
+  },
+  "TestVendorBasicAuthRouteAddRemoveIsReloadFree": {
+    "seconds": 73.3,
+    "parallel": false
+  },
+  "TestWaitForConnection": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestWithControllerEnvAddsFirstVariable": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestWithControllerEnvPreservesConfiguredVariables": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestWithControllerEnvRejectsMalformedValues": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestWriteKubeconfigDefaultsReplaceExistingFile": {
+    "seconds": 0.0,
+    "parallel": false
+  },
+  "TestWriteKubeconfigIsolation": {
+    "seconds": 0.0,
+    "parallel": false
+  }
+}

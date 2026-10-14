@@ -66,7 +66,7 @@ Two different mechanisms, because the two endpoints have different access rules:
 - Port-forwarding uses SPDY protocol which breaks under parallel test execution (EOF, connection reset errors)
 - NodePort requires `extraPortMappings` in Kind configuration, which doesn't work in DinD environments
 - API server proxy routes requests through the existing API server connection
-- Works reliably in all environments including DinD (Docker-in-Docker) on GitLab CI
+- Works reliably in all environments, including Docker-in-Docker (DinD)
 - Uses built-in client-go `ProxyGet` method - first-party Kubernetes API
 
 **How it works:**

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"slices"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
@@ -196,9 +197,11 @@ func (p *Publisher) pruneRetained(ctx context.Context, req *PublishRequest, keep
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := client.Delete(ctx, item.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &item.UID, ResourceVersion: &item.ResourceVersion}}); err != nil {
+		err := client.Delete(ctx, item.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &item.UID, ResourceVersion: &item.ResourceVersion}})
+		if err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
+		p.forgetPublishedResource(req.TemplateConfigNamespace, item.Name)
 	}
 	return nil
 }

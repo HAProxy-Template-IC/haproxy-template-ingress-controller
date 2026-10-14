@@ -448,7 +448,7 @@ func loadIngressBackendChartSnippets(t *testing.T) map[string]config.TemplateSni
 	wanted := map[string]bool{
 		"util-service-port-resolution": true, "util-webhook-reject-or-warn": true, "util-backend": true,
 		"util-backend-timeouts": true, "util-haproxy-duration": true, "util-ingress-timeout-metadata": true,
-		"util-backend-servers-helpers": true, "util-backend-servers-result": true,
+		"util-backend-servers-helpers": true, "util-backend-servers-result": true, "util-gated-pod-routable": true,
 		"util-backend-name-ingress": true, "util-generate-backends-ingress": true,
 		"util-generate-annotation-default-backend": true, "util-ingress-backend-bindings": true,
 		"util-replay-ingress-backend-effects": true, "backends-500-ingress": true, ingressBackendComponent: true,

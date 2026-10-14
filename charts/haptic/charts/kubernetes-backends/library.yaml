@@ -6,6 +6,20 @@
 
 _helm_load:
   enable: '{{ .Values.controller.templateLibraries.kubernetesBackends.enabled }}'
+  inject:
+    - path: templateSnippets.util-gated-pod-routable
+      from: templateSnippets.util-gated-pod-routable-readiness-gate
+      when: '{{ if dig "podReadinessGate" "enabled" false .Values.controller.templateLibraries.kubernetesBackends }}true{{ end }}'
+  unset:
+    - templateSnippets.util-gated-pod-routable-readiness-gate
+    - path: watchedResources.backend_pods
+      when: &podReadinessGateOff '{{ if not (dig "podReadinessGate" "enabled" false .Values.controller.templateLibraries.kubernetesBackends) }}true{{ end }}'
+    - path: templateSnippets.status-patches-150-pod-readiness-gate
+      when: *podReadinessGateOff
+    - path: validationTests.test-pod-readiness-gate-routes-pending-pod
+      when: *podReadinessGateOff
+    - path: validationTests.test-pod-readiness-gate-waits-for-containers
+      when: *podReadinessGateOff
 
 watchedResources:
   services:
@@ -18,6 +32,27 @@ watchedResources:
     indexBy: ["metadata.namespace", "metadata.labels.kubernetes\\.io/service-name"]
     # No debounce: a pod-IP rotation must reach HAProxy inside the kubelet Ready-to-SIGTERM window.
     debounceInterval: "0"
+  # Pods for the opt-in readiness gate; see docs/site/docs/operations/pod-readiness-gate.md.
+  backend_pods:
+    apiVersion: v1
+    resources: pods
+    indexBy: ["metadata.namespace", "metadata.name"]
+    statusPatch: true
+    debounceInterval: "0"
+    # Only readinessGates and status.conditions are read; the rest is per-pod memory and churn.
+    ignoreFields:
+      - metadata.annotations
+      - metadata.ownerReferences
+      - spec.containers
+      - spec.initContainers
+      - spec.ephemeralContainers
+      - spec.volumes
+      - spec.affinity
+      - spec.tolerations
+      - spec.topologySpreadConstraints
+      - status.containerStatuses
+      - status.initContainerStatuses
+      - status.ephemeralContainerStatuses
 
 templateSnippets:
   # ----------------------------------------------------------------------------
@@ -249,6 +284,7 @@ templateSnippets:
         deterministic regardless of EndpointSlice ordering.
       #}
       {%- import "util-backend-servers-helpers" for ServerName -%}
+      {%- import "util-gated-pod-routable" for GatedPodRoutable -%}
       {%- var BackendServersResult = func(serviceName string, maxServerSlots int, port int, serverOpts map[string]any, portName any, backendName any, namespace string) map[string]any {
           var namePrefix = ""
           if v := serverOpts | dig("namePrefix"); v != nil {
@@ -319,8 +355,8 @@ templateSnippets:
               // nil/false. A not-ready or terminating pod still gets a server
               // line, marked disabled, so a readiness flip is a runtime state
               // change instead of a del+add.
-              var notReady = (ep.Conditions.Ready != nil && !*ep.Conditions.Ready) ||
-                (ep.Conditions.Terminating != nil && *ep.Conditions.Terminating)
+              var notReady = (ep.Conditions.Terminating != nil && *ep.Conditions.Terminating) ||
+                (ep.Conditions.Ready != nil && !*ep.Conditions.Ready && !GatedPodRoutable(namespace, ep.TargetRef.Name))
               for _, addr := range ep.Addresses {
                 var podName = ep.TargetRef.Name
                 if podName == "" {
@@ -391,6 +427,67 @@ templateSnippets:
           }
           return result["servers"].([]any)
       } -%}
+
+  util-gated-pod-routable:
+    template: |-
+      {%- var GatedPodRoutable = func(namespace string, podName string) bool { return false } -%}
+
+  # Swapped in for util-gated-pod-routable by podReadinessGate.enabled.
+  util-gated-pod-routable-readiness-gate:
+    template: |-
+      {#- A pod holding the gate is never Ready before HAProxy routes it, so its
+          endpoint's Ready can't decide routing: its containers' readiness does. -#}
+      {%- var PodReadinessGate = "haproxy-haptic.org/load-balancer-ready" -%}
+      {%- var GatedPodRoutable = func(namespace string, podName string) bool {
+          var pod = resources.backend_pods.GetSingle(namespace, podName)
+          if pod == nil {
+            return false
+          }
+          var gated = false
+          for _, gate := range pod.Spec.ReadinessGates {
+            gated = gated || gate.ConditionType == PodReadinessGate
+          }
+          if !gated {
+            return false
+          }
+          for _, condition := range pod.Status.Conditions {
+            if condition.Type == "ContainersReady" {
+              return condition.Status == "True"
+            }
+          }
+          return false
+      } -%}
+
+  # Sets the gate only in the deployed phase: after every HAProxy pod runs the
+  # configuration rendered with the pod's endpoint enabled.
+  status-patches-150-pod-readiness-gate:
+    requires: [endpoints, backend_pods]
+    incremental:
+      source: endpoints
+      effects: [statusPatch]
+    template: |-
+      {%- import "util-gated-pod-routable" for GatedPodRoutable, PodReadinessGate -%}
+      {%%
+        var namespace = dig_string(item, "", "metadata", "namespace")
+        for _, endpoint := range item | dig("endpoints") | toSlice() {
+          var podName = dig_string(endpoint, "", "targetRef", "name")
+          if !GatedPodRoutable(namespace, podName) {
+            continue
+          }
+          var pod = resources.backend_pods.GetSingle(namespace, podName)
+          statusPatch(pod, map[string]any{
+            "deployed": map[string]any{
+              "conditions": []any{map[string]any{
+                "type": PodReadinessGate,
+                "status": "True",
+                "reason": "Deployed",
+                "message": "Every HAProxy pod runs a configuration rendered with this pod ready.",
+                "lastTransitionTime": transitionTime(dig(pod, "status", "conditions"), PodReadinessGate, "True"),
+              }},
+            },
+          })
+        }
+      %%}
 
   kubernetes-default-backend-publication:
     requires: [services, endpoints]
@@ -670,3 +767,139 @@ validationTests:
       - {type: contains, target: haproxy.cfg, pattern: '%\(service\)\[var\(txn\.backend_name\),map\([^)]*backend-service\.map\),field\(2,/\)\]'}
       - {type: contains, target: 'map:backend-service.map', pattern: '(?m)^default_pn_svc_echo_80 default/echo$'}
       - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.service\)'}
+
+  test-pod-readiness-gate-routes-pending-pod:
+    requires: [endpoints, backend_pods]
+    description: A gated pod with ready containers is routed before Ready and gets the gate only once deployed
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: gated}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: gated.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: gated, port: {number: 80}}}
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: gated}
+          spec: {ports: [{port: 80}]}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata: {namespace: default, name: gated-abc, labels: {kubernetes.io/service-name: gated}}
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.4.0.1"]
+              conditions: {ready: false}
+              targetRef: {kind: Pod, name: gated-new}
+            - addresses: ["10.4.0.2"]
+              conditions: {ready: false}
+              targetRef: {kind: Pod, name: ungated-new}
+            - addresses: ["10.4.0.3"]
+              conditions: {ready: false, terminating: true}
+              targetRef: {kind: Pod, name: gated-old}
+          ports:
+            - port: 8080
+      backend_pods:
+        - apiVersion: v1
+          kind: Pod
+          metadata: {namespace: default, name: gated-new, uid: 6b1e6a52-0d55-4f0b-9f43-1a7c1b2f0e01}
+          spec:
+            containers: [{name: app, image: app}]
+            readinessGates: [{conditionType: haproxy-haptic.org/load-balancer-ready}]
+          status:
+            conditions:
+              - {type: ContainersReady, status: "True"}
+              - {type: Ready, status: "False"}
+        - apiVersion: v1
+          kind: Pod
+          metadata: {namespace: default, name: ungated-new, uid: 6b1e6a52-0d55-4f0b-9f43-1a7c1b2f0e02}
+          spec:
+            containers: [{name: app, image: app}]
+          status:
+            conditions:
+              - {type: ContainersReady, status: "True"}
+              - {type: Ready, status: "False"}
+        - apiVersion: v1
+          kind: Pod
+          metadata: {namespace: default, name: gated-old, uid: 6b1e6a52-0d55-4f0b-9f43-1a7c1b2f0e03}
+          spec:
+            containers: [{name: app, image: app}]
+            readinessGates: [{conditionType: haproxy-haptic.org/load-balancer-ready}]
+          status:
+            conditions:
+              - {type: ContainersReady, status: "True"}
+              - {type: haproxy-haptic.org/load-balancer-ready, status: "True", lastTransitionTime: "2026-01-01T00:00:00Z"}
+              - {type: Ready, status: "True"}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+server gated-new 10\.4\.0\.1:8080 '}
+      - {type: not_contains, target: haproxy.cfg, pattern: '(?m)^\s+server gated-new 10\.4\.0\.1:8080 .*\bdisabled\b'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+server ungated-new 10\.4\.0\.2:8080 .*\bdisabled\b'}
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+server gated-old 10\.4\.0\.3:8080 .*\bdisabled\b'}
+      - {type: contains, target: 'status:default/gated-new:deployed', pattern: '"type":"haproxy-haptic\.org/load-balancer-ready"'}
+      - {type: contains, target: 'status:default/gated-new:deployed', pattern: '"status":"True"'}
+      - type: contains
+        target: 'status:default/gated-old:deployed'
+        pattern: '"lastTransitionTime":"2026-01-01T00:00:00Z"'
+        description: An existing True gate keeps its transition time, so the patch is a no-op.
+      - type: not_exists
+        target: 'status:default/gated-new:rendered'
+        description: A rendered-phase gate would let the old pod go before HAProxy has the new one.
+      - {type: not_exists, target: 'status:default/ungated-new:deployed'}
+
+  test-pod-readiness-gate-waits-for-containers:
+    requires: [endpoints, backend_pods]
+    description: A gated pod whose containers are not ready stays disabled and ungated
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {namespace: default, name: waiting}
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: waiting.example.com
+                http:
+                  paths:
+                    - path: /
+                      pathType: Prefix
+                      backend: {service: {name: waiting, port: {number: 80}}}
+      services:
+        - apiVersion: v1
+          kind: Service
+          metadata: {namespace: default, name: waiting}
+          spec: {ports: [{port: 80}]}
+      endpoints:
+        - apiVersion: discovery.k8s.io/v1
+          kind: EndpointSlice
+          metadata: {namespace: default, name: waiting-abc, labels: {kubernetes.io/service-name: waiting}}
+          addressType: IPv4
+          endpoints:
+            - addresses: ["10.4.1.1"]
+              conditions: {ready: false}
+              targetRef: {kind: Pod, name: waiting-new}
+          ports:
+            - port: 8080
+      backend_pods:
+        - apiVersion: v1
+          kind: Pod
+          metadata: {namespace: default, name: waiting-new, uid: 6b1e6a52-0d55-4f0b-9f43-1a7c1b2f0e04}
+          spec:
+            containers: [{name: app, image: app}]
+            readinessGates: [{conditionType: haproxy-haptic.org/load-balancer-ready}]
+          status:
+            conditions:
+              - {type: ContainersReady, status: "False"}
+              - {type: Ready, status: "False"}
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '(?m)^\s+server waiting-new 10\.4\.1\.1:8080 .*\bdisabled\b'}
+      - {type: not_exists, target: 'status:default/waiting-new:deployed'}

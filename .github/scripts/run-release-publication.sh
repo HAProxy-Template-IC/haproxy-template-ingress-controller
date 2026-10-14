@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+image=ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+mkdir -p .publication
+trap 'sudo chown -R "$(id -u):$(id -g)" .publication' EXIT
+image=$(python3 -m scripts.ci.github_toolchain "$image")
+# BUILDX_NO_DEFAULT_OCI_ARTIFACT keeps attestations without dangling OCI subjects (docker/buildx#3991).
+docker run --rm --network host \
+    --volume /var/run/docker.sock:/var/run/docker.sock \
+    --volume "$HOME/.docker:/root/.docker" \
+    --volume "$PWD:$PWD" --workdir "$PWD" \
+    --env GITHUB_REPOSITORY --env GITHUB_RUN_ID --env GITHUB_WORKFLOW_REF --env GITHUB_TOKEN \
+    --env ACTIONS_ID_TOKEN_REQUEST_TOKEN --env ACTIONS_ID_TOKEN_REQUEST_URL --env GITHUB_ACTIONS \
+    --env PUBLICATION_PHASE --env BUILDX_NO_DEFAULT_OCI_ARTIFACT=true --entrypoint bash "$image" -euc '
+        git config --global --add safe.directory "$PWD"
+        docker buildx create --driver docker-container --use --name release-builder --bootstrap
+        make publish-github-release PUBLICATION_PHASE="$PUBLICATION_PHASE"
+    '

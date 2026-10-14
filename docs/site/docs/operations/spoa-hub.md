@@ -46,7 +46,7 @@ An explicit boolean on `spoaHub.enabled` always wins: `false` forces the sidecar
 
 ## Bundled components
 
-The image is published at `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:<HAPTIC version>` and is built from the following pinned upstream releases:
+The image is published at `ghcr.io/haproxy-haptic/haptic/spoa-hub:<HAPTIC version>` and is built from the following pinned upstream releases:
 
 <!-- BEGIN: spoa-hub-bundle -->
 
@@ -356,17 +356,30 @@ database, including private cluster addresses, don't produce a country code.
 
 ## Verifying the published image
 
-The image is signed by digest with cosign keyless via GitLab OIDC. The CycloneDX Software Bill of Materials (SBOM) is attached as an in-toto attestation.
+The image is signed by digest with cosign keyless. The CycloneDX Software Bill
+of Materials (SBOM) is attached as an in-toto attestation. Releases after 0.5.0
+are signed by the GitHub release workflow:
 
 ```bash
-# Image signature
 read -r -p "HAPTIC image version: " haptic_version
-cosign verify "registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:$haptic_version" \
+release_identity="https://github.com/haproxy-haptic/HAPTIC/.github/workflows/release.yml@refs/tags/v$haptic_version"
+cosign verify "ghcr.io/haproxy-haptic/haptic/spoa-hub:$haptic_version" \
+  --certificate-identity "$release_identity" \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+cosign verify-attestation "ghcr.io/haproxy-haptic/haptic/spoa-hub:$haptic_version" \
+  --type cyclonedx \
+  --certificate-identity "$release_identity" \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+```
+
+Releases up to 0.5.0 keep their original GitLab CI signatures:
+
+```bash
+read -r -p "HAPTIC image version: " haptic_version
+cosign verify "ghcr.io/haproxy-haptic/haptic/spoa-hub:$haptic_version" \
   --certificate-identity-regexp '^https://gitlab\.com/haproxy-haptic/haptic//\.gitlab-ci\.yml@refs/tags/.*$' \
   --certificate-oidc-issuer 'https://gitlab.com'
-
-# CycloneDX SBOM
-cosign verify-attestation "registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:$haptic_version" \
+cosign verify-attestation "ghcr.io/haproxy-haptic/haptic/spoa-hub:$haptic_version" \
   --type cyclonedx \
   --certificate-identity-regexp '^https://gitlab\.com/haproxy-haptic/haptic//\.gitlab-ci\.yml@refs/tags/.*$' \
   --certificate-oidc-issuer 'https://gitlab.com'

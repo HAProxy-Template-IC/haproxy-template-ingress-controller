@@ -10,14 +10,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Select several validation tests in one run by repeating `haptic validate --test`.
+
+### Changed
+
+- Development, issues, releases, and container images moved to GitHub: [github.com/haproxy-haptic/HAPTIC](https://github.com/haproxy-haptic/HAPTIC) and `ghcr.io/haproxy-haptic`. Releases up to 0.5.0 are available there with their original digests and signatures.
+- Startup validation may use 80% of the controller's startup probe window (240 seconds by default) instead of a fixed 120 seconds, so a large validation-test suite on a small node no longer crash-loops the controller.
+- Reduce reconciliation allocations by reusing unchanged watched-resource revisions during input isolation.
+- Reduce temporary template allocations during configuration validation and rendering.
+- Log validation test totals and results at the default INFO level.
+
 ### Fixed
 
+- Recreate pruned recovery checkpoints when their configuration is deployed again.
+- Account for recovery plans when compressing retained configurations to prevent storage-limit publication failures.
+- Prevent a 30-second agent startup stall when HAProxy is still starting its worker.
 - Retained configuration recovery now starts after leader failover when a critical HTTP source is unavailable, including with large watched resource sets.
 - Prevent queued mailbox events from delaying controller shutdown after cancellation during queue processing.
 
 ### Security
 
 - Update Go to 1.27.2 and its HTTP/2 dependency to fix HTTP, TLS, and filesystem vulnerabilities.
+
+### Helm chart
+
+#### Added
+
+- Opt-in Pod readiness gate `haproxy-haptic.org/load-balancer-ready` (`controller.templateLibraries.kubernetesBackends.podReadinessGate.enabled`): a gated pod becomes Ready only once every HAProxy pod routes to it, so single-replica rollouts drop no requests.
+
+#### Changed
+
+- Default controller, SPOA hub, and Varnish images come from `ghcr.io/haproxy-haptic/haptic`, and the chart is published at `oci://ghcr.io/haproxy-haptic/haptic/charts/haptic`; its `home` and `sources` links point to GitHub.
+- Render the Helm chart faster by avoiding repeated YAML serialization of template libraries.
+
+#### Fixed
+
+- TLS Gateways use isolated service addresses and pod ports to prevent routing to another Gateway's TLSRoutes.
+- Gateway API: TLSRoutes retain their original hostname specificity after listener intersection, with older routes winning ties.
 
 ## [0.5.0] - 2026-10-08
 

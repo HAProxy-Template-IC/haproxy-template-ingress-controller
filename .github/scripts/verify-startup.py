@@ -1,0 +1,63 @@
+"""Reject incomplete first startup validation even if a later retry passes."""
+
+import json
+from pathlib import Path
+import re
+
+
+RESULT = re.compile(
+    r'^\[pod/([^/]+)/controller\].*msg="Test run completed" component=test-runner '
+    r'total=(\d+) passed=(\d+) failed=(\d+) skipped=(\d+) duration=(\S+)',
+    re.MULTILINE,
+)
+
+
+def verify(log, pods):
+    controllers = [pod for pod in pods["items"]
+                   if pod["metadata"].get("labels", {}).get("app.kubernetes.io/component") == "controller"]
+    if len(controllers) != 2:
+        raise ValueError(f"Expected two controller replicas, found {len(controllers)}")
+    first = {}
+    for match in RESULT.finditer(log):
+        name, total, passed, failed, skipped, duration = match.groups()
+        first.setdefault(name, {"total": int(total), "passed": int(passed), "failed": int(failed),
+                                "skipped": int(skipped), "duration": duration})
+    for pod in controllers:
+        name = pod["metadata"]["name"]
+        process_start = re.search(
+            rf'^\[pod/{re.escape(name)}/controller\].*level=INFO msg="HAProxy Template Ingress Controller starting"',
+            log, re.MULTILINE)
+        first_completion = re.search(rf'^\[pod/{re.escape(name)}/controller\].*msg="Test run completed"',
+                                     log, re.MULTILINE)
+        if process_start is None or first_completion is None or process_start.start() > first_completion.start():
+            raise ValueError(f"{name}: initial process logs are missing or truncated")
+        result = first.get(name)
+        if result is None or result["total"] <= 0 or result["passed"] != result["total"] or result["failed"]:
+            raise ValueError(f"{name}: first startup validation was incomplete or failed: {result}")
+        statuses = [s for s in pod["status"].get("containerStatuses", []) if s["name"] == "controller"]
+        if len(statuses) != 1 or not statuses[0].get("ready") or statuses[0].get("restartCount") != 0:
+            raise ValueError(f"{name}: controller is not ready without a restart")
+    return {pod["metadata"]["name"]: first[pod["metadata"]["name"]] for pod in controllers}
+
+
+def verify_environment(pods, expected):
+    for pod in pods["items"]:
+        controllers = [container for container in pod["spec"]["containers"] if container["name"] == "controller"]
+        if len(controllers) != 1:
+            raise ValueError("Expected one controller container per pod")
+        environment = controllers[0].get("env", [])
+        for name, value in expected.items():
+            matches = [entry.get("value") for entry in environment if entry["name"] == name]
+            if matches != [value]:
+                raise ValueError(f"{pod['metadata']['name']}: expected {name}={value}, found {matches}")
+
+
+def main():
+    result = verify(Path(".pilot/current-controller-logs.txt").read_text(),
+                    json.loads(Path(".pilot/pods.json").read_text()))
+    Path(".pilot/first-startup-verdict.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result))
+
+
+if __name__ == "__main__":
+    main()

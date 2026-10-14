@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -49,6 +50,7 @@ import (
 	devassets "gitlab.com/haproxy-haptic/haptic/scripts/dev-env-assets"
 	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
 	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
 	"gitlab.com/haproxy-haptic/haptic/tests/process"
 	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
 )
@@ -119,6 +121,7 @@ func initializeE2ERuntime() error {
 }
 
 func TestMain(m *testing.M) {
+	runStagedPostRenderer()
 	flag.Parse()
 	if flag.Lookup("test.list").Value.String() != "" {
 		os.Exit(m.Run())
@@ -371,6 +374,7 @@ func createE2ECluster(ctx context.Context) error {
 	ownedE2ECluster, err = kindutil.NewCluster(process.Executor{}, &kindutil.ClusterOptions{
 		Name: ClusterName, Kubeconfig: filepath.Join(artifacts, "kubeconfig"), Artifacts: artifacts,
 		Config: []byte(e2eCluster.KindConfig()), Environment: kindutil.DockerEnvironment(os.Getenv), ReadyTimeout: DefaultClusterCreateTimeout,
+		NetworkLabels: e2eCluster.NetworkLabels,
 	})
 	if err != nil {
 		return err
@@ -560,10 +564,9 @@ func waitCRDsEstablished(ctx context.Context, nameSubstr string) error {
 	if len(crds) == 0 {
 		return fmt.Errorf("no CRDs matching %q found after install", nameSubstr)
 	}
-	waitArgs := append([]string{"wait", kubeconfigFlag, kubeconfigPath,
-		"--for=condition=Established", "--timeout=60s"}, crds...)
-	if out, err := exec.CommandContext(ctx, "kubectl", waitArgs...).CombinedOutput(); err != nil {
-		return fmt.Errorf("wait for CRDs established (%s): %w (output: %s)", nameSubstr, err, out)
+	client := kubeexec.Client{Runner: process.Executor{}, Kubeconfig: kubeconfigPath, Context: "kind-" + ClusterName}
+	if err := client.WaitCRDsEstablished(ctx, crds, time.Minute); err != nil {
+		return fmt.Errorf("wait for CRDs established (%s): %w", nameSubstr, err)
 	}
 	return nil
 }
@@ -601,23 +604,22 @@ func applyGatewayAPICRDs(ctx context.Context, version, channel string) error {
 		return err
 	}
 	// The CRD bundle (release manifest for a "v" version, kustomize base for a
-	// git ref) is fetched from GitHub, which intermittently 504s / times out at
-	// setup. A single failure there sinks the whole e2e or conformance job
-	// before any test runs, so retry a few times with linear backoff. exec.Cmd
-	// isn't reusable, so rebuild it each attempt.
-	newApply := func() *exec.Cmd {
-		return exec.CommandContext(ctx, "kubectl", args...)
-	}
+	// git ref) is fetched from GitHub, whose release assets fail for about a
+	// minute at a time (run 38571838388), so back off for two minutes.
+	const attempts = 7
 	var out []byte
-	for attempt := 1; attempt <= 4; attempt++ {
-		if out, err = newApply().CombinedOutput(); err == nil {
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if out, err = exec.CommandContext(ctx, "kubectl", args...).CombinedOutput(); err == nil {
 			break
 		}
 		if ctx.Err() != nil {
 			break // suite is shutting down — don't keep retrying
 		}
-		if attempt < 4 {
-			time.Sleep(time.Duration(attempt) * 2 * time.Second) // 2s, 4s, 6s
+		if attempt < attempts {
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Duration(1<<attempt) * time.Second): // 2s, 4s, ... 64s
+			}
 		}
 	}
 	if err != nil {
@@ -784,6 +786,14 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	default:
 		valuesBytes = devassets.E2EValuesYAML
 	}
+	if os.Getenv(scaleEnableEnv) == "1" {
+		budget := envInt64OrDefault(scaleBudgetRSSEnv, scaleDefaultBudgetRSSBytes)
+		// The GC target follows the asserted RSS budget, not the container's OOM headroom.
+		valuesBytes, err = e2ecluster.WithControllerEnv(valuesBytes, "GOMEMLIMIT", strconv.FormatInt(budget*90/100, 10))
+		if err != nil {
+			return ctx, fmt.Errorf("configure scale memory budget: %w", err)
+		}
+	}
 	// Write the chosen values bytes to a temp file so helm can consume them.
 	valuesFile, err := os.CreateTemp("", "haptic-e2e-values-*.yaml")
 	if err != nil {
@@ -837,6 +847,9 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		return ctx, fmt.Errorf("gateway API Helm channel: %w", err)
 	}
 	args = append(args, gatewayAPIArgs...)
+	if valuesPath := os.Getenv("HAPTIC_E2E_EXTRA_VALUES"); valuesPath != "" {
+		args = append(args, "--values", valuesPath)
+	}
 	args = append(args, extraHelmSetArgs()...)
 	identity, err := expectedControllerIdentity()
 	if err != nil {
@@ -885,34 +898,14 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 	// shipped cap, and issue #111 sat ambiguous for a day because a green
 	// nightly proved nothing about it.
 	if os.Getenv(scaleEnableEnv) == "1" {
-		// GOMEMLIMIT must track the BUDGET, not the container limit. The
-		// controller derives it from the cgroup at a 0.9 ratio (automemlimit,
-		// which skips when the env var is already set), so the 2Gi limit above
-		// hands the collector a 1843 MiB target while TestScale asserts 1024
-		// MiB. The GC then has no reason to collect anywhere near the budget
-		// and RSS floats with allocation rate — measured 829-1052 MiB across
-		// six identical runs, i.e. the assertion was a coin flip rather than a
-		// measurement. Aim the collector at the budget and the 2Gi limit goes
-		// back to being pure OOM headroom, so a real breach fails the
-		// assertion instead of being killed by the kubelet.
-		budget := envInt64OrDefault(scaleBudgetRSSEnv, scaleDefaultBudgetRSSBytes)
-		goMemLimit := budget * 90 / 100
 		args = append(args,
 			"--set", "controller.resources.limits.memory=2Gi",
 			"--set", "controller.logLevel=INFO",
 			"--set", "controller.config.logging.level=INFO",
-			// --set-string: env[].value is typed string, and a bare --set
-			// renders the byte count as an integer, which server-side apply
-			// rejects outright.
-			"--set-string", "controller.extraEnv[0].name=GOMEMLIMIT",
-			"--set-string", fmt.Sprintf("controller.extraEnv[0].value=%d", goMemLimit),
 		)
 	}
-	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return ctx, fmt.Errorf("helm upgrade --install: %w", err)
+	if err := installControllerRelease(ctx, args); err != nil {
+		return ctx, err
 	}
 	return ctx, nil
 }

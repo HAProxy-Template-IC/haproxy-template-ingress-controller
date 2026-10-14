@@ -8,10 +8,9 @@ cluster's Docker network. Use `make test-gateway-conformance` and
 
 | Job | Execution | Purpose |
 | --- | --- | --- |
-| `test-gateway-conformance-smoke` | One deterministic shard on merge requests | Regression feedback |
-| `test-gateway-conformance` | Four shards on main and nightly pipelines | Full regression gate |
-| `gateway-conformance-report` | Manual, complete suite against a pipeline snapshot | Candidate report with provenance |
-| `release-gateway-conformance` | Complete suite against the published release image | Release report with provenance |
+| `gateway-1` to `gateway-4` | Four shards of `test-gateway-conformance` in every CI run | Full regression gate |
+| `conformance-report.yml` | Manual, complete suite against a CI snapshot | Candidate report with provenance |
+| `release.yml` `conformance` | Complete suite against the published release image | Release report with provenance |
 
 Reports require all three Gateway profiles and reject run, skip, and short
 filters. The existing `BackendTLSPolicySANValidation` exception remains visible

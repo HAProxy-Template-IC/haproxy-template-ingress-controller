@@ -1,24 +1,14 @@
-# Playground hosting — cross-repo publish contract
+# Playground bundle
 
-The browser playground (`cmd/playground/`) is built **here** (in `haproxy-haptic/haptic`)
-and published **there** (in `haproxy-haptic/haproxy-haptic.gitlab.io`, the docs/landing
-Pages site). This doc is the contract between the two: what this repo produces, and what
-the Pages repo must do to serve it at `https://haproxy-haptic.org/playground/`.
+The browser playground (`cmd/playground/`) is built by `scripts/build-playground.sh
+<output>/playground/<version> <version>` and served at
+`https://haproxy-haptic.org/playground/<version>/`. Releases use the release version
+and are immutable; `main` publishes the moving `dev` version. Publication, version
+retention, and the Brotli transport are described in [GitHub Pages packaging](github-pages.md).
 
-The split mirrors the existing docs flow: this repo triggers the Pages project
-(`trigger-pages` on the default branch, `trigger-docs-release` on `v*` tags,
-`strategy: depend`), and the Pages project's `scripts/deploy-docs.sh` assembles the site.
+## Bundle contents
 
-## What this repo produces
-
-The `build-playground-wasm` job (`.gitlab-ci.yml`, `build` stage) runs
-`scripts/build-playground.sh public/playground/<version> <version>` and uploads
-`public/playground/` as a job artifact (`expire_in: 1 month`).
-
-- **Version identity**
-    - Release pipeline (`v*` tag): `<version>` = `${CI_COMMIT_TAG#v}` (e.g. `0.2.0-alpha.1`) — immutable rendering assets with separately recorded UI corrections.
-    - Default branch (`main`): `<version>` = `dev` — a **moving** directory, overwritten each push.
-- **Bundle layout** (everything relative-linked, no absolute paths):
+Everything is relative-linked, with no absolute paths:
 
   ```
   public/playground/<version>/
@@ -45,97 +35,29 @@ The `build-playground-wasm` job (`.gitlab-ci.yml`, `build` stage) runs
 The bundle is fully self-contained and has **no runtime third-party requests** — it renders
 entirely client-side. Nothing but static files needs to be served.
 
-## What the Pages repo must do (`deploy-docs.sh`)
+## Version catalog
 
-On each triggered pipeline, add a playground publish step:
+The shell fetches `../versions.json`, a sibling of every version directory:
 
-1. **Determine the version.** Use `DOC_VERSION` when the trigger sets it (release: it's
-   `${CI_COMMIT_TAG}`, so strip the leading `v`); otherwise default to `dev` (default-branch
-   trigger sets no version).
-
-2. **Fetch the bundle artifact** from this repo by ref + job name:
-
-   ```bash
-   # ref = the tag for releases, "main" for dev
-   PROJECT="haproxy-haptic%2Fhaptic"
-   curl --location --fail --output pg.zip \
-     --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-     "https://gitlab.com/api/v4/projects/${PROJECT}/jobs/artifacts/${REF}/download?job=build-playground-wasm"
-   unzip -q pg.zip           # yields public/playground/<version>/
-   ```
-
-   (The `pages-preview` job already fetches the Pages artifact this same way — reuse the pattern.)
-
-3. **Verify the lineage marker before publishing.** The bundle carries
-   `release-identity.json` at its root:
-
-   ```json
-   {"version":"0.2.0-alpha.1","commit":"<sha>","pipeline":"<id>","job":"<id>"}
-   ```
-
-   `deploy-docs.sh`'s `identity_matches()` compares all four fields against the
-   `HAPTIC_RELEASE_COMMIT_SHA` / `HAPTIC_RELEASE_PIPELINE_ID` /
-   `HAPTIC_RELEASE_PLAYGROUND_JOB_NAME` variables the trigger passed, so a bundle can
-   only be published as the commit, pipeline and job that built it. The field names are
-   a fixed contract — renaming one on either side silently stops matching, and the
-   deploy fails closed.
-
-4. **Place it in the site** so it serves at `/playground/<version>/`. Copy
-   `public/playground/<version>/` into the site's `public/playground/<version>/`.
-   Released rendering assets must never be overwritten. The publisher may apply a
-   reviewed `index.html` correction after checking the original release identity
-   and every bundle file's SHA-256 digest. Its manifest records the exact
-   replacements, expected output digest, and source commit. Unexpected changes,
-   unknown UI revisions, and changes to rendering assets fail publication.
-
-   `release-identity.json` continues to identify the original release bundle.
-   A separate `ui-revision.json` records the UI correction, its source, manifest
-   digest, and corrected file digests. Normal deployments verify and preserve
-   corrections. The Pages repository documents its website-only hotfix pipeline;
-   a browser interface correction does not require a controller release.
-
-5. **Update the shared `public/playground/versions.json`** (a sibling of every version
-   directory — the shell fetches it as `../versions.json`, so it is written **once**, not
-   into each version dir). Rebuild the catalog from published bundles and set `current`
-   to the newest **stable** release, or the newest prerelease if no stable bundle exists.
-   Remove matching alpha/beta/rc bundles once their final release exists, including on
-   retries of older pipelines. Keep older stable bundles, `dev`, and prereleases of
-   later versions. Do not add a documentation-only release without a playground bundle:
-
-   ```json
-   {
-     "current": "0.2.0",
-     "versions": [
-       { "version": "0.2.0", "stable": true },
-       { "version": "dev",   "stable": false }
-     ]
-   }
-   ```
-
-   Schema the shell consumes (`initVersions` in `index.html`):
-   - `versions[]` — array, newest first is fine; each `{ version, stable }`.
-   - `stable: false` renders the option as `<version> · pre`.
-   - `current` — pre-selected version; the shell prefers `data-version` (stamped per bundle),
-     then `current`, then `versions[0]`.
-   A pre-release counts as non-stable (`-alpha`/`-beta`/`-rc`). `dev` is optional but
-   recommended so users can reach the latest main build; keep it non-stable and never `current`.
-
-6. **Keep the compressed siblings.** GitLab Pages negotiates `Content-Encoding` and serves
-   `foo.wasm.br` / `foo.wasm.gz` automatically when the sibling exists next to `foo.wasm`, so
-   just publish all three (raw + `.br` + `.gz`). Do not strip them.
-
-## Verify (Milestone 5, task 6.6)
-
-Brotli transport on GitLab Pages is unconfirmed — confirm it once after the first publish:
-
-```bash
-curl -sI -H 'Accept-Encoding: br'   https://haproxy-haptic.org/playground/<version>/playground.wasm | grep -i content-encoding   # expect: br
-curl -sI -H 'Accept-Encoding: gzip' https://haproxy-haptic.org/playground/<version>/playground.wasm | grep -i content-encoding   # expect: gzip
+```json
+{
+  "current": "0.2.0",
+  "versions": [
+    { "version": "0.2.0", "stable": true },
+    { "version": "dev",   "stable": false }
+  ]
+}
 ```
 
-If `br` is not honoured, `gzip` (also shipped) is the fallback — no action needed beyond
-noting it. If neither is served, the raw 58 MB wasm downloads once and is then cached by the
-per-version path; the shell shows a download-progress bar meanwhile.
+Schema the shell consumes (`initVersions` in `index.html`):
+
+- `versions[]` — array, newest first is fine; each `{ version, stable }`.
+- `stable: false` renders the option as `<version> · pre`.
+- `current` — pre-selected version; the shell prefers `data-version` (stamped per bundle),
+  then `current`, then `versions[0]`.
+
+A pre-release counts as non-stable (`-alpha`/`-beta`/`-rc`). `dev` is optional but
+recommended so users can reach the latest main build; keep it non-stable and never `current`.
 
 ## Local preview of the exact bundle
 

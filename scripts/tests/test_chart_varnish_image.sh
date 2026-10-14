@@ -9,7 +9,7 @@ chart="$test_dir/chart"
 
 yq -i '.cache.varnish.image = ""' "$chart/values.yaml"
 yq -i '.appVersion = "test-chart-version"' "$chart/Chart.yaml"
-[[ "$(bash scripts/chart-varnish-image.sh "$chart")" == "registry.gitlab.com/haproxy-haptic/haptic/varnish:test-chart-version" ]]
+[[ "$(bash scripts/chart-varnish-image.sh "$chart")" == "ghcr.io/haproxy-haptic/haptic/varnish:test-chart-version" ]]
 yq -i '.cache.varnish.image = "example.invalid/cache@sha256:abc"' "$chart/values.yaml"
 [[ "$(bash scripts/chart-varnish-image.sh "$chart")" == "example.invalid/cache@sha256:abc" ]]
 yq -i '.cache.varnish.image = " "' "$chart/values.yaml"

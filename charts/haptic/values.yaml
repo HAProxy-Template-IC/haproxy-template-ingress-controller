@@ -123,7 +123,7 @@ controller:
   # leader deploys configs; followers remain ready for failover.
   replicaCount: 2
   image:
-    repository: registry.gitlab.com/haproxy-haptic/haptic
+    repository: ghcr.io/haproxy-haptic/haptic
     pullPolicy: IfNotPresent  # @schema enum: [Always, IfNotPresent, Never]
     # Overrides the image tag whose default is the chart appVersion.
     tag: ""
@@ -390,6 +390,11 @@ controller:
     # the bundled Ingress, Gateway, and annotation libraries.
     kubernetesBackends:
       enabled: true
+      # Readiness gate `haproxy-haptic.org/load-balancer-ready`. Not under
+      # extraContext: it adds a cluster-wide Pod watch and pods/status RBAC. See
+      # https://haproxy-haptic.org/docs/latest/operations/pod-readiness-gate/
+      podReadinessGate:
+        enabled: false
     # HTTPS frontend + SSL passthrough infrastructure + default cert loading.
     ssl:
       enabled: true
@@ -414,7 +419,7 @@ controller:
       experimentalChannel: false
     # Required shared Ingress-scoped macros for all enabled annotation libraries
     # below (level 2.5). Rationale:
-    # https://gitlab.com/haproxy-haptic/haptic/-/blob/v0.5.0/docs/adr/0003-annotation-compat-scaffold-level-2-5.md
+    # https://github.com/haproxy-haptic/HAPTIC/blob/v0.5.0/docs/adr/0003-annotation-compat-scaffold-level-2-5.md
     ingressAnnotationsCompat:
       enabled: true
     # Governance rule engine. Generic over any watched resource, so it is
@@ -2131,7 +2136,7 @@ spoaHub:
   enabled: null  # @schema type: [boolean, null]
 
   image:
-    repository: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub
+    repository: ghcr.io/haproxy-haptic/haptic/spoa-hub
     pullPolicy: IfNotPresent  # @schema enum: [Always, IfNotPresent, Never]
     # Override the tag. Leave empty to use .Chart.AppVersion (recommended).
     tag: ""
