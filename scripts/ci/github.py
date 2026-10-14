@@ -1,6 +1,7 @@
 """Read GitHub workflow evidence and artifacts."""
 
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -8,6 +9,9 @@ import urllib.request
 
 # GitHub answers 502 for 100-job pages of a rerun attempt (run 38581317265).
 PAGE_SIZE = 50
+# GitHub's API answers transient 5xx for large job lists (run 38607403533).
+RETRY_DELAYS = (2, 4, 8, 16, 32)
+RETRIED_STATUSES = {500, 502, 503, 504}
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -27,8 +31,15 @@ class GitHub:
         if params:
             url += "?" + urllib.parse.urlencode(params)
         request = urllib.request.Request(url, headers=self.headers)
-        with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:
-            return json.load(response)
+        for delay in (*RETRY_DELAYS, None):
+            try:
+                with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:
+                    return json.load(response)
+            except urllib.error.HTTPError as error:
+                if delay is None or error.code not in RETRIED_STATUSES:
+                    raise
+                error.close()
+            time.sleep(delay)
 
     def all(self, path, field, **params):
         page = 1

@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -53,8 +55,15 @@ def api(path):
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     })
-    with urlopen(request, timeout=30) as response:
-        return json.load(response)
+    for delay in (2, 4, 8, 16, 32, None):
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except HTTPError as error:
+            if delay is None or error.code not in {500, 502, 503, 504}:
+                raise
+            error.close()
+        time.sleep(delay)
 
 
 def required_jobs(manifest, profile):
