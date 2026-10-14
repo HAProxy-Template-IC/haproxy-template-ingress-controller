@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Select several validation tests in one run by repeating `haptic validate --test`.
+- `MUTEX_PROFILE_FRACTION` and `BLOCK_PROFILE_RATE` enable the controller's mutex and block profiles on `/debug/pprof`.
 
 ### Changed
 
