@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gitlab.com/haproxy-haptic/scriggo"
@@ -947,7 +948,7 @@ func (e *ScriggoEngine) renderIncrementalComponentsRunBatch(
 			},
 		}
 	}
-	if err := runIncrementalComponentBatch(template, runs); err != nil {
+	if err := runIncrementalComponentBatch(ctx, template, runs); err != nil {
 		var batchErr *scriggo.BatchRunError
 		if errors.As(err, &batchErr) {
 			return nil, &IncrementalComponentBatchError{
@@ -966,53 +967,85 @@ func (e *ScriggoEngine) renderIncrementalComponentsRunBatch(
 
 const incrementalBatchRunsPerWorker = 16
 
-func runIncrementalComponentBatch(template *scriggo.Template, runs []scriggo.BatchRun) error {
-	workerCount := min(runtime.GOMAXPROCS(0), (len(runs)+incrementalBatchRunsPerWorker-1)/incrementalBatchRunsPerWorker)
+// runIncrementalComponentBatch spreads runs over up to GOMAXPROCS workers that
+// take chunks in index order. Workers after the first take each chunk only if
+// ctx's WorkerGate admits them, and stop when it refuses.
+func runIncrementalComponentBatch(ctx context.Context, template *scriggo.Template, runs []scriggo.BatchRun) error {
+	chunkCount := (len(runs) + incrementalBatchRunsPerWorker - 1) / incrementalBatchRunsPerWorker
+	workerCount := min(runtime.GOMAXPROCS(0), chunkCount)
 	if workerCount <= 1 {
 		return template.RunBatch(runs)
 	}
 	if err := template.RunBatch(nil); err != nil {
 		return err
 	}
-
-	type workerError struct {
-		index int
-		err   error
+	gate := WorkerGateOf(ctx)
+	if gate == nil {
+		gate = admitAllWorkers{}
 	}
-	errorsByWorker := make(chan workerError, workerCount)
+	batch := &chunkedBatch{template: template, runs: runs, chunkCount: chunkCount, firstIndex: len(runs)}
 	var workers sync.WaitGroup
-	workerSize := (len(runs) + workerCount - 1) / workerCount
-	for start := 0; start < len(runs); start += workerSize {
-		end := min(start+workerSize, len(runs))
-		workers.Add(1)
-		go func(start, end int) {
-			defer workers.Done()
-			err := template.RunBatch(runs[start:end])
-			if err == nil {
-				return
-			}
-			index := start
-			var batchErr *scriggo.BatchRunError
-			if errors.As(err, &batchErr) {
-				index += batchErr.Index
-				err = &scriggo.BatchRunError{Index: index, Err: batchErr.Err}
-			}
-			errorsByWorker <- workerError{index: index, err: err}
-		}(start, end)
+	for range workerCount - 1 {
+		workers.Go(func() { batch.runGated(gate) })
+	}
+	for batch.runNext() {
 	}
 	workers.Wait()
-	close(errorsByWorker)
-	var first *workerError
-	for workerErr := range errorsByWorker {
-		if first == nil || workerErr.index < first.index {
-			candidate := workerErr
-			first = &candidate
+	return batch.firstErr
+}
+
+// chunkedBatch hands out a batch's runs in chunks and keeps the error with
+// the lowest run index.
+type chunkedBatch struct {
+	template   *scriggo.Template
+	runs       []scriggo.BatchRun
+	chunkCount int
+	nextChunk  atomic.Int64
+	failed     atomic.Bool
+
+	mu         sync.Mutex
+	firstIndex int
+	firstErr   error
+}
+
+func (b *chunkedBatch) runGated(gate WorkerGate) {
+	for gate.TryAcquire() {
+		more := b.runNext()
+		gate.Release()
+		if !more {
+			return
 		}
 	}
-	if first != nil {
-		return first.err
+}
+
+// runNext runs the next chunk and reports whether another may follow.
+func (b *chunkedBatch) runNext() bool {
+	chunk := int(b.nextChunk.Add(1) - 1)
+	if chunk >= b.chunkCount || b.failed.Load() {
+		return false
 	}
-	return nil
+	start := chunk * incrementalBatchRunsPerWorker
+	err := b.template.RunBatch(b.runs[start:min(start+incrementalBatchRunsPerWorker, len(b.runs))])
+	if err != nil {
+		b.fail(start, err)
+		return false
+	}
+	return true
+}
+
+func (b *chunkedBatch) fail(start int, err error) {
+	b.failed.Store(true)
+	index := start
+	var batchErr *scriggo.BatchRunError
+	if errors.As(err, &batchErr) {
+		index += batchErr.Index
+		err = &scriggo.BatchRunError{Index: index, Err: batchErr.Err}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if index < b.firstIndex {
+		b.firstIndex, b.firstErr = index, err
+	}
 }
 
 func (e *ScriggoEngine) prepareIncrementalComponent(

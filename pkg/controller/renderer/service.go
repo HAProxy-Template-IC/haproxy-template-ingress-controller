@@ -310,6 +310,7 @@ type RenderService struct {
 	logger                      *slog.Logger
 	admissionSlots              chan struct{}
 	admissionSlotWaitObserver   func(time.Duration)
+	backgroundWorkers           *backgroundWorkerGate
 	coldRenders                 *coldRenderGate
 	incremental                 *incrementalRenderState
 	mainDocumentCache           *rendercontext.RenderDocumentCache
@@ -485,6 +486,7 @@ func NewRenderService(cfg *RenderServiceConfig) *RenderService {
 		logger:                      cfg.Logger,
 		admissionSlots:              make(chan struct{}, admissionRenderSlots(runtime.GOMAXPROCS(0))),
 		admissionSlotWaitObserver:   cfg.AdmissionSlotWaitObserver,
+		backgroundWorkers:           newBackgroundWorkerGate(runtime.GOMAXPROCS(0)),
 		mainDocumentCache:           mainDocumentCache,
 		planTokenAuthority:          planTokenAuthority,
 		planMemo:                    rendercontext.NewPlanMemo(),
@@ -601,6 +603,11 @@ func (s *RenderService) render(
 			return nil, err
 		}
 		defer release()
+		if s.backgroundWorkers != nil {
+			defer s.backgroundWorkers.admissionRendering()()
+		}
+	} else if s.backgroundWorkers != nil {
+		ctx = templating.WithWorkerGate(ctx, s.backgroundWorkers)
 	}
 	attemptInputs, err := s.captureRenderAttemptInputs(mode)
 	if err != nil {

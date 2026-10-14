@@ -1021,8 +1021,9 @@ type activationCountingEngine struct {
 	batchExecutor templating.IncrementalComponentBatchExecutor
 	planner       templating.IncrementalBindingPlannerExecutor
 
-	mu     sync.Mutex
-	counts map[string]int
+	mu         sync.Mutex
+	counts     map[string]int
+	batchGated []bool
 }
 
 func newActivationCountingEngine(tb testing.TB, engine templating.Engine) *activationCountingEngine {
@@ -1064,7 +1065,19 @@ func (e *activationCountingEngine) RenderIncrementalComponents(
 	for index := range items {
 		e.recordExecution(templateName, items[index].TemplateContext)
 	}
+	e.mu.Lock()
+	e.batchGated = append(e.batchGated, templating.WorkerGateOf(ctx) != nil)
+	e.mu.Unlock()
 	return e.batchExecutor.RenderIncrementalComponents(ctx, templateName, items)
+}
+
+// takeBatchGates returns, per batch since the last call, whether it had a worker gate.
+func (e *activationCountingEngine) takeBatchGates() []bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	gated := e.batchGated
+	e.batchGated = nil
+	return gated
 }
 
 func (e *activationCountingEngine) recordExecution(templateName string, templateContext map[string]any) {

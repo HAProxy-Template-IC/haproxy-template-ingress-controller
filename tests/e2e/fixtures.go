@@ -291,16 +291,14 @@ func applyNamedEchoServerBackend(ctx context.Context, client klient.Client, name
 									Port: intstr.FromString(HTTPPortName),
 								},
 							},
-							// 1 s period + threshold 1 keeps the
-							// startup → Ready transition tight; echo-
-							// server typically answers within
-							// ~100-300 ms of container start so the
-							// first probe usually succeeds. Slow
-							// starts pay an extra second per probe.
+							// A 1 s period with success threshold 1
+							// keeps startup → Ready tight. Failures
+							// need 3 probes of up to 5 s, so a starved
+							// CI node does not flap every endpoint (#304).
 							PeriodSeconds:    1,
 							SuccessThreshold: 1,
-							FailureThreshold: 1,
-							TimeoutSeconds:   1,
+							FailureThreshold: 3,
+							TimeoutSeconds:   5,
 						},
 					}},
 				},
