@@ -39,7 +39,7 @@ extra_css:
   - /shared/playground-embed.css
 
 extra_javascript:
-  - javascripts/stable-version.js
+  - javascripts/development-notice.js
   - /shared/playground-embed.js
 
 markdown_extensions:
