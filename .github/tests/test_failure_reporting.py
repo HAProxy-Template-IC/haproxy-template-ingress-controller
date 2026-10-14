@@ -60,7 +60,7 @@ class FailureReportingTests(unittest.TestCase):
 
     def test_wrong_trigger_and_changed_attempt_or_revision_fail_before_writes(self):
         for key, value in (("id", 43), ("run_attempt", 3), ("head_sha", "b" * 40), ("workflow_id", 8),
-                           ("path", ".github/workflows/nightly.yml"), ("event", "workflow_dispatch"),
+                           ("path", ".github/workflows/other.yml"), ("event", "workflow_dispatch"),
                            ("head_branch", "feature"), ("status", "in_progress"), ("conclusion", "success")):
             with self.subTest(key=key):
                 self.api.get.return_value = {**self.run, key: value}
@@ -78,8 +78,8 @@ class FailureReportingTests(unittest.TestCase):
         self.api.post.assert_not_called()
 
     def test_canary_failure_is_reported_even_when_the_workflow_and_job_succeed(self):
-        self.run.update(path=".github/workflows/nightly.yml", event="schedule", conclusion="success")
-        canary = {**self.job, "name": "nightly-gwapi-canary", "conclusion": "success",
+        self.run.update(conclusion="success")
+        canary = {**self.job, "name": "full / gateway-canary", "conclusion": "success",
                   "steps": [{"conclusion": "failure"}]}
         selected = self.selected([canary])
         self.assertEqual(len(selected), 1)
@@ -100,7 +100,7 @@ class FailureReportingTests(unittest.TestCase):
 
     def test_canary_failure_keeps_its_non_blocking_classification(self):
         self.run["conclusion"] = "success"
-        self.job["name"] = "nightly-gwapi-canary"
+        self.job["name"] = "full / gateway-canary"
         selected = self.selected()
         self.assertEqual(len(selected), 1)
         self.assertTrue(selected[0]["title"].startswith("Canary failure:"))
@@ -113,7 +113,7 @@ class FailureReportingTests(unittest.TestCase):
         self.assertNotEqual(self.selected()[0]["marker"], original)
         self.assertEqual(family("full / gateway-2"), "gateway")
         self.assertEqual(family("full / e2e-minimum-kubernetes-4"), "e2e-minimum-kubernetes")
-        self.assertEqual(family("nightly-gwapi-v1.1.0"), "nightly-gwapi-v1.1.0")
+        self.assertEqual(family("full / gateway-compatibility-v1.1.0"), "gateway-compatibility-v1.1.0")
 
     def test_recurrences_comment_and_duplicate_events_are_idempotent(self):
         selected = self.selected()
@@ -152,7 +152,7 @@ class FailureReportingTests(unittest.TestCase):
     def test_workflow_uses_trusted_default_checkout_without_artifacts_or_secrets(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/report-failures.yml").read_text())
         self.assertEqual(workflow["on"], {"workflow_run": {
-            "workflows": ["CI", "Nightly and weekly verification"], "types": ["completed"]}})
+            "workflows": ["CI"], "types": ["completed"]}})
         self.assertEqual(workflow["permissions"], {"contents": "read", "actions": "read", "issues": "write"})
         self.assertEqual(workflow["concurrency"], {
             "group": "report-failures-${{ github.event.workflow_run.id }}", "cancel-in-progress": False})

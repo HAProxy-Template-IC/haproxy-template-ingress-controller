@@ -128,8 +128,8 @@ HAPTIC_E2E_PROFILE=rate-limit make test-e2e-profile
 HAPTIC_E2E_PROFILE=api-gateway HAPTIC_E2E_GWAPI_CHANNEL=experimental make test-e2e-profile
 ```
 
-See [scheduled verification](../../docs/agents/ci.md#scheduled-verification) for
-the focused nightly and complete weekly schedules.
+See [feature and matrix coverage](../../docs/agents/ci.md#feature-and-matrix-coverage)
+for how CI runs them.
 
 ### Constrained runner startup
 

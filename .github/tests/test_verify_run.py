@@ -65,6 +65,27 @@ class VerifyRunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             VERIFY.verify(self.run, [nested], ["unit"], **arguments)
 
+    def test_canary_may_fail_but_cannot_be_absent_skipped_or_from_another_attempt(self):
+        canary = dict(self.job, name="full / canary", id=124)
+        unit = dict(self.job, name="full / unit")
+        arguments = {"repository": "owner/repo", "sha": "abc", "attempt": 2,
+                     "prefix": "full / ", "allowed_failures": ["canary"]}
+        for conclusion in ("success", "failure", "timed_out"):
+            canary["conclusion"] = conclusion
+            receipt = VERIFY.verify(self.run, [unit, canary], ["unit", "canary"], **arguments)
+            self.assertIn({"name": "full / canary", "id": 124, "conclusion": conclusion}, receipt)
+        for key, value in (("conclusion", "skipped"), ("conclusion", "cancelled"),
+                           ("status", "queued"), ("run_attempt", 1), ("head_sha", "other")):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                VERIFY.verify(self.run, [unit, dict(canary, **{key: value})], ["unit", "canary"], **arguments)
+        for jobs in ([unit], [dict(unit, conclusion="failure"), canary]):
+            with self.assertRaises(ValueError):
+                VERIFY.verify(self.run, jobs, ["unit", "canary"], **arguments)
+        for allowed in (["missing"], ["canary", "canary"]):
+            with self.assertRaises(ValueError):
+                VERIFY.verify(self.run, [unit, canary], ["unit", "canary"],
+                              **{**arguments, "allowed_failures": allowed})
+
 
 class RevisionIdentityTests(unittest.TestCase):
     def setUp(self):
@@ -171,8 +192,6 @@ class VerificationProfileTests(unittest.TestCase):
             self.paths.assert_called_with(self.base, self.sha)
         self.paths.return_value.append(".github/ci-verification.json")
         self.assertEqual(self.select()["profile"], "full")
-        for event_name in ("pull_request", "merge_group"):
-            self.assertEqual(self.select(event_name, identity={"base_sha": self.base})["profile"], "pre-merge")
 
     def test_new_branches_force_pushes_and_dispatches_require_full_verification(self):
         for before in ("0" * 40, "", "--all", "short"):
@@ -196,16 +215,6 @@ class VerificationProfileTests(unittest.TestCase):
         for profile in ("", "skip", "docs"):
             with self.subTest(profile=profile), self.assertRaises(ValueError):
                 VERIFY.required_jobs(self.manifest, profile)
-
-    def test_pre_merge_skips_only_the_declared_isolated_suites(self):
-        skipped = self.manifest["pre_merge_skipped_jobs"]
-        selected = VERIFY.required_jobs(self.manifest, "pre-merge")
-        self.assertEqual(set(selected) | set(skipped), set(self.manifest["required_jobs"]))
-        self.assertFalse(set(selected) & set(skipped))
-        for invalid in ([], ["scale", "scale"], ["missing-job"]):
-            self.manifest["pre_merge_skipped_jobs"] = invalid
-            with self.subTest(skipped=invalid), self.assertRaises(ValueError):
-                VERIFY.required_jobs(self.manifest, "pre-merge")
 
 
 if __name__ == "__main__":

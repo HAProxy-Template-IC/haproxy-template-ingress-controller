@@ -1,15 +1,10 @@
 # GitHub verification scheduling
 
-`.github/workflows/ci-speed-proof.yml` holds the verification matrix. No job is
-allowed to fail; a missing, skipped, or cancelled required job fails the
-verification receipt, which binds all jobs to the same source and run attempt.
-Prose-only changes run eight common checks.
-
-Pull requests and merge-queue groups use the `pre-merge` profile: the full matrix
-except the jobs in `pre_merge_skipped_jobs` of `.github/ci-verification.json`.
-Pushes to `main` and `maint/*`, manual dispatches, and the weekly run use `full`,
-which adds those jobs. Release tagging and website publication accept only a
-`full` receipt for the exact commit.
+Every pull request, merge-queue group, and push to `main` or `maint/*` runs the
+full matrix in `.github/workflows/ci-speed-proof.yml`; prose-only changes run
+eight common checks. No workflow runs on a schedule. Only the upstream Gateway
+API canary may fail; a missing, skipped, or cancelled job fails the verification
+receipt, which binds all jobs to the same source and run attempt.
 
 `.github/job-duration-weights.json` records runner durations and their source run
 IDs. `make schedule-github-verification` places long suites first and fills all
@@ -33,19 +28,15 @@ module cache. The dependency key covers `go.mod`, `go.sum`, and the PGO profile;
 Go's build cache checks source, compiler options, and compiler identity itself.
 The native image is built from the current checkout with source identity checks.
 
-## Post-merge suites
+## Isolated suites
 
-The Gateway API compatibility versions, churn, and scale run only in `full`.
-Each keeps a fresh cluster: compatibility jobs change cluster-wide CRDs, churn
+The Gateway API compatibility versions, churn, scale, and the upstream canary
+each keep a fresh cluster: compatibility jobs change cluster-wide CRDs, churn
 changes diagnostic settings, and scale measures latency and memory in isolation.
-They stay out of `pre-merge` because they lengthen it: with them, runs
-`38534640184` and `38555150518` finished their last suite after 22m12s and
-21m42s, against 20m53s without them in run `38432655131`. Dispatch `ci.yml` on a
-branch to run them before merging.
-
-`.github/workflows/nightly.yml` runs the upstream Gateway API canary daily and
-the `full` matrix every Sunday. The canary may fail; its failures open
-canary-labelled issues.
+They lengthen the matrix by about a minute (22m12s and 21m42s in runs
+`38534640184` and `38555150518`, against 20m53s without them in run
+`38432655131`), which buys one gate instead of a separate schedule. A canary
+failure on `main` opens a non-blocking `Canary failure` issue.
 
 `make check-chart-upgrade-baselines` compares the registry's released versions
 with the CI upgrade jobs. CI must cover each baseline on current and minimum

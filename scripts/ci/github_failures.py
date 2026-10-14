@@ -12,7 +12,6 @@ from .github import GitHub, jobs_for_run
 
 WORKFLOWS = {
     ".github/workflows/ci.yml": {"push", "workflow_dispatch"},
-    ".github/workflows/nightly.yml": {"schedule", "workflow_dispatch"},
 }
 FAILURES = {"failure", "timed_out", "startup_failure", "action_required"}
 
@@ -42,7 +41,7 @@ def reports(repository, run, jobs):
             step["conclusion"] in FAILURES for step in job.get("steps", []))
         if not failed:
             continue
-        canary = family(job["name"]) == "nightly-gwapi-canary"
+        canary = family(job["name"]) == "gateway-canary"
         buckets["canary" if canary else "failure"].append(job)
     if not any(buckets.values()) and run["conclusion"] in FAILURES:
         buckets["failure"].append({"name": "workflow infrastructure", "id": None})

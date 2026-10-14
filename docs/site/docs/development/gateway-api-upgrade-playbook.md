@@ -8,8 +8,8 @@ verification. Work through the sections in order.
 
 ## Before the bump
 
-1. Check the nightly canary results. The `nightly-gwapi-canary` CI job runs
-    the conformance suite from gateway-api's `main` branch every night, so the
+1. Check the canary results. The `gateway-canary` CI job runs the
+    conformance suite from gateway-api's `main` branch in every CI run, so the
     next release's breakage should already be filed as canary-flagged
     `needs-triage` issues. Review them before you start:
 
@@ -80,10 +80,9 @@ verification. Work through the sections in order.
 
 6. Update the old-release matrix. If you added a schema bundle in step 3,
     add a `gateway-compatibility-<release>` job to
-    `.github/workflows/ci-speed-proof.yml`, and add its name to `required_jobs`
-    and `pre_merge_skipped_jobs` in `.github/ci-verification.json`; then run
-    `make schedule-github-verification`. The list mirrors the
-    `tests/schemas-ga-*` bundles.
+    `.github/workflows/ci-speed-proof.yml` and its name to `required_jobs` in
+    `.github/ci-verification.json`; then run `make schedule-github-verification`.
+    The list mirrors the `tests/schemas-ga-*` bundles.
 
 ## Suite adaptation
 
@@ -131,15 +130,9 @@ verification. Work through the sections in order.
     ./scripts/test-templates.sh
     ```
 
-2. Run the post-merge suites and the canary on the pull request branch. The
-    first command runs the `full` matrix, including the compatibility matrix,
-    churn, and scale; the second runs `nightly-gwapi-canary`. Retry only failed
-    jobs whose inputs match:
-
-    ```bash
-    gh workflow run ci.yml --repo haproxy-haptic/HAPTIC --ref "$(git branch --show-current)"
-    gh workflow run nightly.yml --repo haproxy-haptic/HAPTIC --ref "$(git branch --show-current)"
-    ```
+2. Check the pull request's CI run: it includes the compatibility matrix,
+    churn, scale, and `gateway-canary`, proving them live on the new release.
+    Retry only failed jobs whose inputs match.
 
 3. Debug any failing conformance test locally on a **fresh** kind cluster —
     never take a verdict from a reused cluster:

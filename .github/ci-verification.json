@@ -49,6 +49,7 @@
     "gateway-2",
     "gateway-3",
     "gateway-4",
+    "gateway-canary",
     "gateway-churn",
     "gateway-compatibility-v1.1.0",
     "gateway-compatibility-v1.4.0",
@@ -137,11 +138,7 @@
       "lint"
     ]
   },
-  "pre_merge_skipped_jobs": [
-    "gateway-compatibility-v1.1.0",
-    "gateway-compatibility-v1.4.0",
-    "gateway-compatibility-v1.5.1",
-    "gateway-churn",
-    "scale"
+  "allowed_failure_jobs": [
+    "gateway-canary"
   ]
 }

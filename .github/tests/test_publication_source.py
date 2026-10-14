@@ -105,14 +105,6 @@ class PublicationSourceTests(unittest.TestCase):
         self.pack()
         self.check()
 
-    def test_pre_merge_receipt_never_publishes(self):
-        self.manifest = json.dumps({"required_jobs": ["unit", "runtime"],
-                                    "pre_merge_skipped_jobs": ["runtime"]}).encode()
-        self.receipt.update(profile="pre-merge", manifest_sha256=hashlib.sha256(self.manifest).hexdigest())
-        self.pack()
-        with self.assertRaisesRegex(ValueError, "requires full"):
-            self.check()
-
     def test_documentation_receipt_requires_explicit_scope_and_recomputed_changes(self):
         self.manifest = json.dumps({"required_jobs": ["unit", "runtime"], "prose": {
             "paths": ["README.md"], "patterns": [], "required_jobs": ["unit"]}}).encode()

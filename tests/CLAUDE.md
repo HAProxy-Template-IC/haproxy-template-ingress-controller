@@ -295,7 +295,7 @@ addresses inside those ranges, and add any new creator to the list.
 
 ### Measuring controller memory at scale
 
-`TestScale` is the instrument; the post-merge `scale` job enforces its RSS budget at 800
+`TestScale` is the instrument; the `scale` CI job enforces its RSS budget at 800
 Ingresses. To measure larger installs locally (#284), run it on an isolated
 cluster with the workload kept:
 

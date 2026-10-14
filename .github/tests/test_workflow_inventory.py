@@ -18,8 +18,9 @@ class WorkflowInventoryTests(unittest.TestCase):
         names = [job["name"] for job in self.workflow["jobs"].values()]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(set(names), set(self.manifest["required_jobs"]) | {"verified"})
-        self.assertNotIn("allowed_failure_jobs", self.manifest)
-        self.assertFalse([job["name"] for job in self.workflow["jobs"].values() if job.get("continue-on-error")])
+        self.assertEqual(self.manifest["allowed_failure_jobs"], ["gateway-canary"])
+        self.assertEqual({job["name"] for job in self.workflow["jobs"].values()
+                          if job.get("continue-on-error")}, {"gateway-canary"})
 
     def test_skipped_jobs_keep_unique_names_without_matrix_expansion(self):
         names = [job["name"] for job in self.workflow["jobs"].values()]
@@ -73,13 +74,33 @@ class WorkflowInventoryTests(unittest.TestCase):
                 self.assertEqual(job["if"], "always()")
                 continue
             condition = ("${{ !cancelled() }}" if job["name"] in expected else
-                         "${{ !cancelled() && inputs.verification_profile == 'full' }}"
-                         if job["name"] in self.manifest["pre_merge_skipped_jobs"] else
                          "${{ !cancelled() && inputs.verification_profile != 'prose' }}")
             self.assertEqual(job["if"], condition)
         self.assertEqual(list(self.workflow["on"]), ["workflow_call"])
         inputs = self.workflow["on"]["workflow_call"]["inputs"]
         self.assertEqual(inputs["verification_profile"]["default"], "full")
+
+    def test_isolated_suites_keep_their_selection_deadlines_and_failure_policy(self):
+        expected = {
+            "gateway-compatibility-v1.1.0": (25, {"TEST_RUN_PATTERN": "TestGatewayAPIReleaseMatrix",
+                                                   "HAPTIC_E2E_GWAPI_VERSION": "v1.1.0"}),
+            "gateway-compatibility-v1.4.0": (25, {"TEST_RUN_PATTERN": "TestGatewayAPIReleaseMatrix",
+                                                   "HAPTIC_E2E_GWAPI_VERSION": "v1.4.0"}),
+            "gateway-compatibility-v1.5.1": (25, {"TEST_RUN_PATTERN": "TestGatewayAPIReleaseMatrix",
+                                                   "HAPTIC_E2E_GWAPI_VERSION": "v1.5.1"}),
+            "gateway-churn": (30, {"TEST_RUN_PATTERN": "TestGatewayChurn", "HAPTIC_E2E_CHURN": "1"}),
+            "scale": (45, {"TEST_RUN_PATTERN": "TestScale", "HAPTIC_E2E_SCALE": "1", "HAPTIC_E2E_AGENT_DEBUG": "1"}),
+            "gateway-canary": (60, {"HAPTIC_E2E_PROFILE": "conformance", "HAPTIC_E2E_GWAPI_CHANNEL": "experimental"}),
+        }
+        jobs = {job["name"]: job for job in self.workflow["jobs"].values()}
+        for name, (timeout, env) in expected.items():
+            with self.subTest(job=name):
+                job = jobs[name]
+                self.assertEqual((job["timeout-minutes"], job["runs-on"]), (timeout, "ubuntu-24.04-arm"))
+                self.assertEqual({key: job["env"][key] for key in env}, env)
+                self.assertEqual(job.get("continue-on-error", False), name == "gateway-canary")
+        scale = next(step for step in jobs["scale"]["steps"] if step.get("name") == "Compare scale history")
+        self.assertEqual(scale["env"]["SCALE_JOB_NAME"], "${{ inputs.verification_job_prefix }}scale")
 
     def test_e2e_has_every_shard_of_every_supported_version(self):
         groups = collections.defaultdict(set)
