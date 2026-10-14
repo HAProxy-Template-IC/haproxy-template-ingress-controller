@@ -598,22 +598,13 @@ func installGatewayAPICRDs(ctx context.Context) (context.Context, error) {
 	return ctx, applyGatewayAPICRDs(ctx, version, channel)
 }
 
-func applyGatewayAPICRDs(ctx context.Context, version, channel string) error {
-	args, err := e2ecluster.GatewayAPIInstallArgs(version, channel, kubeconfigPath)
-	if err != nil {
-		return err
-	}
-	// The CRD bundle (release manifest for a "v" version, kustomize base for a
-	// git ref) is fetched from GitHub, whose release assets fail for about a
-	// minute at a time (run 38571838388), so back off for two minutes.
+// kubectlWithBackoff runs a kubectl command that fetches a manifest from GitHub,
+// whose release assets fail for about a minute at a time (run 38571838388).
+func kubectlWithBackoff(ctx context.Context, args ...string) (out []byte, err error) {
 	const attempts = 7
-	var out []byte
 	for attempt := 1; attempt <= attempts; attempt++ {
-		if out, err = exec.CommandContext(ctx, "kubectl", args...).CombinedOutput(); err == nil {
-			break
-		}
-		if ctx.Err() != nil {
-			break // suite is shutting down — don't keep retrying
+		if out, err = exec.CommandContext(ctx, "kubectl", args...).CombinedOutput(); err == nil || ctx.Err() != nil {
+			return out, err
 		}
 		if attempt < attempts {
 			select {
@@ -622,6 +613,15 @@ func applyGatewayAPICRDs(ctx context.Context, version, channel string) error {
 			}
 		}
 	}
+	return out, err
+}
+
+func applyGatewayAPICRDs(ctx context.Context, version, channel string) error {
+	args, err := e2ecluster.GatewayAPIInstallArgs(version, channel, kubeconfigPath)
+	if err != nil {
+		return err
+	}
+	out, err := kubectlWithBackoff(ctx, args...)
 	if err != nil {
 		return fmt.Errorf("install Gateway API CRDs (%s, %s) after retries: %w (output: %s)", version, channel, err, out)
 	}

@@ -132,12 +132,12 @@ class FailureReportingTests(unittest.TestCase):
         publish(self.api, "owner/repo", selected)
         self.api.post.assert_not_called()
 
-    def test_issues_api_pagination_reads_beyond_the_first_hundred(self):
+    def test_issues_api_pagination_reads_beyond_the_first_page(self):
         api = GitHub("unused")
-        api.get = mock.Mock(side_effect=[[{"number": index} for index in range(100)], [{"number": 123}]])
+        api.get = mock.Mock(side_effect=[[{"number": index} for index in range(50)], [{"number": 123}]])
         issues = list(api.all("repos/owner/repo/issues", None, state="open", labels="ci-failure"))
         self.assertEqual(issues[-1]["number"], 123)
-        api.get.assert_called_with("repos/owner/repo/issues", per_page=100, page=2, state="open", labels="ci-failure")
+        api.get.assert_called_with("repos/owner/repo/issues", per_page=50, page=2, state="open", labels="ci-failure")
 
     def test_missing_labels_are_created_but_permission_errors_are_not_hidden(self):
         self.api.get.side_effect = urllib.error.HTTPError("https://api.github.com", 404, "missing", {}, None)

@@ -5,7 +5,7 @@ fixture_dir="$PWD/.pilot/echo-source"
 mkdir -p "$fixture_dir"
 revision=d920ed36a0076e169a9a329a850844ab3a695ae8
 for file in Dockerfile Makefile go.mod echoserver.go; do
-    curl --fail --location --retry 3 \
+    curl --fail --location --retry 7 --retry-all-errors \
         "https://raw.githubusercontent.com/kubernetes-sigs/ingress-controller-conformance/$revision/images/echoserver/$file" \
         --output "$fixture_dir/$file"
 done
