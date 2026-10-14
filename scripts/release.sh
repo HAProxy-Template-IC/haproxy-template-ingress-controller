@@ -139,8 +139,8 @@ sed -i \
     -e "s|haproxy-haptic.org/docs/$PREV_ESC/|haproxy-haptic.org/docs/$VERSION/|g" \
     -e "s|gitlab.com/haproxy-haptic/haptic/-/blob/main/|gitlab.com/haproxy-haptic/haptic/-/blob/v$VERSION/|g" \
     -e "s|gitlab.com/haproxy-haptic/haptic/-/blob/v$PREV_ESC/|gitlab.com/haproxy-haptic/haptic/-/blob/v$VERSION/|g" \
-    -e "s|github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/|github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/v$VERSION/|g" \
-    -e "s|github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/v$PREV_ESC/|github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/v$VERSION/|g" \
+    -e "s|github.com/haproxy-haptic/HAPTIC/blob/main/|github.com/haproxy-haptic/HAPTIC/blob/v$VERSION/|g" \
+    -e "s|github.com/haproxy-haptic/HAPTIC/blob/v$PREV_ESC/|github.com/haproxy-haptic/HAPTIC/blob/v$VERSION/|g" \
     charts/haptic/README.md \
     charts/haptic/values.yaml \
     charts/haptic/Chart.yaml \

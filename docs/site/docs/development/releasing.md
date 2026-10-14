@@ -35,11 +35,11 @@ Before releasing:
 3. **Documentation updated** - Any new features documented
 
 Run the commands below from a clone with `origin` pointing to
-`github.com:HAProxy-Template-IC/haproxy-template-ingress-controller`. Authenticate
+`github.com:haproxy-haptic/HAPTIC`. Authenticate
 the [GitHub CLI](https://cli.github.com/) with `gh auth login`, then set:
 
 ```bash
-haptic_repo=HAProxy-Template-IC/haproxy-template-ingress-controller
+haptic_repo=haproxy-haptic/HAPTIC
 ```
 
 ## Publish a main snapshot
@@ -203,7 +203,7 @@ The dispatched release workflow:
 3. **Create the GitHub release** with binary archives, signed SHA256 checksums, and release notes from `CHANGELOG.md`; mark alpha, beta, and release candidates as pre-releases
 4. **Sign the controller and Varnish images** and attach their SBOM attestations
 5. **Require native amd64 and arm64 SPOA smoke tests**, which run alongside the controller build
-6. **Publish the signed Helm chart** to `ghcr.io/haproxy-template-ic/haptic/charts/haptic` after the images and smoke tests pass
+6. **Publish the signed Helm chart** to `ghcr.io/haproxy-haptic/haptic/charts/haptic` after the images and smoke tests pass
 7. **Run release conformance** against the published image and retain the
    [report and provenance](../operations/gateway-conformance.md) without scheduled expiration
 8. **Publish versioned documentation** after the chart and release conformance succeed
@@ -428,7 +428,7 @@ release_identity="https://github.com/$haptic_repo/.github/workflows/release.yml@
 cosign verify \
   --certificate-identity="$release_identity" \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-  "ghcr.io/haproxy-template-ic/haptic:$release_version-haproxy3.4"
+  "ghcr.io/haproxy-haptic/haptic:$release_version-haproxy3.4"
 ```
 
 Historical releases copied from GitLab retain their original signatures and
@@ -439,7 +439,7 @@ signed it. For example, verify the copied 0.1.0 image with its original issuer:
 cosign verify \
   --certificate-identity-regexp='https://gitlab.com/haproxy-haptic/.*' \
   --certificate-oidc-issuer='https://gitlab.com' \
-  ghcr.io/haproxy-template-ic/haptic:0.1.0-haproxy3.4
+  ghcr.io/haproxy-haptic/haptic:0.1.0-haproxy3.4
 ```
 
 ### SBOM (software bill of materials)
@@ -455,7 +455,7 @@ cosign verify-attestation \
   --type spdxjson \
   --certificate-identity="$release_identity" \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-  "ghcr.io/haproxy-template-ic/haptic:$release_version-haproxy3.4" \
+  "ghcr.io/haproxy-haptic/haptic:$release_version-haproxy3.4" \
   | jq -r '.payload' | base64 -d | jq '.predicate'
 ```
 

@@ -186,11 +186,11 @@ class ReleaseTests(unittest.TestCase):
                 ),
                 "charts/haptic/README.md": (
                     "https://haproxy-haptic.org/docs/dev/\n"
-                    "https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/README.md\n"
+                    "https://github.com/haproxy-haptic/HAPTIC/blob/main/README.md\n"
                 ),
                 "charts/haptic/values.yaml": (
                     "# https://gitlab.com/haproxy-haptic/haptic/-/blob/main/README.md\n"
-                    "# https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/v0.1.0/README.md\n"
+                    "# https://github.com/haproxy-haptic/HAPTIC/blob/v0.1.0/README.md\n"
                 ),
                 "charts/haptic/templates/NOTES.txt": "https://haproxy-haptic.org/docs/dev/\n",
                 "README.md": "helm install haptic --version 0.1.0\n",
@@ -243,7 +243,7 @@ class ReleaseTests(unittest.TestCase):
                     for path in ("charts/haptic/README.md", "charts/haptic/values.yaml"):
                         committed = run("git", "show", "HEAD:" + path)
                         self.assertIn(
-                            "https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/"
+                            "https://github.com/haproxy-haptic/HAPTIC/"
                             f"blob/v{version}/README.md", committed,
                         )
                         self.assertNotIn("/blob/main/", committed)

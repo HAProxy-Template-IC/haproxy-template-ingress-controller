@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "repository": "HAProxy-Template-IC/haproxy-template-ingress-controller",
+  "repository": "haproxy-haptic/HAPTIC",
   "baseline": {
     "url": "https://gitlab.com/haproxy-haptic/haptic/-/pipelines/2940262274",
     "commit": "883433768c9425fe20edd250e928f7eae922de88",

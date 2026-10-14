@@ -108,7 +108,7 @@ PR checks passed, then queue the exact reviewed source:
 
 ```bash
 gh pr merge "$pr_number" \
-  --repo HAProxy-Template-IC/haproxy-template-ingress-controller \
+  --repo haproxy-haptic/HAPTIC \
   --auto --match-head-commit "$reviewed_sha"
 ```
 

@@ -1344,7 +1344,7 @@ mirror-github-released-artifacts: ## Preserve published images, charts, signatur
 MIRROR_COMPONENTS ?= controller chart spoa varnish
 check-release-registry-inventory: ## Verify the frozen migration inventory against published source artifacts
 	@for component in $(MIRROR_COMPONENTS); do \
-		python3 -m scripts.ci.github_release_mirror --verify-source --owner HAProxy-Template-IC --component "$$component" --output ".pilot/released-source-$$component.json" || exit $$?; \
+		python3 -m scripts.ci.github_release_mirror --verify-source --owner haproxy-haptic --component "$$component" --output ".pilot/released-source-$$component.json" || exit $$?; \
 	done
 
 .PHONY: tag-github-release

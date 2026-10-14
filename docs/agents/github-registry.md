@@ -25,7 +25,7 @@ CI. Its token can read source code and write packages; it cannot modify reposito
 contents. No image aliases, chart defaults, or publication settings change when
 the mirror runs.
 
-The mirror retains these paths under `ghcr.io/haproxy-template-ic`:
+The mirror retains these paths under `ghcr.io/haproxy-haptic`:
 
 | Artifact | Package path |
 | --- | --- |
@@ -43,7 +43,7 @@ For an anonymous check of a copied component, run:
 
 ```sh
 python3 -m scripts.ci.github_release_mirror \
-  --owner HAProxy-Template-IC --component chart --anonymous \
+  --owner haproxy-haptic --component chart --anonymous \
   --output .pilot/released-artifacts-chart-public.json
 ```
 

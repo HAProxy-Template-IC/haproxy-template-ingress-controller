@@ -16,15 +16,15 @@ class GitHubReleaseTests(unittest.TestCase):
 
     def test_preserves_builds_platforms_signatures_and_release_behavior(self):
         original = copy.deepcopy(self.source)
-        result = configuration(self.source, "HAProxy-Template-IC/haproxy-template-ingress-controller")
+        result = configuration(self.source, "haproxy-haptic/HAPTIC")
         self.assertEqual(self.source, original)
         self.assertNotIn("gitlab_urls", result)
         self.assertEqual(result["release"]["github"], {
-            "owner": "HAProxy-Template-IC", "name": "haproxy-template-ingress-controller"})
+            "owner": "haproxy-haptic", "name": "HAPTIC"})
         for image in result["dockers_v2"]:
-            self.assertTrue(all(target.startswith("ghcr.io/haproxy-template-ic/haptic")
+            self.assertTrue(all(target.startswith("ghcr.io/haproxy-haptic/haptic")
                                 for target in image["images"]))
-            image["images"] = [target.replace("ghcr.io/haproxy-template-ic/haptic", SOURCE_REGISTRY, 1)
+            image["images"] = [target.replace("ghcr.io/haproxy-haptic/haptic", SOURCE_REGISTRY, 1)
                                for target in image["images"]]
         result["release"].pop("github")
         result["release"]["gitlab"] = original["release"]["gitlab"]

@@ -25,7 +25,7 @@ Infer the repo from `git remote -v` — `glab` does this automatically when run 
 Use the [`gh`](https://cli.github.com/) CLI with the explicit repository:
 
 ```bash
-haptic_repo=HAProxy-Template-IC/haproxy-template-ingress-controller
+haptic_repo=haproxy-haptic/HAPTIC
 ```
 
 | Operation | Command |

@@ -29,7 +29,7 @@ another version doesn't establish coverage for your installation.
 
 For a release published by GitHub Actions, download its
 `gateway-conformance-<version>-<run>-<attempt>.tar.gz` asset from
-[GitHub Releases](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/releases).
+[GitHub Releases](https://github.com/haproxy-haptic/HAPTIC/releases).
 The release workflow attaches it after the conformance job succeeds. The archive contains:
 
 - `report.yaml` lists the tested profiles, supported features, and skipped tests.

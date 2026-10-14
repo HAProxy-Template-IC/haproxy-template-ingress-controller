@@ -161,7 +161,7 @@ class ReleasedArtifactTests(unittest.TestCase):
 
     def test_checked_in_inventory_preserves_all_published_release_artifacts(self):
         rows = json.loads((ROOT / ".github/release-registry-mirror.json").read_text())
-        validate_inventory(rows, "HAProxy-Template-IC")
+        validate_inventory(rows, "haproxy-haptic")
         self.assertEqual({row["repository"]: len(row["roots"]) for row in rows},
                          {COMPONENTS["controller"]: 98, COMPONENTS["chart"]: 22,
                           COMPONENTS["spoa"]: 9, COMPONENTS["varnish"]: 4})
