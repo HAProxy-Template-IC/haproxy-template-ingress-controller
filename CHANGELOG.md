@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Changed
 
-- Default controller, SPOA hub, and Varnish images come from `ghcr.io/haproxy-haptic/haptic`, and the chart is published at `oci://ghcr.io/haproxy-haptic/haptic/charts/haptic`.
+- Default controller, SPOA hub, and Varnish images come from `ghcr.io/haproxy-haptic/haptic`, and the chart is published at `oci://ghcr.io/haproxy-haptic/haptic/charts/haptic`; its `home` and `sources` links point to GitHub.
 - Render the Helm chart faster by avoiding repeated YAML serialization of template libraries.
 
 #### Fixed

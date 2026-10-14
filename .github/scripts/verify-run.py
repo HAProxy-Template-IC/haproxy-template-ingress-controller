@@ -10,19 +10,16 @@ import subprocess
 from urllib.request import Request, urlopen
 
 
-def verify(run, jobs, required, *, repository, sha, attempt, prefix="", allowed_failures=()):
+def verify(run, jobs, required, *, repository, sha, attempt, prefix=""):
     if run["repository"]["full_name"] != repository or run["head_sha"] != sha:
         raise ValueError("Workflow belongs to a different repository or revision")
     if run["run_attempt"] != attempt:
         raise ValueError("Workflow belongs to a different attempt")
     if not required or len(required) != len(set(required)):
         raise ValueError("Required job inventory is empty or duplicated")
-    if len(allowed_failures) != len(set(allowed_failures)) or not set(allowed_failures) <= set(required):
-        raise ValueError("Allowed failures must identify unique required jobs")
     if prefix and not prefix.endswith(" / "):
         raise ValueError("Reusable workflow job prefix must include its separator")
     required = [prefix + name for name in required]
-    allowed_failures = {prefix + name for name in allowed_failures}
     selected = {}
     for job in jobs:
         if job["run_id"] != run["id"] or job["head_sha"] != sha or job["run_attempt"] != attempt:
@@ -35,16 +32,13 @@ def verify(run, jobs, required, *, repository, sha, attempt, prefix="", allowed_
         job = selected.get(name)
         if job is None:
             failures.append(f"{name}: missing")
-        elif job["status"] != "completed" or job["conclusion"] not in (
-                {"success", "failure", "timed_out"} if name in allowed_failures else {"success"}):
+        elif job["status"] != "completed" or job["conclusion"] != "success":
             failures.append(f"{name}: {job['status']}/{job['conclusion']}")
         elif not job.get("started_at") or not job.get("completed_at"):
             failures.append(f"{name}: missing execution timestamps")
     if failures:
         raise ValueError("Required CI verification failed: " + "; ".join(failures))
-    return [{"name": name, "id": selected[name]["id"],
-             **({"conclusion": selected[name]["conclusion"]} if name in allowed_failures else {})}
-            for name in sorted(required)]
+    return [{"name": name, "id": selected[name]["id"]} for name in sorted(required)]
 
 
 def api(path):
@@ -66,14 +60,6 @@ def required_jobs(manifest, profile):
     if not selected or len(selected) != len(set(selected)) or not set(selected) <= set(manifest["required_jobs"]):
         raise ValueError("Documentation verification has an invalid job inventory")
     return selected
-
-
-def allowed_failure_jobs(manifest, profile):
-    allowed = manifest.get("allowed_failure_jobs", [])
-    if len(allowed) != len(set(allowed)) or not set(allowed) <= set(manifest["required_jobs"]):
-        raise ValueError("Allowed failures must identify unique required jobs")
-    required = required_jobs(manifest, profile)
-    return [name for name in allowed if name in required]
 
 
 def paths_profile(manifest, paths):
@@ -190,8 +176,7 @@ def main():
         if selected["profile"] != "prose":
             raise ValueError("Changed files require full CI verification")
     checked = verify(run, jobs, required_jobs(manifest, profile), repository=repository,
-                     sha=identity["api_sha"], attempt=attempt, prefix=prefix,
-                     allowed_failures=allowed_failure_jobs(manifest, profile))
+                     sha=identity["api_sha"], attempt=attempt, prefix=prefix)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if head != sha:
         raise ValueError("Checkout does not match the verified revision")

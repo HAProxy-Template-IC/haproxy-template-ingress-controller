@@ -9,8 +9,10 @@ from .github import GitHub, jobs_for_run
 
 
 def required(api, repository, current, *, branch, force=False):
-    if current["head_branch"] != branch or current["event"] not in {"schedule", "workflow_dispatch"}:
-        raise ValueError("Nightly checks require the default branch schedule or manual dispatch")
+    if current["event"] == "workflow_dispatch":
+        return True
+    if current["head_branch"] != branch or current["event"] != "schedule":
+        raise ValueError("Scheduled nightly checks run only on the default branch")
     if force:
         return True
     path = f"repos/{repository}/actions/workflows/{current['workflow_id']}/runs"
@@ -41,8 +43,7 @@ def plan(api, env, event):
         mode = event.get("inputs", {}).get("mode", "nightly")
     if mode not in {"nightly", "weekly", "scale", "canary"}:
         raise ValueError("Unknown nightly schedule or requested suite")
-    selected = required(api, repository, run, branch=event["repository"]["default_branch"],
-                        force=mode == "weekly" or run["event"] == "workflow_dispatch")
+    selected = required(api, repository, run, branch=event["repository"]["default_branch"], force=mode == "weekly")
     return {"run": str(selected).lower(), "mode": mode}
 
 

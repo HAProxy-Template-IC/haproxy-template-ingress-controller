@@ -139,10 +139,12 @@ class HistoryTests(unittest.TestCase):
         self.churn["conclusion"] = "skipped"
         self.assertTrue(required(self.api, "owner/repo", current, branch="main"))
 
-    def test_nightly_selection_rejects_non_main_and_pr_contexts(self):
+    def test_schedules_require_main_while_manual_dispatch_runs_on_any_branch(self):
         for current in (dict(self.run, head_branch="feature"), dict(self.run, event="pull_request")):
             with self.assertRaises(ValueError):
                 required(self.api, "owner/repo", current, branch="main", force=True)
+        dispatched = dict(self.run, id=43, head_branch="feature", event="workflow_dispatch")
+        self.assertTrue(required(self.api, "owner/repo", dispatched, branch="main"))
 
     def test_weekly_heartbeat_and_manual_dispatch_override_unchanged_revision(self):
         current = dict(self.run, id=43)

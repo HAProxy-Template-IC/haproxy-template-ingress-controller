@@ -377,30 +377,6 @@
       "seconds": 61,
       "run_id": 38483303507
     },
-    "gateway-churn": {
-      "seconds": 659,
-      "run_id": 38483303507
-    },
-    "gateway-canary": {
-      "seconds": 623,
-      "run_id": 38483303507
-    },
-    "scale": {
-      "seconds": 507,
-      "run_id": 38483303507
-    },
-    "gateway-compatibility-v1.1.0": {
-      "seconds": 464,
-      "run_id": 38483303507
-    },
-    "gateway-compatibility-v1.5.1": {
-      "seconds": 458,
-      "run_id": 38483303507
-    },
-    "gateway-compatibility-v1.4.0": {
-      "seconds": 424,
-      "run_id": 38483303507
-    },
     "unit-renderer-1": {
       "seconds": 317,
       "run_id": 38487659388
@@ -431,18 +407,6 @@
     [
       "unit-rest",
       "test-support"
-    ],
-    [
-      "upgrade-0.2.0-alpha.3-current",
-      "gateway-compatibility-v1.4.0"
-    ],
-    [
-      "upgrade-0.2.2-current",
-      "gateway-compatibility-v1.5.1"
-    ],
-    [
-      "upgrade-0.3.0-current",
-      "gateway-compatibility-v1.1.0"
     ]
   ]
 }

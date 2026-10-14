@@ -85,8 +85,7 @@ def check_direct_receipt(run, jobs, artifact, receipt, *, repository, sha, tree,
             raise ValueError("Documentation verification does not match the published changes")
     required = VERIFY.required_jobs(policy, profile)
     checked = VERIFY.verify(run, jobs, required, repository=repository, sha=sha,
-                            attempt=run["run_attempt"], prefix="full / ",
-                            allowed_failures=VERIFY.allowed_failure_jobs(policy, profile))
+                            attempt=run["run_attempt"], prefix="full / ")
     expected = {
         "version": 2, "repository": repository, "run_id": run["id"], "run_attempt": run["run_attempt"],
         "sha": sha, "tree": tree, "jobs": checked, "job_prefix": "full / ", "event": run["event"],

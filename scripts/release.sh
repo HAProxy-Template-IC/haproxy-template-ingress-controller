@@ -21,8 +21,8 @@
 # After running this script:
 #   1. Review the commit — especially the promoted changelog section and the
 #      hand-curated artifacthub.io/changes annotation in Chart.yaml
-#   2. Push to a release branch and create an MR
-#   3. Merge the MR to main
+#   2. Push to a release branch and open a pull request
+#   3. Merge the pull request through the merge queue
 #   4. CI creates the v<version> tag and the release pipeline publishes
 #      binaries, container images, the Helm chart, and versioned docs
 
@@ -177,12 +177,12 @@ echo "     - check the promoted [$VERSION] changelog section reads as release no
 echo "     - update the hand-curated artifacthub.io/changes annotation in"
 echo "       charts/haptic/Chart.yaml (summary bullets for the new release)"
 echo "  2. Create release branch: git checkout -b release/v$VERSION"
-echo "  3. Push and create MR: git push -u origin release/v$VERSION"
-echo "  4. Merge the MR to main"
+echo "  3. Push and open a pull request: git push -u origin release/v$VERSION"
+echo "  4. Merge the pull request through the merge queue"
 echo ""
 echo "After merge, CI will automatically:"
 echo "  - Create tag v$VERSION (after the full post-merge pipeline passes)"
 echo "  - Build binaries and Docker images (controller + spoa-hub)"
 echo "  - Package and push the Helm chart to the OCI registry"
-echo "  - Create the GitLab release with the [$VERSION] changelog section"
+echo "  - Create the GitHub release with the [$VERSION] changelog section"
 echo "  - Publish versioned documentation"

@@ -14,7 +14,7 @@ verification. Work through the sections in order.
     `needs-triage` issues. Review them before you start:
 
     ```bash
-    glab issue list --label needs-triage
+    gh issue list --repo haproxy-haptic/HAPTIC --label needs-triage
     ```
 
 2. Review the [upstream release notes](https://github.com/kubernetes-sigs/gateway-api/releases)
@@ -79,11 +79,9 @@ verification. Work through the sections in order.
     version literal reappears in either place.
 
 6. Update the old-release matrix. If you added a schema bundle in step 3,
-    add a `gateway-compatibility-<release>` job to
-    `.github/workflows/ci-speed-proof.yml`, the release to the `compatibility`
-    matrix in `.github/workflows/nightly.yml`, and both to
-    `.github/ci-verification.json`; then run `make schedule-github-verification`.
-    The list mirrors the `tests/schemas-ga-*` bundles.
+    add the release to the `compatibility` matrix in
+    `.github/workflows/nightly.yml`. The list mirrors the `tests/schemas-ga-*`
+    bundles.
 
 ## Suite adaptation
 
@@ -131,17 +129,13 @@ verification. Work through the sections in order.
     ./scripts/test-templates.sh
     ```
 
-2. Estimate the focused nightly jobs' compute cost and agree a CI budget before
-    triggering a nightly style pipeline on the MR branch. Reuse valid results
-    for unchanged sources and retry only failed jobs when their inputs match. This runs
-    `nightly-gwapi-matrix`, churn, scale, and `nightly-gwapi-canary`,
-    proving the matrix and canary jobs live on the new release:
+2. Run the nightly suites on the pull request branch. This runs the
+    compatibility matrix, churn, scale, and `nightly-gwapi-canary`, proving
+    them live on the new release. Retry only failed jobs whose inputs match:
 
     ```bash
-    glab api --method POST projects/:id/pipeline \
-      -f "ref=$(git branch --show-current)" \
-      -f "variables[][key]=SCHEDULE_KIND" \
-      -f "variables[][value]=nightly"
+    gh workflow run nightly.yml --repo haproxy-haptic/HAPTIC \
+      --ref "$(git branch --show-current)" -f mode=nightly
     ```
 
 3. Debug any failing conformance test locally on a **fresh** kind cluster —

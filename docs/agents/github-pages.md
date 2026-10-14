@@ -1,7 +1,7 @@
 # GitHub Pages packaging
 
-The migration keeps the landing page, documentation versions, and playground
-versions on one GitHub Pages site. Each playground engine is stored once, as
+One GitHub Pages site serves the landing page, documentation versions, and
+playground versions. Each playground engine is stored once, as
 Brotli, instead of retaining raw, gzip, and Brotli transport copies. The decoded
 engine and its matching Go runtime remain unchanged.
 
@@ -49,9 +49,8 @@ MkDocs build once, retaining those same files for preview and publication.
 
 ## Subsequent publications
 
-`.github/workflows/pages.yml` remains disabled until `MIGRATION_ACTIVE` is `true`.
-After cutover, successful main CI publishes development content. The release
-workflow publishes versioned content after image, chart, and conformance checks.
+Successful main CI publishes development content. The release workflow
+publishes versioned content after image, chart, and conformance checks.
 Maintenance releases cannot advance `latest` past a newer stable version.
 
 The publisher rechecks the canonical CI receipt and downloads its documentation
@@ -80,9 +79,7 @@ retention, the previous live site remains; rerun the failed deployment jobs. A
 new build also restores the retained version, so that failure cannot discard a
 release. The workflow uses the shared `pages-publication` concurrency group.
 
-Publishing happens after CI and adds no jobs to the PR verification gate. The
-end-to-end canonical publisher still requires a live rehearsal before cutover;
-the migration proof and production domain remain separate from this workflow.
+Publishing happens after CI and adds no jobs to the PR verification gate.
 
 Existing documentation and playground page URLs remain available. The redundant
 raw `.wasm` and `.wasm.gz` URLs are replaced by `.wasm.br` for engine loading;
@@ -93,5 +90,4 @@ GitHub Pages does not consume GitLab's `_redirects` file.
 The first complete export has eight engines. Packaging reduces its 1.32 GB site
 to about 478 MB, including the legacy documentation routes and decoder. Browser
 verification loads and renders every version and checks missing, truncated,
-corrupted, and mismatched engines. This proves the package locally; live Pages
-deployment and the production domain switch remain separate migration steps.
+corrupted, and mismatched engines.

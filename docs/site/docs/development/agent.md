@@ -518,4 +518,4 @@ the decision and the execution together, against 120 configuration fixtures.
 make test-integration HAPROXY_VERSION=3.4
 ```
 
-CI runs it on 3.0 and 3.4 on merge requests, and on 3.1 to 3.3 on main.
+CI runs it on HAProxy 3.0 through 3.4 for every pull request.

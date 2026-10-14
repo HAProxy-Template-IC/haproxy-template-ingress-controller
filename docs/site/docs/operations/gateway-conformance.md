@@ -37,8 +37,8 @@ The release workflow attaches it after the conformance job succeeds. The archive
   and `release_evidence` fields must both be `true`.
 - `SHA256SUMS` contains checksums for those files.
 
-For earlier releases, check the `release-gateway-conformance` job in the original
-[GitLab release pipeline](https://gitlab.com/haproxy-haptic/haptic/-/pipelines).
+For releases up to 0.5.0, check the `release-gateway-conformance` job in the
+original [GitLab release pipeline](https://gitlab.com/haproxy-haptic/haptic/-/pipelines).
 An absent report doesn't establish conformance.
 
 A manual conformance report job tests a development candidate, not a

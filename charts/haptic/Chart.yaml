@@ -76,9 +76,9 @@ keywords:
   - controller
   - loadbalancer
   - template
-home: https://gitlab.com/haproxy-haptic/haptic
+home: https://github.com/haproxy-haptic/HAPTIC
 sources:
-  - https://gitlab.com/haproxy-haptic/haptic
+  - https://github.com/haproxy-haptic/HAPTIC
 maintainers:
   - name: phihos
 annotations:

@@ -18,9 +18,8 @@ class WorkflowInventoryTests(unittest.TestCase):
         names = [job["name"] for job in self.workflow["jobs"].values()]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(set(names), set(self.manifest["required_jobs"]) | {"verified"})
-        self.assertEqual(self.manifest["allowed_failure_jobs"], ["gateway-canary"])
-        self.assertEqual({job["name"] for job in self.workflow["jobs"].values()
-                          if job.get("continue-on-error")}, {"gateway-canary"})
+        self.assertNotIn("allowed_failure_jobs", self.manifest)
+        self.assertFalse([job["name"] for job in self.workflow["jobs"].values() if job.get("continue-on-error")])
 
     def test_skipped_jobs_keep_unique_names_without_matrix_expansion(self):
         names = [job["name"] for job in self.workflow["jobs"].values()]

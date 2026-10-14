@@ -8,7 +8,7 @@ one — so they stay correct too.
 
 The full CHANGELOG.md (title, intro, releases) is used as-is; only the mkdocs
 front matter is prepended, and repo-relative links — which don't resolve on
-the docs site — are rewritten to GitLab source URLs.
+the docs site — are rewritten to GitHub source URLs.
 """
 
 from pathlib import Path

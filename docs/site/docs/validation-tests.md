@@ -160,7 +160,7 @@ requires Git and Bash; enter the release version without a leading `v`:
 ```bash
 read -r -p "HAPTIC release version: " haptic_version
 git clone --depth 1 --branch "v${haptic_version}" \
-  https://gitlab.com/haproxy-haptic/haptic.git haptic-source
+  https://github.com/haproxy-haptic/HAPTIC.git haptic-source
 cp -R haptic-source/tests/schemas ./schemas
 ```
 

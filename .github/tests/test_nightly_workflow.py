@@ -44,29 +44,16 @@ class NightlyWorkflowTests(unittest.TestCase):
             self.assertIn("KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output", commands)
         self.assertIn("python3 -m scripts.ci.github_scale", [step.get("run", "") for step in scale["steps"]])
 
-    def test_pr_integration_preserves_all_six_isolated_suites_and_native_cache(self):
+    def test_isolated_suites_run_nightly_and_weekly_outside_the_pr_matrix(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci-speed-proof.yml").read_text())
-        integrated = {job["name"]: job for job in workflow["jobs"].values()}
-        cases = [("gateway-compatibility-" + release, "compatibility", release)
-                 for release in self.github["jobs"]["compatibility"]["strategy"]["matrix"]["release"]]
-        cases += [("gateway-churn", "churn", None), ("scale", "scale", None), ("gateway-canary", "canary", None)]
-        for name, source, release in cases:
-            with self.subTest(name=name):
-                baseline = self.github["jobs"][source]
-                candidate = integrated[name]
-                self.assertEqual(candidate["timeout-minutes"], baseline["timeout-minutes"])
-                self.assertEqual(candidate.get("continue-on-error"), baseline.get("continue-on-error"))
-                self.assertEqual(candidate["runs-on"], "ubuntu-24.04-arm")
-                for key, value in baseline["env"].items():
-                    self.assertEqual(candidate["env"][key], release if key == "HAPTIC_E2E_GWAPI_VERSION" else value)
-                self.assertEqual([step["run"] for step in candidate["steps"] if "run" in step],
-                                 [step["run"] for step in baseline["steps"] if "run" in step])
-                native = next(step for step in candidate["steps"] if step.get("uses", "").startswith("actions/setup-go@"))
-                self.assertEqual(native["with"]["cache-dependency-path"].split(),
-                                 ["go.mod", "go.sum", "cmd/haptic/default.pgo", ".pilot/compiler-cache-variant"])
-                self.assertNotIn("weekly", baseline["if"])
-        scale = next(step for step in integrated["scale"]["steps"] if step.get("name") == "Compare scale history")
-        self.assertEqual(scale["env"]["SCALE_JOB_NAME"], "${{ inputs.verification_job_prefix }}scale")
+        integrated = {job["name"] for job in workflow["jobs"].values()}
+        for name in ("compatibility", "churn", "scale", "canary"):
+            with self.subTest(job=name):
+                candidate = self.github["jobs"][name]
+                self.assertNotIn(candidate["name"].replace("nightly-", ""), integrated)
+                self.assertIn('"nightly","weekly"', candidate["if"])
+        self.assertTrue(integrated.isdisjoint({"scale", "gateway-churn", "gateway-canary"}))
+        self.assertFalse([name for name in integrated if name.startswith("gateway-compatibility-")])
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ jobs:
   compatibility:
     name: nightly-gwapi-${{ matrix.release }}
     needs: plan
-    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly"]'), needs.plan.outputs.mode)
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","weekly"]'), needs.plan.outputs.mode)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 25
     env:
@@ -106,7 +106,7 @@ jobs:
   churn:
     name: nightly-gateway-churn
     needs: plan
-    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly"]'), needs.plan.outputs.mode)
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","weekly"]'), needs.plan.outputs.mode)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
     env:
@@ -147,7 +147,7 @@ jobs:
   scale:
     name: nightly-scale
     needs: plan
-    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","scale"]'), needs.plan.outputs.mode)
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","weekly","scale"]'), needs.plan.outputs.mode)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     env:
@@ -201,7 +201,7 @@ jobs:
   canary:
     name: nightly-gwapi-canary
     needs: plan
-    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","canary"]'), needs.plan.outputs.mode)
+    if: needs.plan.outputs.run == 'true' && contains(fromJSON('["nightly","weekly","canary"]'), needs.plan.outputs.mode)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     env:

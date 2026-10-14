@@ -174,10 +174,11 @@ class WebsiteArtifactTests(unittest.TestCase):
 
 
 class WebsiteWorkflowTests(unittest.TestCase):
-    def test_publication_is_inactive_until_cutover_and_archives_before_deploying(self):
+    def test_publication_follows_successful_main_ci_and_archives_before_deploying(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/pages.yml").read_text())
         jobs = workflow["jobs"]
-        self.assertIn("vars.MIGRATION_ACTIVE == 'true'", jobs["build"]["if"])
+        self.assertIn("github.event.workflow_run.head_branch == 'main'", jobs["build"]["if"])
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", jobs["build"]["if"])
         self.assertEqual(jobs["retain"]["needs"], "build")
         self.assertEqual(jobs["deploy"]["needs"], "retain")
         self.assertEqual(jobs["verify"]["needs"], ["build", "deploy"])

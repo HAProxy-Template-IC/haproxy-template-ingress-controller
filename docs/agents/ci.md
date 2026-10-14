@@ -15,8 +15,9 @@ instructions apply to every agent and future session.
 
 ## While iterating
 
-- Batch fixes before pushing. Every pull request runs the complete matrix,
-  including the former nightly suites; prose-only changes run the common checks.
+- Batch fixes before pushing. Every pull request runs the complete matrix;
+  prose-only changes run the common checks. Compatibility, churn, scale, and
+  canary run nightly; dispatch `nightly.yml` on your branch when a change needs them.
 - Never add `[skip ci]` or otherwise skip verification.
 - Diagnose failures before retrying. Rerun a specific job once for a demonstrated
   infrastructure failure. Fix test failures instead of rerunning until they pass.
@@ -80,10 +81,11 @@ publication builds or release conformance.
 
 ## Scheduled verification
 
-`.github/workflows/nightly.yml` runs Monday through Saturday at 02:30 UTC and on
-Sunday at 03:30 UTC. The weekly run calls the complete matrix even when `main` is
-unchanged, to detect changes in runners, registries, upstream Gateway API, and
-other external dependencies. Schedules never publish or create releases.
+`.github/workflows/nightly.yml` runs Monday through Saturday at 02:30 UTC when
+`main` changed, and on Sunday at 03:30 UTC. The weekly run also calls the complete
+matrix, even when `main` is unchanged, to detect changes in runners, registries,
+upstream Gateway API, and other external dependencies. Schedules never publish or
+create releases. See [GitHub verification scheduling](github-scheduling.md).
 
 Feature E2E jobs use `make test-e2e-profile` and the exact-name lists in
 `tests/e2e/profiles/`. Each feature runs once, including its authentication, WAF,

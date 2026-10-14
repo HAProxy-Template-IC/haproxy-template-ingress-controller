@@ -1,6 +1,6 @@
 ---
-name: mr
-description: Create or update a GitLab merge request for the current branch
+name: pr
+description: Create or update a GitHub pull request for the current branch
 disable-model-invocation: true
 ---
 
@@ -11,11 +11,11 @@ disable-model-invocation: true
 - Upstream: !`git rev-parse --abbrev-ref @{upstream} 2>/dev/null || echo "(no upstream)"`
 - Commits ahead of main: !`git log --oneline main..HEAD 2>/dev/null || echo "(none)"`
 - Diff stat: !`git diff main...HEAD --stat 2>/dev/null || echo "(no diff)"`
-- Existing MR: !`glab mr list --source-branch="$(git branch --show-current)" 2>/dev/null | head -5 || echo "(none)"`
+- Existing PR: !`gh pr list --repo haproxy-haptic/HAPTIC --head "$(git branch --show-current)" 2>/dev/null | head -5 || echo "(none)"`
 
 ## Task
 
-Create or update a GitLab MR for the current branch.
+Create or update a GitHub pull request for the current branch.
 
 ### 1. Commit pending changes
 
@@ -32,18 +32,17 @@ git fetch origin main && git rebase origin/main
 ```
 Resolve any conflicts if they arise.
 
-### 3. Push and create/update MR
+### 3. Push and create/update the pull request
 
-**New MR** — create atomically with push to avoid duplicate CI pipelines:
+Branch pushes don't run CI; the pull request does.
+
+**New pull request:**
 ```sh
-git push -u origin HEAD \
-  -o merge_request.create \
-  -o merge_request.title="<title>" \
-  -o merge_request.target=main
+git push -u origin HEAD
+gh pr create --repo haproxy-haptic/HAPTIC --base main --title "<title>" --body-file <file>
 ```
-If a longer description is needed, push with `-o ci.skip` first, then `glab mr create`.
 
-**Existing MR** — just push. Update title/description with `glab mr update` if scope has changed.
+**Existing pull request** — just push. Update title/description with `gh pr edit` if scope has changed.
 
 ### 4. Title and description
 
@@ -54,4 +53,4 @@ Analyze the full diff `main..HEAD` (all commits, not just the latest).
 
 ### 5. After pushing
 
-Monitor the CI pipeline until completion or a reasonable checkpoint.
+Monitor the CI run until completion or a reasonable checkpoint.

@@ -98,9 +98,9 @@ class FailureReportingTests(unittest.TestCase):
         self.run["conclusion"] = "failure"
         self.assertIn("workflow infrastructure", self.selected([])[0]["title"])
 
-    def test_integrated_canary_failure_keeps_its_non_blocking_classification(self):
+    def test_canary_failure_keeps_its_non_blocking_classification(self):
         self.run["conclusion"] = "success"
-        self.job["name"] = "full / gateway-canary"
+        self.job["name"] = "nightly-gwapi-canary"
         selected = self.selected()
         self.assertEqual(len(selected), 1)
         self.assertTrue(selected[0]["title"].startswith("Canary failure:"))
