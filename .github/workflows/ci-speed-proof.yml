@@ -1,6 +1,5 @@
 name: CI migration speed proof
 'on':
-  workflow_dispatch: {}
   workflow_call:
     inputs:
       verification_profile:

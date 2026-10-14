@@ -77,6 +77,7 @@ class WorkflowInventoryTests(unittest.TestCase):
                          if job["name"] in self.manifest["pre_merge_skipped_jobs"] else
                          "${{ !cancelled() && inputs.verification_profile != 'prose' }}")
             self.assertEqual(job["if"], condition)
+        self.assertEqual(list(self.workflow["on"]), ["workflow_call"])
         inputs = self.workflow["on"]["workflow_call"]["inputs"]
         self.assertEqual(inputs["verification_profile"]["default"], "full")
 
