@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -30,6 +31,15 @@ def publication_source(receipt, repository, version):
             raise ValueError("Released website requires the matching verified release tag and version")
 
 
+def require_no_rewind(api, repository, published_commit, sha):
+    """The baseline's own dev section is an unpublished preview; the published dev site is the anchor."""
+    if not re.fullmatch(r"[0-9a-f]{40}", published_commit):
+        raise ValueError("Website baseline lacks the published development commit")
+    compared = api.get(f"repos/{repository}/compare/{published_commit}...{sha}")
+    if compared["status"] not in {"identical", "ahead"}:
+        raise ValueError("First development publication would rewind the published development site")
+
+
 def build(api, repository, receipt, version, output, evidence):
     publication_source(receipt, repository, version)
     if version != "dev":
@@ -44,10 +54,7 @@ def build(api, repository, receipt, version, output, evidence):
         source = scratch / "baseline"
         download(baseline, source)
         if version == "dev" and state["dev"] is None:
-            previous = json.loads((source / "docs/dev/release-identity.json").read_text())["commit"]
-            compared = api.get(f"repos/{repository}/compare/{previous}...{receipt['sha']}")
-            if compared["status"] not in {"identical", "ahead"}:
-                raise ValueError("First development publication would rewind the migration baseline")
+            require_no_rewind(api, repository, baseline.get("published_dev_commit", ""), receipt["sha"])
         restored = {}
         entries = {**state["releases"], **({"dev": state["dev"]} if state["dev"] else {})}
         for old_version, entry in entries.items():

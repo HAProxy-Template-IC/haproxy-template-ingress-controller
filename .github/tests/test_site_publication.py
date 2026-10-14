@@ -13,7 +13,7 @@ import yaml
 
 from scripts.ci import github_site_state as storage
 from scripts.ci.github_site_inputs import check_artifact, download_inputs
-from scripts.ci.github_site_publication import publication_source, retain
+from scripts.ci.github_site_publication import publication_source, require_no_rewind, retain
 from scripts.ci.github_pages import record
 
 
@@ -171,6 +171,24 @@ class WebsiteArtifactTests(unittest.TestCase):
         with patch("scripts.ci.github_site_publication.subprocess.check_output", side_effect=["a" * 40, "b" * 40, "c" * 40]):
             with self.assertRaisesRegex(ValueError, "matching verified release"):
                 publication_source(receipt, REPOSITORY, (ROOT / "VERSION").read_text().strip())
+
+
+    def test_first_development_publication_must_descend_from_the_published_site(self):
+        api = Mock()
+        published = "d" * 40
+        for status in ("identical", "ahead"):
+            api.get.return_value = {"status": status}
+            require_no_rewind(api, REPOSITORY, published, "a" * 40)
+        api.get.assert_called_with(f"repos/{REPOSITORY}/compare/{published}...{'a' * 40}")
+        for status in ("behind", "diverged"):
+            api.get.return_value = {"status": status}
+            with self.subTest(status=status), self.assertRaisesRegex(ValueError, "rewind"):
+                require_no_rewind(api, REPOSITORY, published, "a" * 40)
+        for missing in ("", "abc", "D" * 40):
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "published development commit"):
+                require_no_rewind(api, REPOSITORY, missing, "a" * 40)
+        baseline = json.loads((ROOT / ".github/pages-baseline.json").read_text())
+        self.assertRegex(baseline["published_dev_commit"], r"^[0-9a-f]{40}$")
 
 
 class WebsiteWorkflowTests(unittest.TestCase):
