@@ -942,7 +942,7 @@ h_count 100
 		{q: 0.95, want: 8.125},
 		{q: 0.99, want: 10},
 	} {
-		if got := h.quantile(tt.q); got != tt.want {
+		if got := h.quantile(tt.q); math.Abs(got-tt.want) > 1e-9 {
 			t.Errorf("quantile(%v) = %v, want %v", tt.q, got, tt.want)
 		}
 	}
