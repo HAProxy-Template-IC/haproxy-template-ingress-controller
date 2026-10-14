@@ -5,7 +5,7 @@ import unittest
 
 import yaml
 
-from scripts.ci.github_schedule import lanes, schedule
+from scripts.ci.github_schedule import PINNED_ACTION, keep_version_comments, lanes, schedule
 
 
 ROOT = Path(__file__).parents[2]
@@ -39,6 +39,13 @@ class ScheduleTests(unittest.TestCase):
                 lanes({"a": 30, "b": 20, "c": 10}, 2, chains=chains)
         with self.assertRaises(ValueError):
             lanes({"a": 30, "b": 20}, 2, chains=[["a", "b"]], early=["b"])
+
+    def test_pinned_actions_keep_the_version_comment_renovate_tracks(self):
+        for path in (ROOT / ".github/workflows").glob("*.yml"):
+            with self.subTest(workflow=path.name):
+                self.assertFalse([ref for _, ref, comment in PINNED_ACTION.findall(path.read_text()) if not comment])
+        ref = "uses: actions/checkout@" + "1" * 40
+        self.assertEqual(keep_version_comments(f"- {ref} # v7.0.1\n", f"  {ref}\n"), f"  {ref} # v7.0.1\n")
 
     def test_checked_in_schedule_matches_recorded_measurements(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci-speed-proof.yml").read_text())

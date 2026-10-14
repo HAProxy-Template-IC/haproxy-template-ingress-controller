@@ -21,7 +21,7 @@ jobs:
       contents: write
       actions: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -30,7 +30,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERIFICATION_RUN: ${{ github.event.workflow_run.id }}
         run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN" --resolve
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 0
@@ -56,7 +56,7 @@ jobs:
       - name: Make publication evidence readable
         if: always()
         run: sudo chown -R "$(id -u):$(id -g)" .publication
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: release-tag

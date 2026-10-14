@@ -55,14 +55,14 @@ jobs:
       PILOT_NATIVE_BUILD: '1'
       CI_SUITE: '{"name":"unit-command-1","suite":"unit-shard","shard":"command","index":"1","kind":"x64","runner":"ubuntu-24.04","baseline":"","certificates":"","provider":"","haproxy":"","profile":"","channel":"","node":"","settings":"","image":"","startup":""}'
     steps: &id001
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         persist-credentials: false
     - name: Reuse Go downloads and compilation
       if: fromJSON(env.CI_SUITE).suite == 'unit-shard' && (fromJSON(env.CI_SUITE).shard == 'rest' || fromJSON(env.CI_SUITE).index
         == 1)
-      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
         key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
@@ -72,7 +72,7 @@ jobs:
     - name: Restore shared unit compilation
       if: fromJSON(env.CI_SUITE).suite == 'unit-shard' && fromJSON(env.CI_SUITE).shard != 'rest' && fromJSON(env.CI_SUITE).index
         != 1
-      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
         key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
@@ -81,7 +81,7 @@ jobs:
           == 'command' && 'command-race' || fromJSON(env.CI_SUITE).shard }}-
     - name: Restore and maintain shared Helm compilation
       if: fromJSON(env.CI_SUITE).suite == 'helm' && fromJSON(env.CI_SUITE).haproxy == '3.4'
-      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
         key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
@@ -89,7 +89,7 @@ jobs:
     - name: Restore shared Helm compilation
       if: (fromJSON(env.CI_SUITE).suite == 'helm' && fromJSON(env.CI_SUITE).haproxy != '3.4') || fromJSON(env.CI_SUITE).suite
         == 'chart' || fromJSON(env.CI_SUITE).suite == 'chart-minimum'
-      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
         key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
@@ -97,12 +97,12 @@ jobs:
     - name: Restore shared Go compilation for checks
       if: fromJSON(env.CI_SUITE).suite == 'lint' || fromJSON(env.CI_SUITE).suite == 'agent' || fromJSON(env.CI_SUITE).suite
         == 'test-support'
-      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
         key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
           }}-rest
-    - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+    - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       if: fromJSON(env.CI_SUITE).suite == 'snapshot' || fromJSON(env.CI_SUITE).suite == 'spoa'
       with:
         image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
@@ -118,7 +118,7 @@ jobs:
     - name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
       if: fromJSON(env.CI_SUITE).runner == 'ubuntu-24.04-arm'
-    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+    - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
       with:
         go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
         cache: true
@@ -181,7 +181,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
     - name: Retain verification evidence
       if: always()
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ci-evidence-${{ fromJSON(env.CI_SUITE).name }}
         path: '.pilot/
@@ -243,14 +243,14 @@ jobs:
       PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
       CI_SUITE: '{"name":"coverage-rest","kind":"x64","runner":"ubuntu-24.04","suite":"coverage-shard","shard":"rest","haproxy":"","image":""}'
     steps: &id002
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         persist-credentials: false
     - name: Restore and maintain coverage compilation
       if: (fromJSON(env.CI_SUITE).suite == 'coverage-shard' && fromJSON(env.CI_SUITE).shard == 'rest') || (fromJSON(env.CI_SUITE).suite
         == 'integration-coverage' && fromJSON(env.CI_SUITE).haproxy == '3.4')
-      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
         key: go-coverage-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
@@ -258,7 +258,7 @@ jobs:
     - name: Restore shared coverage compilation
       if: (fromJSON(env.CI_SUITE).suite == 'coverage-shard' && fromJSON(env.CI_SUITE).shard != 'rest') || (fromJSON(env.CI_SUITE).suite
         == 'integration-coverage' && fromJSON(env.CI_SUITE).haproxy != '3.4')
-      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
         key: go-coverage-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
@@ -268,7 +268,7 @@ jobs:
       run: bash .github/scripts/run-remaining-pilot.sh
     - name: Retain verification evidence
       if: always()
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ci-evidence-${{ fromJSON(env.CI_SUITE).name }}
         path: '.pilot/
@@ -2393,7 +2393,7 @@ jobs:
       PILOT_SOURCE_SHA: ${{ github.sha }}
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         persist-credentials: false
@@ -2411,7 +2411,7 @@ jobs:
         '
     - name: Merge the complete package coverage
       run: bash .github/scripts/run-build-pilot.sh
-    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: always()
       with:
         name: ci-evidence-coverage-combined
@@ -3900,7 +3900,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         persist-credentials: false
@@ -3910,7 +3910,7 @@ jobs:
         CI_JOB_PREFIX: ${{ inputs.verification_job_prefix || '' }}
         CI_VERIFICATION_PROFILE: ${{ inputs.verification_profile || 'full' }}
       run: python3 .github/scripts/verify-run.py
-    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ci-verification
         path: ci-verification.json

@@ -20,7 +20,7 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -29,7 +29,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERIFICATION_RUN: ${{ inputs.verification_run }}
         run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN" --resolve
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.resolve.outputs.sha }}
           fetch-depth: 0
@@ -41,7 +41,7 @@ jobs:
         run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN"
       - id: version
         run: printf 'version=%s\n' "$(cat VERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: publication-source
           path: .publication/
@@ -60,7 +60,7 @@ jobs:
       reference: ${{ steps.reference.outputs.reference }}
     steps:
       - &release_checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.source.outputs.sha }}
           fetch-depth: 0
@@ -77,7 +77,7 @@ jobs:
       - id: reference
         run: printf 'reference=%s\n' "$(cat .publication/spoa-reference.txt)" >> "$GITHUB_OUTPUT"
       - &evidence
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: publication-${{ github.job }}
@@ -96,7 +96,7 @@ jobs:
     steps:
       - *release_checkout
       - *login
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
         with:
           image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
           platforms: arm64,arm

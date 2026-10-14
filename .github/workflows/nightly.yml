@@ -28,7 +28,7 @@ jobs:
       mode: ${{ steps.select.outputs.mode }}
     steps:
     - &id001
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         persist-credentials: false
@@ -70,7 +70,7 @@ jobs:
       name: Install pinned native tools
       run: bash .github/scripts/install-arm-pilot-tools.sh
     - &id004
-      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
       with:
         go-version: ${{ env.HAPTIC_NATIVE_GO_VERSION }}
         cache: true
@@ -87,7 +87,7 @@ jobs:
       run: bash .github/scripts/run-arm-pilot.sh
     - name: Retain verification evidence
       if: always()
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: nightly-gwapi-${{ matrix.release }}
         path: '.pilot/
@@ -135,7 +135,7 @@ jobs:
       run: KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
     - name: Retain verification evidence
       if: always()
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: nightly-gateway-churn
         path: '.pilot/
@@ -181,7 +181,7 @@ jobs:
       run: python3 -m scripts.ci.github_scale
     - name: Retain scale metrics
       if: always()
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: nightly-scale-metrics
         path: scale-metrics.json
@@ -189,7 +189,7 @@ jobs:
         if-no-files-found: error
     - name: Retain verification evidence
       if: always()
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: nightly-scale
         path: '.pilot/
@@ -246,7 +246,7 @@ jobs:
       run: "kubectl -n haptic get configmaps -l app.kubernetes.io/component=conformance-snapshot \\\n  -o json > .pilot/conformance-snapshots.json\n"
     - name: Retain verification evidence
       if: always()
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: nightly-gwapi-canary
         path: '.pilot/

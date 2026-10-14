@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -98,14 +99,24 @@ def schedule(workflow, weights):
     return selected
 
 
+PINNED_ACTION = re.compile(r"(uses: (\S+@[0-9a-f]{40}))( # \S+)?$", re.M)
+
+
+def keep_version_comments(original, dumped):
+    """Re-attach the version comments Renovate tracks SHA-pinned actions by; YAML dumping drops them."""
+    versions = {ref: comment for _, ref, comment in PINNED_ACTION.findall(original) if comment}
+    return PINNED_ACTION.sub(lambda match: match[1] + versions.get(match[2], ""), dumped)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workflow", type=Path, default=Path(".github/workflows/ci-speed-proof.yml"))
     parser.add_argument("--weights", type=Path, default=Path(".github/job-duration-weights.json"))
     args = parser.parse_args()
-    workflow = yaml.safe_load(args.workflow.read_text())
+    text = args.workflow.read_text()
+    workflow = yaml.safe_load(text)
     selected = schedule(workflow, json.loads(args.weights.read_text()))
-    args.workflow.write_text(yaml.safe_dump(workflow, sort_keys=False, width=120))
+    args.workflow.write_text(keep_version_comments(text, yaml.safe_dump(workflow, sort_keys=False, width=120)))
     print(f"Scheduled {sum(map(len, selected))} jobs in {len(selected)} lanes, including coverage aggregation")
 
 
