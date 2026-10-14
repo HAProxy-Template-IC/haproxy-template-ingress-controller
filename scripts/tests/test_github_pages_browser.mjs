@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
@@ -30,6 +31,17 @@ try {
   const publishedReceipt = await fetch(`${base}/shared/pages-transport.json`);
   assert.equal(publishedReceipt.status, 200);
   assert.deepEqual(await publishedReceipt.json(), receipt, 'Published site differs from its verified artifact');
+  const identities = Object.keys(receipt.published_files).filter(path => path.endsWith('/release-identity.json'));
+  for (const path of ['index.html', 'docs/dev/index.html', 'docs/latest/index.html',
+    'docs/versions.json', 'playground/versions.json', ...identities]) {
+    const expected = receipt.published_files[path];
+    assert.ok(expected, `Missing publication evidence for ${path}`);
+    const response = await fetch(`${base}/${path}`, { cache: 'no-store' });
+    assert.equal(response.status, 200, `Cannot fetch published ${path}`);
+    const content = Buffer.from(await response.arrayBuffer());
+    assert.equal(content.length, expected.size, `Published size differs: ${path}`);
+    assert.equal(createHash('sha256').update(content).digest('hex'), expected.sha256, `Published content differs: ${path}`);
+  }
   for (const name of (process.env.PAGES_BROWSERS || 'chromium').split(',')) {
     const browser = await playwright[name].launch({ headless: true });
     try {

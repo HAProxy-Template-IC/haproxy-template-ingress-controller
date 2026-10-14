@@ -1307,6 +1307,19 @@ prepare-github-pages: ## Package a complete website below the GitHub Pages size 
 test-github-pages-browser: ## Verify every packaged playground engine in a real browser
 	node scripts/tests/test_github_pages_browser.mjs "$(PAGES_OUTPUT)"
 
+.PHONY: build-github-website retain-github-website assemble-github-website restore-current-github-website
+restore-current-github-website: ## Restore every version recorded in the GitHub website catalog
+	python3 -m scripts.ci.github_site_state --output "$(PAGES_OUTPUT)"
+
+build-github-website: ## Build the website from verified CI artifacts and archived versions
+	python3 -m scripts.ci.github_site_publication build --version "$(WEBSITE_VERSION)" --output "$(PAGES_OUTPUT)"
+
+retain-github-website: ## Retain the verified website before deployment
+	python3 -m scripts.ci.github_site_publication retain
+
+assemble-github-website: ## Restore a website from locally retained version archives
+	python3 -m scripts.ci.github_site_versions --baseline "$(PAGES_SOURCE)" --catalog "$(PAGES_CATALOG)" --output "$(PAGES_OUTPUT)"
+
 test-snapshot-publication: ## Verify image and chart publication in a local registry
 	bash .github/scripts/test-snapshot-publication.sh
 

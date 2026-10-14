@@ -43,9 +43,6 @@ case "$PILOT_SUITE" in
         apt-get -o Acquire::Check-Valid-Until=false update
         apt-get install --yes --no-install-recommends make
         make test-agent-skill-package
-        mkdocs build --strict --config-file docs/site/mkdocs.yml --site-dir /tmp/docs-check
-        mkdocs build --strict --config-file docs/landing/mkdocs.yml --site-dir /tmp/landing-check
-        du -sb /tmp/docs-check /tmp/landing-check > .pilot/docs-sizes.txt
         make build-docs-preview
         ;;
     wasm)

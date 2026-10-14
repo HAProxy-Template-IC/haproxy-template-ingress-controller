@@ -14,8 +14,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 class GitHub:
     def __init__(self, token, api_url="https://api.github.com"):
         self.api_url = api_url.rstrip("/")
-        self.headers = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
+        self.headers = {"Accept": "application/vnd.github+json",
                         "X-GitHub-Api-Version": "2022-11-28"}
+        if token:
+            self.headers["Authorization"] = "Bearer " + token
 
     def get(self, path, **params):
         url = self.api_url + "/" + path
@@ -36,7 +38,10 @@ class GitHub:
             page += 1
 
     def post(self, path, body):
-        request = urllib.request.Request(self.api_url + "/" + path, method="POST",
+        return self.request("POST", path, body)
+
+    def request(self, method, path, body):
+        request = urllib.request.Request(self.api_url + "/" + path, method=method,
                                          data=json.dumps(body).encode(),
                                          headers={**self.headers, "Content-Type": "application/json"})
         with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:

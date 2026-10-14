@@ -18,6 +18,10 @@ PILOT_CI_IMAGE=$(python3 -m scripts.ci.github_toolchain "$PILOT_CI_IMAGE" --evid
 export PILOT_CI_IMAGE
 docker image inspect "$PILOT_CI_IMAGE" > .pilot/toolchain-image.json
 cache_args=()
+website_args=()
+if [[ "$PILOT_SUITE" == docs ]]; then
+    website_args+=(--env GH_TOKEN)
+fi
 if [[ -n "${PILOT_GO_CACHE_DIR:-}" ]]; then
     mkdir -p "$PILOT_GO_CACHE_DIR"/{build,modules}
     cache_args+=(--volume "$PILOT_GO_CACHE_DIR:/ci-go-cache" --env GOCACHE=/ci-go-cache/build --env GOMODCACHE=/ci-go-cache/modules)
@@ -26,6 +30,7 @@ started=$(date +%s)
 set +e
 docker run --name haptic-pilot --network host \
     "${cache_args[@]}" \
+    "${website_args[@]}" \
     --volume /var/run/docker.sock:/var/run/docker.sock \
     --volume "$PWD:$PWD" --workdir "$PWD" \
     --env PILOT_SUITE --env PILOT_SOURCE_SHA --env PILOT_VARNISH_IMAGE \

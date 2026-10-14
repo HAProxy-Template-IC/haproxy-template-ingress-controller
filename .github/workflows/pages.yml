@@ -1,0 +1,153 @@
+name: Publish website
+'on':
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      verification_run:
+        description: Successful canonical CI run for this publication
+        required: true
+        type: string
+      version:
+        description: dev or an existing published release version
+        default: dev
+        type: string
+  workflow_call:
+    inputs:
+      verification_run:
+        required: true
+        type: string
+      version:
+        default: dev
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pages-publication
+  cancel-in-progress: false
+jobs:
+  build:
+    if: >-
+      vars.MIGRATION_ACTIVE == 'true' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERIFICATION_RUN: ${{ inputs.verification_run || github.event.workflow_run.id }}
+      WEBSITE_VERSION: ${{ inputs.version || 'dev' }}
+      PAGES_BROWSERS: chromium,firefox
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: source
+        run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN" --resolve
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require canonical verification for this exact source
+        run: python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN" --allow-prose
+      - name: Install packaging and browser tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y brotli
+          npm ci --prefix scripts/visual-qa
+          node scripts/visual-qa/node_modules/playwright/cli.js install --with-deps chromium firefox
+      - name: Reuse verified builds and restore all archived releases
+        run: make build-github-website PAGES_OUTPUT="$RUNNER_TEMP/public" WEBSITE_VERSION="$WEBSITE_VERSION"
+      - name: Verify every engine and legacy redirect before publication
+        run: make test-github-pages-browser PAGES_OUTPUT="$RUNNER_TEMP/public"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: website-publication
+          path: .publication/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b
+        with:
+          path: ${{ runner.temp }}/public
+          retention-days: 1
+  retain:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: website-publication
+          path: .publication/
+      - name: Recheck CI and retain the browser-verified version archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_RUN: ${{ inputs.verification_run || github.event.workflow_run.id }}
+        run: |
+          python3 .github/scripts/verify-publication-source.py --run "$VERIFICATION_RUN" --allow-prose
+          make retain-github-website
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: website-retention
+          path: .publication/pages/retained.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+  deploy:
+    needs: retain
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e
+  verify:
+    needs: [build, deploy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PAGES_BROWSERS: chromium,firefox
+      PAGES_URL: ${{ needs.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: github-pages
+          path: ${{ runner.temp }}/pages-artifact
+      - name: Restore the exact deployed files and browser tools
+        run: |
+          mkdir "$RUNNER_TEMP/public"
+          tar -xf "$RUNNER_TEMP/pages-artifact/artifact.tar" -C "$RUNNER_TEMP/public"
+          npm ci --prefix scripts/visual-qa
+          node scripts/visual-qa/node_modules/playwright/cli.js install --with-deps chromium firefox
+      - name: Verify live content and every playground version
+        run: make test-github-pages-browser PAGES_OUTPUT="$RUNNER_TEMP/public"

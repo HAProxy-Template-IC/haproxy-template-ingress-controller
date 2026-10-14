@@ -180,6 +180,8 @@ jobs:
     - name: Run native build and publication checks
       if: fromJSON(env.CI_SUITE).kind == 'build'
       run: bash .github/scripts/run-build-pilot.sh
+      env:
+        GH_TOKEN: ${{ github.token }}
     - name: Retain verification evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

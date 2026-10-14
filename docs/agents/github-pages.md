@@ -43,7 +43,46 @@ make restore-github-pages PAGES_OUTPUT=/path/to/new-output
 Restoration verifies the archive and complete inventory before making the output
 available. Links are stored as ordinary files, and
 restoration rejects path traversal, links, duplicates, and incomplete inventories.
-`make build-docs-preview` uses this baseline and the repository's own build script.
+`make restore-current-github-website` restores this baseline plus every retained
+publication. `make build-docs-preview` uses that complete site and runs each strict
+MkDocs build once, retaining those same files for preview and publication.
+
+## Subsequent publications
+
+`.github/workflows/pages.yml` remains disabled until `MIGRATION_ACTIVE` is `true`.
+After cutover, successful main CI publishes development content. The release
+workflow publishes versioned content after image, chart, and conformance checks.
+Maintenance releases cannot advance `latest` past a newer stable version.
+
+The publisher rechecks the canonical CI receipt and downloads its documentation
+and playground artifacts. Their producing job IDs, run attempts, source commits,
+creation times, and GitHub SHA-256 digests must match. Merge-queue reuse follows
+the original verified run; it does not rebuild the engine. A documentation-only
+run keeps the previously published playground and records that provenance.
+
+Every new version is retained as a content-addressed archive in the
+`website-content` GitHub prerelease, separate from product releases. Archives
+include the original transport copies, a complete file inventory, and source
+evidence. The `website-state` branch contains only the small version catalog.
+New publications restore every catalog entry, so expiry of CI artifacts cannot
+remove a released version. Released content cannot be overwritten or silently
+removed; `dev` may only move forward through main's history.
+
+All engines and legacy redirects pass Chromium and Firefox checks before any
+publication is retained. The archive is downloaded anonymously and verified
+before the catalog advances. Catalog updates reject concurrent changes and never
+force-push. GitHub Pages deploys only after that retention succeeds; browser
+checks then compare the live inventory, landing page, documentation entry points,
+version catalogs, and source identities with the exact uploaded artifact.
+
+The catalog records the site prepared for deployment. If deployment fails after
+retention, the previous live site remains; rerun the failed deployment jobs. A
+new build also restores the retained version, so that failure cannot discard a
+release. The workflow uses the shared `pages-publication` concurrency group.
+
+Publishing happens after CI and adds no jobs to the PR verification gate. The
+end-to-end canonical publisher still requires a live rehearsal before cutover;
+the migration proof and production domain remain separate from this workflow.
 
 Existing documentation and playground page URLs remain available. The redundant
 raw `.wasm` and `.wasm.gz` URLs are replaced by `.wasm.br` for engine loading;
