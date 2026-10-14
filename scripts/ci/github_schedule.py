@@ -72,18 +72,24 @@ def lanes(durations, count, *, early=(), chains=(), handoff_seconds=4):
 def schedule(workflow, weights):
     jobs = workflow["jobs"]
     suites = {job["name"]: key for key, job in jobs.items() if "CI_SUITE" in job.get("env", {})}
+    aggregation = jobs["coverage"]["name"]
+    suites[aggregation] = "coverage"
     durations = {name: row["seconds"] for name, row in weights["jobs"].items()}
     if set(suites) != set(durations):
         raise ValueError("Every suite needs exactly one recorded duration")
-    coverage = {jobs[key]["name"] for key in jobs["coverage"]["needs"]}
-    selected = lanes(durations, weights["runner_limit"] - 1,
-                     early=coverage | set(weights["early_jobs"]), chains=weights["cache_reuse_chains"])
+    coverage_inputs = jobs["coverage"]["needs"]
+    coverage = {jobs[key]["name"] for key in coverage_inputs}
+    last_producer = max(coverage, key=lambda name: (durations[name], name))
+    chains = weights["cache_reuse_chains"] + [[last_producer, aggregation]]
+    selected = lanes(durations, weights["runner_limit"],
+                     early=coverage | set(weights["early_jobs"]), chains=chains)
     for lane in selected:
         for index, name in enumerate(lane):
             job = jobs[suites[name]]
             job.pop("needs", None)
             if index:
                 job["needs"] = suites[lane[index - 1]]
+    jobs["coverage"]["needs"] = coverage_inputs
     ordered = [suites[name] for depth in range(max(map(len, selected)))
                for lane in selected for name in lane[depth:depth + 1]]
     ordered += [key for key in jobs if key not in ordered]
@@ -100,7 +106,7 @@ def main():
     workflow = yaml.safe_load(args.workflow.read_text())
     selected = schedule(workflow, json.loads(args.weights.read_text()))
     args.workflow.write_text(yaml.safe_dump(workflow, sort_keys=False, width=120))
-    print(f"Scheduled {sum(map(len, selected))} suites in {len(selected)} lanes, with one coverage runner reserved")
+    print(f"Scheduled {sum(map(len, selected))} jobs in {len(selected)} lanes, including coverage aggregation")
 
 
 if __name__ == "__main__":

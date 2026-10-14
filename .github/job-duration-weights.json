@@ -412,6 +412,10 @@
     "unit-renderer-3": {
       "seconds": 315,
       "run_id": 38487659388
+    },
+    "coverage-combined": {
+      "seconds": 67,
+      "run_id": 38483303507
     }
   },
   "early_jobs": [

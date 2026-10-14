@@ -44,22 +44,26 @@ class WorkflowInventoryTests(unittest.TestCase):
         })
         self.assertEqual(set(jobs["verified"]["needs"]), set(jobs) - {"verified"})
 
-    def test_execution_chains_reserve_capacity_for_coverage_aggregation(self):
+    def test_execution_chains_include_coverage_within_the_runner_limit(self):
         jobs = self.workflow["jobs"]
         suites = {key: job for key, job in jobs.items() if "CI_SUITE" in job.get("env", {})}
         roots = {key for key, job in suites.items() if not job.get("needs")}
-        self.assertLessEqual(len(roots) + 1, 60)
-        children = collections.Counter()
-        for key, job in suites.items():
-            if job.get("needs"):
-                self.assertIn(job["needs"], suites)
-                children[job["needs"]] += 1
+        self.assertLessEqual(len(roots), 60)
+        parents = {key: job["needs"] for key, job in suites.items() if job.get("needs")}
+        children = collections.Counter(parents.values())
+        coverage_lanes = [key for key in jobs["coverage"]["needs"] if not children[key]]
+        self.assertTrue(coverage_lanes, "Coverage must take over an input producer's lane")
+        parents["coverage"] = coverage_lanes[0]
+        children[coverage_lanes[0]] += 1
+        suites["coverage"] = jobs["coverage"]
+        for key, parent in parents.items():
+            self.assertIn(parent, suites)
             visited = set()
             current = key
             while current not in roots:
                 self.assertNotIn(current, visited, "Execution chains must not contain cycles")
                 visited.add(current)
-                current = suites[current]["needs"]
+                current = parents[current]
         self.assertTrue(all(count == 1 for count in children.values()), "A lane must not fork")
 
     def test_prose_profile_preserves_every_gitlab_common_gate(self):

@@ -8,10 +8,11 @@ the verification receipt. The receipt records its actual conclusion and binds
 all jobs to the same source and run attempt.
 
 `.github/job-duration-weights.json` records runner durations and their source run
-IDs. `make schedule-github-verification` places long suites first and fills 59
-execution lanes with shorter suites, reserving one of the current plan's 60
-slots for coverage aggregation. Coverage producers start immediately, alongside
-the command and general unit-test cache producers. Command shards run sequentially
+IDs. `make schedule-github-verification` places long suites first and fills all
+60 execution lanes with shorter suites. Coverage aggregation takes over the lane
+of its longest measured producer and still waits for all seven inputs. This keeps
+one runner from sitting idle until coverage is ready. Coverage producers start
+immediately, alongside the command and general unit-test cache producers. Command shards run sequentially
 on fresh runners, and support tests follow the general unit tests, so consumers
 can reuse their predecessors' compiled packages. Compatibility jobs follow native jobs with the
 same compiler cache. Every suite still executes, including when its predecessor
@@ -20,6 +21,12 @@ weights predict scheduling; a completed first-attempt workflow proves lead time.
 After the initial placement, the scheduler swaps groups between lanes to shorten
 the longest chains while keeping cache consumers together and coverage producers
 at the start.
+
+Coverage aggregation took 67 seconds in run `38483303507`. Including it in the
+schedule reduces the longest predicted lane from 20m00s to 19m46s. Every scheduled job
+belongs to one of the 60 sequential lanes; the additional coverage dependencies
+cannot increase concurrency. This estimate excludes runner provisioning and the
+final verification gate, and is not a new hosted speed result.
 
 Run `38479981671` passed all 103 jobs in 24m07s, including all six added suites.
 It exposed late compiler-cache producers and coverage dependencies. Its native

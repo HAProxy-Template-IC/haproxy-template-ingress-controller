@@ -46,14 +46,37 @@ class ScheduleTests(unittest.TestCase):
         rebuilt = copy.deepcopy(workflow)
         selected = schedule(rebuilt, weights)
         self.assertEqual(rebuilt, workflow)
-        self.assertLessEqual(len(selected) + 1, 60)
+        self.assertEqual(len(selected), 60)
         self.assertEqual(sum(map(len, selected)), len(weights["jobs"]))
+        by_name = {job["name"]: key for key, job in rebuilt["jobs"].items()}
+        for lane in selected:
+            for previous, name in zip(lane, lane[1:]):
+                needs = rebuilt["jobs"][by_name[name]]["needs"]
+                self.assertIn(by_name[previous], [needs] if isinstance(needs, str) else needs)
         roots = {lane[0] for lane in selected}
         coverage = {workflow["jobs"][key]["name"] for key in workflow["jobs"]["coverage"]["needs"]}
         self.assertTrue(coverage | {"unit-command-1", "unit-rest"} <= roots)
         del weights["jobs"][selected[0][0]]
         with self.assertRaises(ValueError):
             schedule(rebuilt, weights)
+
+    def test_coverage_reuses_a_producer_lane_and_keeps_all_input_dependencies(self):
+        jobs = {name: {"name": name, "env": {"CI_SUITE": "{}"}}
+                for name in ("first", "second", "tail")}
+        jobs["coverage"] = {"name": "aggregate", "needs": ["first", "second"]}
+        jobs["verified"] = {"name": "verified", "needs": list(jobs)}
+        weights = {"jobs": {name: {"seconds": seconds} for name, seconds in
+                            (("first", 4), ("second", 9), ("tail", 5), ("aggregate", 3))},
+                   "runner_limit": 2, "early_jobs": [], "cache_reuse_chains": []}
+        selected = schedule({"jobs": jobs}, weights)
+        self.assertCountEqual(selected, [["second", "aggregate"], ["first", "tail"]])
+        self.assertEqual(jobs["coverage"]["needs"], ["first", "second"])
+        self.assertCountEqual(jobs["verified"]["needs"], ["first", "second", "tail", "coverage"])
+
+        weights["jobs"]["first"]["seconds"] = 15
+        selected = schedule({"jobs": jobs}, weights)
+        self.assertTrue(any(lane[:2] == ["first", "aggregate"] for lane in selected))
+        self.assertEqual(jobs["coverage"]["needs"], ["first", "second"])
 
 
 if __name__ == "__main__":
