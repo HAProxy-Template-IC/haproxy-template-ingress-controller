@@ -79,9 +79,11 @@ verification. Work through the sections in order.
     version literal reappears in either place.
 
 6. Update the old-release matrix. If you added a schema bundle in step 3,
-    add the release to the `compatibility` matrix in
-    `.github/workflows/nightly.yml`. The list mirrors the `tests/schemas-ga-*`
-    bundles.
+    add a `gateway-compatibility-<release>` job to
+    `.github/workflows/ci-speed-proof.yml`, and add its name to `required_jobs`
+    and `pre_merge_skipped_jobs` in `.github/ci-verification.json`; then run
+    `make schedule-github-verification`. The list mirrors the
+    `tests/schemas-ga-*` bundles.
 
 ## Suite adaptation
 
@@ -129,13 +131,14 @@ verification. Work through the sections in order.
     ./scripts/test-templates.sh
     ```
 
-2. Run the nightly suites on the pull request branch. This runs the
-    compatibility matrix, churn, scale, and `nightly-gwapi-canary`, proving
-    them live on the new release. Retry only failed jobs whose inputs match:
+2. Run the post-merge suites and the canary on the pull request branch. The
+    first command runs the `full` matrix, including the compatibility matrix,
+    churn, and scale; the second runs `nightly-gwapi-canary`. Retry only failed
+    jobs whose inputs match:
 
     ```bash
-    gh workflow run nightly.yml --repo haproxy-haptic/HAPTIC \
-      --ref "$(git branch --show-current)" -f mode=nightly
+    gh workflow run ci.yml --repo haproxy-haptic/HAPTIC --ref "$(git branch --show-current)"
+    gh workflow run nightly.yml --repo haproxy-haptic/HAPTIC --ref "$(git branch --show-current)"
     ```
 
 3. Debug any failing conformance test locally on a **fresh** kind cluster —

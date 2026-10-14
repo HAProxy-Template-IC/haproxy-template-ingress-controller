@@ -54,6 +54,11 @@ def api(path):
 def required_jobs(manifest, profile):
     if profile == "full":
         return manifest["required_jobs"]
+    if profile == "pre-merge":
+        skipped = manifest["pre_merge_skipped_jobs"]
+        if not skipped or len(skipped) != len(set(skipped)) or not set(skipped) <= set(manifest["required_jobs"]):
+            raise ValueError("Pre-merge verification has an invalid job inventory")
+        return [name for name in manifest["required_jobs"] if name not in skipped]
     if profile != "prose":
         raise ValueError("Unknown CI verification profile")
     selected = manifest["prose"]["required_jobs"]
@@ -95,8 +100,10 @@ def selection(manifest, event_name, event, identity, *, sha,
             raise ValueError("Verification requires the tested target revision")
         return {"profile": "full"}
     paths = changed_paths(base, sha)
-    return {"profile": paths_profile(manifest, paths), "comparison_base": base,
-            "changed_paths_sha256": paths_digest(paths)}
+    profile = paths_profile(manifest, paths)
+    if profile == "full" and event_name in {"pull_request", "merge_group"}:
+        profile = "pre-merge"
+    return {"profile": profile, "comparison_base": base, "changed_paths_sha256": paths_digest(paths)}
 
 
 def checkout_identity(event_name, event, repository, sha):
@@ -171,10 +178,10 @@ def main():
     prefix = os.environ.get("CI_JOB_PREFIX", "")
     profile = os.environ.get("CI_VERIFICATION_PROFILE", "full")
     selected = {"profile": profile}
-    if profile == "prose":
+    if profile != "full":
         selected = selection(manifest, event_name, event, identity, sha=sha)
-        if selected["profile"] != "prose":
-            raise ValueError("Changed files require full CI verification")
+        if selected["profile"] != profile:
+            raise ValueError("Changed files or trigger require full CI verification")
     checked = verify(run, jobs, required_jobs(manifest, profile), repository=repository,
                      sha=identity["api_sha"], attempt=attempt, prefix=prefix)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()

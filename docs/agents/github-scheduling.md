@@ -1,10 +1,15 @@
 # GitHub verification scheduling
 
-Every pull request, merge-queue group, and push to `main` runs the full
-verification matrix in `.github/workflows/ci-speed-proof.yml`. No job is allowed
-to fail; a missing, skipped, or cancelled job fails the verification receipt.
-The receipt records its conclusion and binds all jobs to the same source and run
-attempt. Prose-only changes run eight common checks.
+`.github/workflows/ci-speed-proof.yml` holds the verification matrix. No job is
+allowed to fail; a missing, skipped, or cancelled required job fails the
+verification receipt, which binds all jobs to the same source and run attempt.
+Prose-only changes run eight common checks.
+
+Pull requests and merge-queue groups use the `pre-merge` profile: the full matrix
+except the jobs in `pre_merge_skipped_jobs` of `.github/ci-verification.json`.
+Pushes to `main` and `maint/*`, manual dispatches, and the weekly run use `full`,
+which adds those jobs. Release tagging and website publication accept only a
+`full` receipt for the exact commit.
 
 `.github/job-duration-weights.json` records runner durations and their source run
 IDs. `make schedule-github-verification` places long suites first and fills all
@@ -28,17 +33,19 @@ module cache. The dependency key covers `go.mod`, `go.sum`, and the PGO profile;
 Go's build cache checks source, compiler options, and compiler identity itself.
 The native image is built from the current checkout with source identity checks.
 
-## Nightly and weekly suites
+## Post-merge suites
 
-`.github/workflows/nightly.yml` runs the Gateway API compatibility versions,
-churn, scale, and the upstream Gateway API canary each night when `main` changed,
-and every Sunday with the full matrix. Only the canary may fail. Each suite keeps
-a fresh cluster: compatibility jobs change cluster-wide CRDs, churn changes
-diagnostic settings, and scale measures latency and memory in isolation.
+The Gateway API compatibility versions, churn, and scale run only in `full`.
+Each keeps a fresh cluster: compatibility jobs change cluster-wide CRDs, churn
+changes diagnostic settings, and scale measures latency and memory in isolation.
+They stay out of `pre-merge` because they lengthen it: with them, runs
+`38534640184` and `38555150518` finished their last suite after 22m12s and
+21m42s, against 20m53s without them in run `38432655131`. Dispatch `ci.yml` on a
+branch to run them before merging.
 
-These suites stay out of the PR matrix because they lengthen it. With them,
-runs `38534640184` and `38555150518` finished their last suite after 22m12s and
-21m42s, against 20m53s without them in run `38432655131`.
+`.github/workflows/nightly.yml` runs the upstream Gateway API canary daily and
+the `full` matrix every Sunday. The canary may fail; its failures open
+canary-labelled issues.
 
 `make check-chart-upgrade-baselines` compares the registry's released versions
 with the CI upgrade jobs. CI must cover each baseline on current and minimum

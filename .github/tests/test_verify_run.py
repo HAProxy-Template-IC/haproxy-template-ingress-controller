@@ -171,6 +171,8 @@ class VerificationProfileTests(unittest.TestCase):
             self.paths.assert_called_with(self.base, self.sha)
         self.paths.return_value.append(".github/ci-verification.json")
         self.assertEqual(self.select()["profile"], "full")
+        for event_name in ("pull_request", "merge_group"):
+            self.assertEqual(self.select(event_name, identity={"base_sha": self.base})["profile"], "pre-merge")
 
     def test_new_branches_force_pushes_and_dispatches_require_full_verification(self):
         for before in ("0" * 40, "", "--all", "short"):
@@ -194,6 +196,16 @@ class VerificationProfileTests(unittest.TestCase):
         for profile in ("", "skip", "docs"):
             with self.subTest(profile=profile), self.assertRaises(ValueError):
                 VERIFY.required_jobs(self.manifest, profile)
+
+    def test_pre_merge_skips_only_the_declared_isolated_suites(self):
+        skipped = self.manifest["pre_merge_skipped_jobs"]
+        selected = VERIFY.required_jobs(self.manifest, "pre-merge")
+        self.assertEqual(set(selected) | set(skipped), set(self.manifest["required_jobs"]))
+        self.assertFalse(set(selected) & set(skipped))
+        for invalid in ([], ["scale", "scale"], ["missing-job"]):
+            self.manifest["pre_merge_skipped_jobs"] = invalid
+            with self.subTest(skipped=invalid), self.assertRaises(ValueError):
+                VERIFY.required_jobs(self.manifest, "pre-merge")
 
 
 if __name__ == "__main__":

@@ -75,6 +75,8 @@ def check_direct_receipt(run, jobs, artifact, receipt, *, repository, sha, tree,
                          allow_prose=False, comparison=None):
     profile = receipt.get("profile", "full")
     policy = json.loads(manifest)
+    if profile not in {"full", "prose"}:
+        raise ValueError("This publication requires full CI verification")
     if profile == "prose":
         base = receipt.get("comparison_base", "")
         if not allow_prose or comparison is None:

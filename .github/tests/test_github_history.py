@@ -2,7 +2,6 @@ import copy
 import hashlib
 import io
 import json
-import tempfile
 import unittest
 import urllib.error
 import zipfile
@@ -10,8 +9,8 @@ from unittest import mock
 
 from scripts.ci.github import GitHub, jobs_for_run
 from scripts.ci.github_history import successful_job_metrics
-from scripts.ci.github_nightly import plan, required
-from scripts.ci.github_scale import TREND, run_head_sha
+from scripts.ci.github_nightly import plan
+from scripts.ci.github_scale import TREND
 
 
 class HistoryTests(unittest.TestCase):
@@ -119,56 +118,31 @@ class HistoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             jobs_for_run(self.api, "owner/repo", self.run)
 
-    def test_unchanged_main_keeps_failed_nightly_evidence_without_daily_retries(self):
-        current = dict(self.run, id=43)
-        self.run["conclusion"] = "failure"
-        self.job["conclusion"] = "failure"
-        self.assertFalse(required(self.api, "owner/repo", current, branch="main"))
-        self.assertTrue(required(self.api, "owner/repo", dict(current, head_sha="new"), branch="main"))
-        self.assertTrue(required(self.api, "owner/repo", current, branch="main", force=True))
-
-    def test_cancelled_and_decision_only_runs_do_not_hide_previous_work(self):
-        current = dict(self.run, id=43)
-        for conclusion in ("cancelled", "skipped"):
-            self.job["conclusion"] = conclusion
-            self.assertTrue(required(self.api, "owner/repo", current, branch="main"))
-
-    def test_manual_scale_alone_does_not_suppress_the_complete_nightly(self):
-        current = dict(self.run, id=43)
-        self.run["event"] = "workflow_dispatch"
-        self.churn["conclusion"] = "skipped"
-        self.assertTrue(required(self.api, "owner/repo", current, branch="main"))
-
-    def test_schedules_require_main_while_manual_dispatch_runs_on_any_branch(self):
-        for current in (dict(self.run, head_branch="feature"), dict(self.run, event="pull_request")):
-            with self.assertRaises(ValueError):
-                required(self.api, "owner/repo", current, branch="main", force=True)
-        dispatched = dict(self.run, id=43, head_branch="feature", event="workflow_dispatch")
-        self.assertTrue(required(self.api, "owner/repo", dispatched, branch="main"))
-
-    def test_weekly_heartbeat_and_manual_dispatch_override_unchanged_revision(self):
+    def test_schedules_select_canary_or_weekly_and_reject_other_contexts(self):
         current = dict(self.run, id=43)
         self.api.get.return_value = current
         env = {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "43", "GITHUB_SHA": "abc",
                "GITHUB_EVENT_NAME": "schedule"}
         event = {"repository": {"full_name": "owner/repo", "default_branch": "main"}, "schedule": "30 2 * * 1-6"}
-        self.assertEqual(plan(self.api, env, event), {"run": "false", "mode": "nightly"})
+        self.assertEqual(plan(self.api, env, event), {"mode": "nightly"})
         event["schedule"] = "30 3 * * 0"
-        self.assertEqual(plan(self.api, env, event), {"run": "true", "mode": "weekly"})
+        self.assertEqual(plan(self.api, env, event), {"mode": "weekly"})
+        current["head_branch"] = "feature"
+        with self.assertRaises(ValueError):
+            plan(self.api, env, event)
         current["event"] = env["GITHUB_EVENT_NAME"] = "workflow_dispatch"
+        event["inputs"] = {"mode": "weekly"}
+        self.assertEqual(plan(self.api, env, event), {"mode": "weekly"})
         event["inputs"] = {"mode": "scale"}
-        self.assertEqual(plan(self.api, env, event), {"run": "true", "mode": "scale"})
+        with self.assertRaises(ValueError):
+            plan(self.api, env, event)
+        current["event"] = env["GITHUB_EVENT_NAME"] = "pull_request"
+        with self.assertRaises(ValueError):
+            plan(self.api, env, event)
+        current["event"] = env["GITHUB_EVENT_NAME"] = "workflow_dispatch"
         current["head_sha"] = "other"
         with self.assertRaises(ValueError):
             plan(self.api, env, event)
-
-    def test_scale_gate_binds_pull_requests_to_their_head_commit(self):
-        self.assertEqual(run_head_sha({"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "abc"}), "abc")
-        with tempfile.NamedTemporaryFile("w", suffix=".json") as event:
-            json.dump({"pull_request": {"head": {"sha": "head"}}}, event)
-            event.flush()
-            env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_SHA": "merge", "GITHUB_EVENT_PATH": event.name}
-            self.assertEqual(run_head_sha(env), "head")
 
     def test_scale_gate_reuses_existing_comparison_contract(self):
         self.assertEqual(TREND.HARD, {"change_convergence_seconds_p95": 0.5,

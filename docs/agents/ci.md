@@ -15,9 +15,10 @@ instructions apply to every agent and future session.
 
 ## While iterating
 
-- Batch fixes before pushing. Every pull request runs the complete matrix;
-  prose-only changes run the common checks. Compatibility, churn, scale, and
-  canary run nightly; dispatch `nightly.yml` on your branch when a change needs them.
+- Batch fixes before pushing. Pull requests run the matrix without the
+  compatibility, churn, and scale suites, which run after merge and gate releases;
+  prose-only changes run the common checks. Dispatch `ci.yml` on your branch when
+  a change needs those suites before merging.
 - Never add `[skip ci]` or otherwise skip verification.
 - Diagnose failures before retrying. Rerun a specific job once for a demonstrated
   infrastructure failure. Fix test failures instead of rerunning until they pass.
@@ -57,32 +58,18 @@ or change the plan without authorization. Gross metered usage on the billing pag
 is not the payable amount; check the net amount before a campaign. Cancel only
 superseded work owned by your task.
 
-## Post-merge reuse
+## Post-merge verification
 
-Reuse is disabled unless the repository variable `REUSE_MERGE_VERIFICATION` is
-exactly `true`. Enable it only after a real merge-queue run, its required jobs,
-and the resulting full post-merge run have passed. Record their run IDs, attempts,
-commit IDs, and equal trees before changing the variable, then read it back.
-
-Only ordinary pushes to `main` or `maint/*` qualify. The pushed commit's first
-parent must match both the previous branch tip and the merge queue's tested base.
-The original `CI` run must contain every required job and both successful
-aggregate gates. Its tree and policy must match the merged checkout, and its
-retained artifact must match GitHub's digest and producing job attempt. Pull
-requests, merge groups, manual runs, and scheduled verification keep their
-checks.
-
-Discovery examines the latest 100 merge-queue runs created within one day.
-Missing, expired, mismatched, or unavailable evidence runs normal CI. A newer
-failed run of the same tree cannot be replaced by an older passing run.
-Publication independently downloads and revalidates the original jobs and
-artifact. A reused receipt cannot itself supply reuse, and reuse does not replace
-publication builds or release conformance.
+Every push to `main` or `maint/*` runs the `full` matrix, including the suites
+that pull requests and merge groups skip. Merge-queue reuse
+(`REUSE_MERGE_VERIFICATION`) can't apply: a merge group's `pre-merge` receipt
+never covers a `full` push, so it falls back to normal CI. Leave the variable
+unset.
 
 ## Scheduled verification
 
-`.github/workflows/nightly.yml` runs Monday through Saturday at 02:30 UTC when
-`main` changed, and on Sunday at 03:30 UTC. The weekly run also calls the complete
+`.github/workflows/nightly.yml` runs the upstream Gateway API canary Monday
+through Saturday at 02:30 UTC. On Sunday at 03:30 UTC it also runs the complete
 matrix, even when `main` is unchanged, to detect changes in runners, registries,
 upstream Gateway API, and other external dependencies. Schedules never publish or
 create releases. See [GitHub verification scheduling](github-scheduling.md).
