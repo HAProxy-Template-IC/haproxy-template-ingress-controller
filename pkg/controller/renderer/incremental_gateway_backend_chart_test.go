@@ -506,6 +506,7 @@ func loadGatewayBackendChartSnippets(t *testing.T) map[string]config.TemplateSni
 		"util-escape-dquote-value": true, "util-escape-logformat-value": true,
 		"util-backend-servers-helpers": true,
 		"util-backend-servers-result":  true, "util-backend-servers": true,
+		"util-gated-pod-routable":        true,
 		"util-backend-name-gateway":      true,
 		"util-backend-name-gateway-rule": true,
 		"util-gateway-route-identity":    true,

@@ -110,6 +110,7 @@ nav:
       - Validate before deploying: operations/validate-before-deploy.md
       - Configure HAProxy pods and access: haproxy-deployment.md
       - High availability: operations/high-availability.md
+      - Roll out without dropped requests: operations/pod-readiness-gate.md
       - Resource sizing: operations/performance.md
       - Networking: operations/networking.md
     - Observe and troubleshoot:

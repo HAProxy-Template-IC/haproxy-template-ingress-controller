@@ -7,6 +7,9 @@ issue #70 are **not** pursued and records `TestIngressRollingRestartZeroDowntime
 as the standing sentinel. Builds on ADR-0011 (config-driven server addresses, no
 server-state-file).
 
+For pods holding the readiness gate, [ADR-0034](0034-pod-readiness-gate.md) narrows
+the residual further, and `TestIngressRollingRestartZeroDowntime` allows no failure.
+
 Option 1's reasoning was rewritten by [ADR-0022](0022-haptic-agent.md): the
 controller's reach into a pod is no longer the Data Plane API's endpoint set but
 an agent that holds both HAProxy sockets, so worker routing is a question about

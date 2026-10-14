@@ -213,6 +213,7 @@ if ! helm template "$CHART_DIR" \
     --set controller.templateLibraries.haproxyIngress.enabled=true \
     --set controller.templateLibraries.nginxIngress.enabled=true \
     --set controller.templateLibraries.customCrdExample.enabled=true \
+    --set controller.templateLibraries.kubernetesBackends.podReadinessGate.enabled=true \
     --set defaultSSLCertificate.secretName=regression-custom-rsa-cert \
     --set defaultSSLCertificate.ecdsaSecretName=regression-custom-ecdsa-cert \
     --set 'controller.config.templatingSettings.extraContext.tls.sessionTickets.enabled=true' \

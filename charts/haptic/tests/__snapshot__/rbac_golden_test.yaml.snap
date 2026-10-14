@@ -239,6 +239,14 @@ pins the ClusterRole rules on chart defaults:
 pins the ClusterRole rules with every rule-adding feature enabled:
   1: |
     - apiGroups:
+        - ""
+      resources:
+        - pods
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups:
         - gateway.networking.k8s.io
       resources:
         - backendtlspolicies
@@ -390,6 +398,12 @@ pins the ClusterRole rules with every rule-adding feature enabled:
         - get
         - list
         - watch
+    - apiGroups:
+        - ""
+      resources:
+        - pods/status
+      verbs:
+        - patch
     - apiGroups:
         - gateway.networking.k8s.io
       resources:

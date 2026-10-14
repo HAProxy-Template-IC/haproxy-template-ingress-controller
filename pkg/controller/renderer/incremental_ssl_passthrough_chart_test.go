@@ -431,6 +431,7 @@ func loadSSLPassthroughChartSnippets(t *testing.T) map[string]config.TemplateSni
 		"util-backend":                              true,
 		"util-backend-servers-helpers":              true,
 		"util-backend-servers-result":               true,
+		"util-gated-pod-routable":                   true,
 		"util-ssl-passthrough-backends":             true,
 		"util-ssl-sni-use-backend-lines":            true,
 		"features-140-ssl-passthrough-binds":        true,

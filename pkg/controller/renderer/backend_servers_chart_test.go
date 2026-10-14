@@ -233,7 +233,7 @@ func loadBackendServersChartSnippets(t *testing.T) map[string]config.TemplateSni
 	_, sourceFile, _, ok := runtime.Caller(0)
 	require.True(t, ok)
 	chartRoot := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "charts", "haptic", "charts")
-	result := make(map[string]config.TemplateSnippet, 3)
+	result := make(map[string]config.TemplateSnippet, 4)
 	for _, relativePath := range []string{"base/library.yaml", "kubernetes-backends/library.yaml"} {
 		content, err := os.ReadFile(filepath.Join(chartRoot, relativePath))
 		require.NoError(t, err)
@@ -242,6 +242,7 @@ func loadBackendServersChartSnippets(t *testing.T) map[string]config.TemplateSni
 		for _, name := range []string{
 			"util-backend-servers-helpers",
 			"util-backend-servers-result",
+			"util-gated-pod-routable",
 			"util-backend-servers",
 		} {
 			snippet, found := library.TemplateSnippets[name]
@@ -250,7 +251,7 @@ func loadBackendServersChartSnippets(t *testing.T) map[string]config.TemplateSni
 			}
 		}
 	}
-	require.Len(t, result, 3)
+	require.Len(t, result, 4)
 	return result
 }
 

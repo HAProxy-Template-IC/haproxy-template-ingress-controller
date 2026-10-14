@@ -21,6 +21,7 @@ The **ClusterRole** grants:
 | `events` | create, update, patch, delete | Publish template-generated Kubernetes Events |
 | `services` | get, list, watch, create, update, patch, delete | Gateway library only: manage Services for Gateway listeners |
 | `gatewayclasses` | create, update, patch, delete | Gateway library only: manage the configured GatewayClass |
+| `pods`, and `pods/status` | get, list, watch; patch | [Pod readiness gate](pod-readiness-gate.md) only: read backend pods in every namespace and set the gate condition |
 
 The **namespace Role** grants:
 

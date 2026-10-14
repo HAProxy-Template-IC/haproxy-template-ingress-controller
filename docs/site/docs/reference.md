@@ -80,6 +80,7 @@ workflows too.
 |-----------|------|---------|-------------|
 | `controller.templateLibraries.base.enabled` | bool | `true` | Core HAProxy configuration. Disabling drops the `haproxyConfig` template the other libraries plug into; leave on unless you supply a complete replacement |
 | `controller.templateLibraries.kubernetesBackends.enabled` | bool | `true` | Shared Kubernetes Service port and EndpointSlice backend resolution used by the bundled routing libraries |
+| `controller.templateLibraries.kubernetesBackends.podReadinessGate.enabled` | bool | `false` | Set the `haproxy-haptic.org/load-balancer-ready` readiness gate on pods that list it; see [Roll out without dropped requests](operations/pod-readiness-gate.md) |
 | `controller.templateLibraries.ssl.enabled` | bool | `true` | SSL/TLS and HTTPS frontend support |
 | `controller.templateLibraries.ingress.enabled` | bool | `true` | Kubernetes Ingress resource support |
 | `controller.templateLibraries.gateway.enabled` | bool | `true` | Gateway API support (HTTP, gRPC, TLS and TCP routes) |

@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Helm chart
 
+#### Added
+
+- Opt-in Pod readiness gate `haproxy-haptic.org/load-balancer-ready` (`controller.templateLibraries.kubernetesBackends.podReadinessGate.enabled`): a gated pod becomes Ready only once every HAProxy pod routes to it, so single-replica rollouts drop no requests.
+
 #### Changed
 
 - Render the Helm chart faster by avoiding repeated YAML serialization of template libraries.

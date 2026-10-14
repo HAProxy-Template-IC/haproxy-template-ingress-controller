@@ -390,6 +390,11 @@ controller:
     # the bundled Ingress, Gateway, and annotation libraries.
     kubernetesBackends:
       enabled: true
+      # Readiness gate `haproxy-haptic.org/load-balancer-ready`. Not under
+      # extraContext: it adds a cluster-wide Pod watch and pods/status RBAC. See
+      # https://haproxy-haptic.org/docs/latest/operations/pod-readiness-gate/
+      podReadinessGate:
+        enabled: false
     # HTTPS frontend + SSL passthrough infrastructure + default cert loading.
     ssl:
       enabled: true

@@ -360,7 +360,7 @@ func newGatewaySSLPassthroughBackendDependencyFixture(
 			"util-webhook-reject-or-warn",
 		},
 		"kubernetes-backends/library.yaml": {
-			"util-backend-servers-result", "util-backend-servers",
+			"util-backend-servers-result", "util-gated-pod-routable", "util-backend-servers",
 		},
 		"gateway/22-ssl-passthrough.yaml": {"util-gateway-http-ssl-passthrough"},
 		"gateway/30-backends.yaml": {

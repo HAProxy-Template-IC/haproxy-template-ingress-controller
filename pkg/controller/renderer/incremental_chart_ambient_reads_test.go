@@ -48,6 +48,12 @@ type chartAmbientAuditRoot struct {
 }
 
 type chartAmbientAuditLibrary struct {
+	HelmLoad struct {
+		Inject []struct {
+			Path string `yaml:"path"`
+			From string `yaml:"from"`
+		} `yaml:"inject"`
+	} `yaml:"_helm_load"`
 	TemplateSnippets map[string]chartAmbientAuditSnippet `yaml:"templateSnippets"`
 	Maps             map[string]chartAmbientAuditRoot    `yaml:"maps"`
 	Files            map[string]chartAmbientAuditRoot    `yaml:"files"`
@@ -61,6 +67,8 @@ type chartAmbientAuditNode struct {
 	template    string
 	incremental bool
 	path        string
+	// alternates are snippets the chart loader injects in place of this one.
+	alternates []string
 }
 
 type chartAmbientAuditTraversal struct {
@@ -154,6 +162,20 @@ func collectChartAmbientAuditFile(
 			name: name, template: snippet.Template, incremental: snippet.Incremental != nil, path: relative,
 		}
 	}
+	const snippetPath = "templateSnippets."
+	for _, inject := range library.HelmLoad.Inject {
+		target, isSnippet := strings.CutPrefix(inject.Path, snippetPath)
+		source, fromSnippet := strings.CutPrefix(inject.From, snippetPath)
+		if !isSnippet || !fromSnippet {
+			continue
+		}
+		node, found := nodes[target]
+		if !found {
+			return fmt.Errorf("%s injects %s over undefined snippet %s", relative, source, target)
+		}
+		node.alternates = append(node.alternates, source)
+		nodes[target] = node
+	}
 	appendRoots := func(kind string, entries map[string]chartAmbientAuditRoot) {
 		for name, root := range entries {
 			roots[kind+" "+relative+":"+name] = root.Template
@@ -215,6 +237,9 @@ func traverseChartAmbientAudit(
 			continue
 		}
 		result.reachable[current.name] = current.chain
+		for _, alternate := range node.alternates {
+			queue = append(queue, pendingNode{name: alternate, chain: current.chain + " (as " + alternate + ")"})
+		}
 		if node.incremental && !enterIncremental {
 			continue
 		}
