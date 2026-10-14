@@ -15,9 +15,9 @@ docker image inspect haptic/echoserver:pilot > .pilot/echo-image.json
 kind load docker-image haptic/echoserver:pilot --name haptic-e2e
 python3 - <<'PY'
 from pathlib import Path
-patch = Path('tests/conformance/patches/0002-use-mirrored-echoserver-image.patch')
+patch = Path('tests/conformance/patches/0002-pull-echoserver-from-registry-k8s.patch')
 source = patch.read_text()
-old = 'registry.gitlab.com/haproxy-haptic/haptic/ingress-conformance-echo:v0.0.1@sha256:9b34b17f391f87fb2155f01da2f2f90b7a4a5c1110ed84cb5379faa4f570dc52'
+old = 'registry.k8s.io/ingressconformance/echoserver:v0.0.1@sha256:9b34b17f391f87fb2155f01da2f2f90b7a4a5c1110ed84cb5379faa4f570dc52'
 assert source.count(old) == 1
 patch.write_text(source.replace(old, 'haptic/echoserver:pilot'))
 PY

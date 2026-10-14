@@ -14,13 +14,10 @@ class WorkflowInventoryTests(unittest.TestCase):
         self.workflow = yaml.safe_load((ROOT / ".github/workflows/ci-speed-proof.yml").read_text())
         self.manifest = json.loads((ROOT / ".github/ci-verification.json").read_text())
 
-    def test_gate_requires_every_declared_job_and_preserves_baseline_coverage(self):
+    def test_gate_requires_every_declared_job(self):
         names = [job["name"] for job in self.workflow["jobs"].values()]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(set(names), set(self.manifest["required_jobs"]) | {"verified"})
-        mapped = {name for group in self.manifest["gitlab_job_mapping"].values() for name in group}
-        mapped |= {name for group in self.manifest["additional_gitlab_job_mapping"].values() for name in group}
-        self.assertEqual(mapped, set(names))
         self.assertEqual(self.manifest["allowed_failure_jobs"], ["gateway-canary"])
         self.assertEqual({job["name"] for job in self.workflow["jobs"].values()
                           if job.get("continue-on-error")}, {"gateway-canary"})
@@ -66,15 +63,12 @@ class WorkflowInventoryTests(unittest.TestCase):
                 current = parents[current]
         self.assertTrue(all(count == 1 for count in children.values()), "A lane must not fork")
 
-    def test_prose_profile_preserves_every_gitlab_common_gate(self):
-        policy = json.loads((ROOT / ".gitlab/ci/verification-policy.json").read_text())
-        mapping = self.manifest["gitlab_job_mapping"]
-        expected = {name for job in policy["common_jobs"] for key, names in mapping.items()
-                    if key == job or key.startswith(job + ": [") for name in names}
-        prose = self.manifest["prose"]
-        self.assertEqual(prose["paths"], policy["prose_paths"])
-        self.assertEqual(prose["patterns"], policy["prose_patterns"])
-        self.assertEqual(set(prose["required_jobs"]), expected)
+    def test_prose_profile_keeps_lint_docs_and_toolchain_images(self):
+        expected = {"lint", "docs", "docs-image", "ci-image-3.0", "ci-image-3.1", "ci-image-3.2",
+                    "ci-image-3.3", "ci-image-3.4"}
+        self.assertEqual(set(self.manifest["prose"]["required_jobs"]), expected)
+        self.assertTrue(all(path.endswith(".md") or path == "LICENSE" for path in self.manifest["prose"]["paths"]))
+        self.assertEqual(self.manifest["prose"]["patterns"], ["docs/site/docs/.*\\.md"])
         for key, job in self.workflow["jobs"].items():
             if key == "verified":
                 self.assertEqual(job["if"], "always()")

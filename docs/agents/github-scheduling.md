@@ -2,8 +2,8 @@
 
 Full verification includes the three Gateway API compatibility versions, churn,
 scale, and upstream canary alongside the PR suites. Each keeps a fresh cluster,
-its original test selection, and its deadline. Only the upstream canary retains
-GitLab's allowed-failure policy; missing, skipped, or cancelled execution fails
+its original test selection, and its deadline. Only the upstream canary is
+allowed to fail; missing, skipped, or cancelled execution fails
 the verification receipt. The receipt records its actual conclusion and binds
 all jobs to the same source and run attempt.
 
@@ -80,9 +80,7 @@ the integrated suites. The daily schedule remains during migration until the
 combined hosted run proves no increase over the prior PR lead time.
 
 `make check-chart-upgrade-baselines` compares the registry's released versions
-with every CI upgrade configuration present in the checkout. During migration,
-both GitLab and GitHub must match. GitHub must cover each baseline on current and
-minimum Kubernetes, use distinct node images for those variants, and require
-every upgrade job in its final verification gate. Missing, duplicate, or
-unexpected baselines fail the check. Removing the GitLab configuration at cutover
-does not remove this guard.
+with the CI upgrade jobs. CI must cover each baseline on current and minimum
+Kubernetes, use distinct node images for those variants, and require every
+upgrade job in its final verification gate. Missing, duplicate, or unexpected
+baselines fail the check.

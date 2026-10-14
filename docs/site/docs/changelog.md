@@ -10,4 +10,4 @@ hide:
      repo-relative links rewritten to GitLab URLs). Edit CHANGELOG.md, not
      this file. -->
 
-See [CHANGELOG.md](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/CHANGELOG.md).
+See [CHANGELOG.md](https://github.com/haproxy-haptic/HAPTIC/blob/main/CHANGELOG.md).

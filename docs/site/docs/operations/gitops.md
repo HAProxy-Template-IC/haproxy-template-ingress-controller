@@ -132,7 +132,7 @@ project. Argo CD Core installations need an AppProject created separately.
         project: "default",
         destination: {server: "https://kubernetes.default.svc", namespace: "haptic"},
         source: {
-          repoURL: "registry.gitlab.com/haproxy-haptic/haptic/charts",
+          repoURL: "ghcr.io/haproxy-haptic/haptic/charts",
           chart: "haptic",
           targetRevision: $version,
           helm: {releaseName: "haptic", valuesObject: $values[0]}
@@ -189,7 +189,7 @@ rollback over the chart's CRDs.
       metadata: {name: "haptic", namespace: "flux-system"},
       spec: {
         interval: "10m",
-        url: "oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic",
+        url: "oci://ghcr.io/haproxy-haptic/haptic/charts/haptic",
         ref: {tag: $version},
         layerSelector: {mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip", operation: "copy"}
       }

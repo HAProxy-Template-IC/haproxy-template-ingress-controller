@@ -180,7 +180,7 @@ trap 'rm -f "$TEMP_CONFIG"' EXIT
 # env var (matches the _global fixtures which provide SSL certs in 'default').
 #
 # HAPROXY_VERSION env var is honored so CI's per-version matrix
-# (.validate-helm-libraries-base in .gitlab-ci.yml) can render with the
+# (the helm-3.x jobs) can render with the
 # matching haproxyVersion value. When unset, the chart's values.yaml
 # default applies.
 HAPROXY_VERSION_ARG=""

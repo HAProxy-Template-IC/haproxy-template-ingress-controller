@@ -28,7 +28,7 @@ jobs:
       BASELINE_CHART_VERSION: ${{ matrix.baseline }}
       KIND_NODE_IMAGE: ${{ matrix.node }}
       HAPROXY_VERSION: '3.4'
-      VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:

@@ -313,28 +313,13 @@ func runBaselines(ctx context.Context, root string, options *options, output io.
 }
 
 func checkUpgradeWorkflows(repository *os.Root, baselines []string) error {
-	checked := false
-	for _, workflow := range []struct {
-		path  string
-		check func([]string, []byte) error
-	}{
-		{".gitlab-ci.yml", scenarios.CheckUpgradeMatrix},
-		{".github/workflows/ci-speed-proof.yml", scenarios.CheckGitHubUpgradeMatrix},
-	} {
-		content, err := repository.ReadFile(workflow.path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		if err := workflow.check(baselines, content); err != nil {
-			return fmt.Errorf("%s: %w", workflow.path, err)
-		}
-		checked = true
+	const workflow = ".github/workflows/ci-speed-proof.yml"
+	content, err := repository.ReadFile(workflow)
+	if err != nil {
+		return err
 	}
-	if !checked {
-		return errors.New("no CI upgrade configuration found")
+	if err := scenarios.CheckGitHubUpgradeMatrix(baselines, content); err != nil {
+		return fmt.Errorf("%s: %w", workflow, err)
 	}
 	return nil
 }

@@ -23,7 +23,7 @@ cd "$REPO"
 # `|| true`: no matches is the passing state, and grep exits 1 on it.
 hits="$(grep -rnE 'gateway-api/releases/download/v[0-9]' \
 	--include='*.sh' --include='*.go' --include='*.yml' --include='Makefile' \
-	scripts tests .gitlab-ci.yml Makefile 2>/dev/null || true)"
+	scripts tests .github Makefile 2>/dev/null || true)"
 
 if [ -n "$hits" ]; then
 	echo "Hardcoded Gateway API release version:" >&2

@@ -44,7 +44,7 @@ choose a new name when adding behavior.
 Upgrade with the complete file:
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic \
   -f haptic-values.yaml
 ```
@@ -170,6 +170,6 @@ resources your templates manage.
 
 For a complete resource-driven routing implementation, see the
 [Ingress library](libraries/ingress.md) and the
-[custom-resource example](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples/byo-crd).
+[custom-resource example](https://github.com/haproxy-haptic/HAPTIC/tree/main/examples/byo-crd).
 Use the [template reference](template-reference.md) to look up functions and
 [template libraries](template-libraries.md) to share your changes.

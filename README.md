@@ -6,9 +6,8 @@
 
 </div>
 
-[![License](https://gitlab.com/haproxy-haptic/haptic/-/badges/custom.svg?key_text=License&key_width=60&value_text=Apache%202.0&value_width=80&key_color=555&value_color=007ec6)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://gitlab.com/haproxy-haptic/haptic/badges/main/pipeline.svg)](https://gitlab.com/haproxy-haptic/haptic/-/pipelines)
-[![Coverage](https://gitlab.com/haproxy-haptic/haptic/badges/main/coverage.svg)](https://gitlab.com/haproxy-haptic/haptic/-/graphs/main/charts)
+[![License](https://img.shields.io/badge/License-Apache%202.0-007ec6)](https://opensource.org/licenses/Apache-2.0)
+[![CI](https://github.com/haproxy-haptic/HAPTIC/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/haproxy-haptic/HAPTIC/actions/workflows/ci.yml)
 
 **HAPTIC** (**HAP**roxy **T**emplate **I**ngress **C**ontroller) is a template-driven [HAProxy](https://www.haproxy.org/) Ingress Controller for Kubernetes that generates HAProxy configurations using [Scriggo](https://scriggo.com/) templates and deploys them through the HAPTIC agent in each HAProxy pod.
 
@@ -38,7 +37,7 @@ release in the [versioned documentation](https://haproxy-haptic.org/docs/) befor
 following setup instructions.
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic --version 0.5.0
+helm install my-controller oci://ghcr.io/haproxy-haptic/haptic/charts/haptic --version 0.5.0
 ```
 
 The chart ships with [template libraries](https://haproxy-haptic.org/docs/dev/template-libraries/) for Kubernetes Ingress and Gateway API enabled by default. Use them for standard routing, or extend them with your own templates.

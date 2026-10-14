@@ -31,7 +31,7 @@ in the documentation menu when following other guides; `dev` includes
 unreleased features.
 
 ```bash
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 \
   --namespace haptic --create-namespace
 ```

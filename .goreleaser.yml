@@ -3,9 +3,9 @@ version: 2
 project_name: haptic
 
 # Snapshot configuration for CI builds (goreleaser release --snapshot)
-# Produces images with CI-specific tags: ci-<pipeline_id>-haproxy<version>
+# Produces images with CI-specific tags: ci-<run_id>-haproxy<version>
 snapshot:
-  version_template: "ci-{{ .Env.CI_PIPELINE_ID }}"
+  version_template: "ci-{{ .Env.GITHUB_RUN_ID }}"
 
 before:
   hooks:
@@ -76,7 +76,7 @@ dockers_v2:
     dockerfile: Dockerfile
     extra_files: [charts/haptic]
     images:
-      - "registry.gitlab.com/haproxy-haptic/haptic"
+      - "ghcr.io/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.0"
     platforms:
@@ -95,7 +95,7 @@ dockers_v2:
     dockerfile: Dockerfile
     extra_files: [charts/haptic]
     images:
-      - "registry.gitlab.com/haproxy-haptic/haptic"
+      - "ghcr.io/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.1"
     platforms:
@@ -114,7 +114,7 @@ dockers_v2:
     dockerfile: Dockerfile
     extra_files: [charts/haptic]
     images:
-      - "registry.gitlab.com/haproxy-haptic/haptic"
+      - "ghcr.io/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.2"
     platforms:
@@ -133,7 +133,7 @@ dockers_v2:
     dockerfile: Dockerfile
     extra_files: [charts/haptic]
     images:
-      - "registry.gitlab.com/haproxy-haptic/haptic"
+      - "ghcr.io/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.3"
     platforms:
@@ -152,7 +152,7 @@ dockers_v2:
     dockerfile: Dockerfile
     extra_files: [charts/haptic]
     images:
-      - "registry.gitlab.com/haproxy-haptic/haptic"
+      - "ghcr.io/haproxy-haptic/haptic"
     tags:
       - "{{ .Version }}-haproxy3.4"
     platforms:
@@ -169,7 +169,7 @@ dockers_v2:
     ids: [controller]
     dockerfile: Dockerfile.varnish
     images:
-      - "registry.gitlab.com/haproxy-haptic/haptic/varnish"
+      - "ghcr.io/haproxy-haptic/haptic/varnish"
     tags:
       - "{{ .Version }}"
     platforms:
@@ -189,14 +189,10 @@ docker_signs:
 # Note: setting disable: true would cause --release-notes to be ignored
 changelog: {}
 
-# GitLab CI settings - use CI_JOB_TOKEN for authentication
-gitlab_urls:
-  use_job_token: true
-
 release:
-  gitlab:
+  github:
     owner: haproxy-haptic
-    name: haptic
+    name: HAPTIC
 
   # Automatically mark alpha/beta/rc versions as pre-release
   prerelease: auto

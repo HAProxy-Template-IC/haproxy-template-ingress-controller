@@ -76,7 +76,7 @@ config — open the [playground](/playground/).
    also works; see [Service access](haproxy-deployment.md#haproxy-service):
 
     ```bash
-    helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+    helm install haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
       --version 0.5.0 \
       --namespace haptic --create-namespace \
       --set haproxy.service.type=LoadBalancer \
@@ -86,7 +86,7 @@ config — open the [playground](/playground/).
     If HAPTIC is already installed, apply the same flags with `helm upgrade`:
 
     ```bash
-    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+    helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
       --version 0.5.0 \
       --namespace haptic --reuse-values \
       --set haproxy.service.type=LoadBalancer \
@@ -129,7 +129,7 @@ config — open the [playground](/playground/).
    installed with them off) so `external-dns` and dashboards see HAPTIC's address:
 
     ```bash
-    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+    helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
       --version 0.5.0 \
       --namespace haptic --reuse-values \
       --set controller.config.templatingSettings.extraContext.statusPatches.enabled=true
@@ -185,7 +185,7 @@ class-less resources.
 ### Enable the annotation library
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic --reuse-values \
   --set controller.templateLibraries.nginxIngress.enabled=true
 ```
@@ -467,7 +467,7 @@ workload through its own `LoadBalancer` Service, or keep it on ingress-nginx.
 Enable the compatibility library on your existing HAPTIC release:
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic --reuse-values \
   --set controller.templateLibraries.haproxyIngress.enabled=true
 ```
@@ -490,7 +490,7 @@ See [differences from haproxy-ingress](annotation-compatibility.md#haproxy-ingre
 Enable the compatibility library on your existing HAPTIC release:
 
 ```bash
-helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic --reuse-values \
   --set controller.templateLibraries.haproxytech.enabled=true
 ```

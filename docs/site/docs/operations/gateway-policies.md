@@ -133,7 +133,7 @@ clients have switched.
 
     ```bash
     helm upgrade haptic \
-      oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
       --version 0.5.0 \
       --namespace haptic --reuse-values \
       --set rateLimit.shared.enabled=true \

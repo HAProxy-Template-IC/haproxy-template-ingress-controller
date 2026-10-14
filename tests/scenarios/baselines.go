@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"golang.org/x/mod/semver"
-	"sigs.k8s.io/yaml"
 )
 
 const requiredBaseline = "0.2.0-alpha.3"
@@ -56,7 +55,7 @@ func DiscoverUpgradeBaselines(ctx context.Context, client *http.Client, target s
 	var auth struct {
 		Token string `json:"token"`
 	}
-	if err := fetchRegistryJSON(ctx, client, "https://gitlab.com/jwt/auth?service=container_registry&scope=repository:"+chartRegistryPath+":pull", "", &auth); err != nil {
+	if err := fetchRegistryJSON(ctx, client, "https://ghcr.io/token?service=ghcr.io&scope=repository:"+chartRegistryPath+":pull", "", &auth); err != nil {
 		return nil, err
 	}
 	if auth.Token == "" {
@@ -65,7 +64,7 @@ func DiscoverUpgradeBaselines(ctx context.Context, client *http.Client, target s
 	var listing struct {
 		Tags []string `json:"tags"`
 	}
-	if err := fetchRegistryJSON(ctx, client, "https://registry.gitlab.com/v2/"+chartRegistryPath+"/tags/list?n=10000", auth.Token, &listing); err != nil {
+	if err := fetchRegistryJSON(ctx, client, "https://ghcr.io/v2/"+chartRegistryPath+"/tags/list?n=10000", auth.Token, &listing); err != nil {
 		return nil, err
 	}
 	return UpgradeBaselines(listing.Tags, target)
@@ -88,26 +87,6 @@ func fetchRegistryJSON(ctx context.Context, client *http.Client, address, token 
 		return fmt.Errorf("chart registry returned HTTP %d", response.StatusCode)
 	}
 	return json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(value)
-}
-
-func CheckUpgradeMatrix(published []string, content []byte) error {
-	var config struct {
-		Upgrade struct {
-			Parallel struct {
-				Matrix []struct {
-					Versions []string `json:"BASELINE_CHART_VERSION"`
-				} `json:"matrix"`
-			} `json:"parallel"`
-		} `json:"test-chart-upgrade"`
-	}
-	if err := yaml.Unmarshal(content, &config); err != nil {
-		return err
-	}
-	var matrix []string
-	for _, entry := range config.Upgrade.Parallel.Matrix {
-		matrix = append(matrix, entry.Versions...)
-	}
-	return checkUpgradeSelection(published, matrix)
 }
 
 func checkUpgradeSelection(published, matrix []string) error {

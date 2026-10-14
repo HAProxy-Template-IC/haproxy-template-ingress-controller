@@ -18,14 +18,14 @@ release in the [versioned documentation](https://haproxy-haptic.org/docs/) befor
 following setup instructions.
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install my-controller oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0
 ```
 
 With custom values:
 
 ```bash
-helm install my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install my-controller oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 \
   -f my-values.yaml
 ```
@@ -96,7 +96,7 @@ Each library contributes entries under `watchedResources`, `templateSnippets`, `
 ## Upgrading
 
 ```bash
-helm upgrade my-controller oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm upgrade my-controller oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 -f my-values.yaml
 ```
 
@@ -105,13 +105,13 @@ Helm itself never upgrades CRDs it installed from a chart's `crds/` directory. T
 If you manage CRDs out-of-band and set `crds.upgradeJob.enabled: false`, apply them yourself before upgrading:
 
 ```bash
-helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm show crds oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 | kubectl apply --server-side --force-conflicts -f -
 ```
 
 ## Examples
 
-Ready-to-adapt configurations live in the repository's top-level [examples/](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/examples) directory.
+Ready-to-adapt configurations live in the repository's top-level [examples/](https://github.com/haproxy-haptic/HAPTIC/tree/main/examples) directory.
 
 ## License
 

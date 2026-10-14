@@ -1,5 +1,5 @@
 {{- define "haptic.varnish.image" -}}
-{{- .Values.cache.varnish.image | default (printf "registry.gitlab.com/haproxy-haptic/haptic/varnish:%s" .Chart.AppVersion) -}}
+{{- .Values.cache.varnish.image | default (printf "ghcr.io/haproxy-haptic/haptic/varnish:%s" .Chart.AppVersion) -}}
 {{- end -}}
 
 {{/*

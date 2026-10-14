@@ -1,31 +1,6 @@
-# GitHub registry migration
+# GitHub container registry
 
-The migration copies published artifacts without rebuilding them. Controller
-images, the SPOA bundle, Varnish, and the Helm chart keep their original manifest
-digests, platform manifests, layers, signatures, and SBOMs. Imported signatures
-keep their original GitLab signing identities; later GitHub releases use their
-GitHub workflow identities.
-
-`.github/release-registry-mirror.json` pins the released tags and their complete
-OCI object inventory. It records OCI referrers and any legacy `.sig`, `.att`, and
-`.sbom` tags. The copier rejects changed source tags and conflicting destination tags
-before writing any tags for that component. It copies by digest, includes every
-platform, and verifies each manifest's bytes, every referenced blob's digest and
-size, and signature discoverability at the destination. The verifier also rejects
-an inventory that omits objects referenced by a copied manifest.
-
-Immutable manifest reads are shared within each component, and independent
-metadata checks use four workers. When a registry redirects a blob to storage,
-the verifier strips registry credentials and hashes the returned bytes against
-the declared digest and size.
-
-`release-registry-mirror.yml` runs the four components independently on standard
-GitHub runners. It is a migration operation, outside PR verification and scheduled
-CI. Its token can read source code and write packages; it cannot modify repository
-contents. No image aliases, chart defaults, or publication settings change when
-the mirror runs.
-
-The mirror retains these paths under `ghcr.io/haproxy-haptic`:
+HAPTIC publishes to public packages under `ghcr.io/haproxy-haptic`:
 
 | Artifact | Package path |
 | --- | --- |
@@ -33,24 +8,23 @@ The mirror retains these paths under `ghcr.io/haproxy-haptic`:
 | Helm chart | `haptic/charts/haptic` |
 | SPOA bundle | `haptic/spoa-hub` |
 | Varnish | `haptic/varnish` |
+| CI toolchains and fixture images | `haptic-ci` |
 
-The separate `haptic-ci` package holds the seven pinned CI toolchains and fixture
-images. Each package must permit anonymous pulls before CI or chart references
-move to it. Package visibility is an account setting; a successful authenticated
-copy does not prove public access.
+Releases up to 0.5.0 were copied from GitLab's registry by digest, with their
+platform manifests, layers, signatures, and SBOMs (GitHub run 38498045175). They
+keep their original GitLab signing identities; later releases carry the GitHub
+release workflow's identity. The SPOA hub base image still comes from
+`registry.gitlab.com/haproxy-haptic/haproxy-spoa-hub`, a separate project.
 
-For an anonymous check of a copied component, run:
+## CI toolchains
 
-```sh
-python3 -m scripts.ci.github_release_mirror \
-  --owner haproxy-haptic --component chart --anonymous \
-  --output .pilot/released-artifacts-chart-public.json
-```
+`.github/ci-toolchains.json` pins one CI image per HAProxy series plus the docs
+image, each with the build-input hash it was built from. A job whose inputs
+match a pin pulls it by digest. When the inputs differ, the job pulls
+`haptic-ci:<hash>-hp<series>` (or `haptic-ci:docs-<hash>`) and checks its
+build-input label; if that tag doesn't exist yet, it builds the image in the job.
 
-The mirror uses ORAS 1.3.4, pinned to its signed release tag's commit. ORAS copies
-all manifests in an image index and supports recursive attachment copying. The
-additional inventory verification checks what actually arrived.
-
-References: [ORAS copy](https://oras.land/docs/commands/oras_cp/),
-[ORAS 1.3.4](https://github.com/oras-project/oras/releases/tag/v1.3.4),
-[GitHub package visibility](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+Only `.github/workflows/ci-images.yml` pushes those tags. It runs on `main` when
+an image input changes and publishes every image the job had to build, so the
+next pull request reuses it. Refresh the pins in `.github/ci-toolchains.json`
+when you want the bootstrap image itself to move.

@@ -21,7 +21,7 @@ hide:
 
 """
 
-BLOB = "https://gitlab.com/haproxy-haptic/haptic/-/blob/main/"
+BLOB = "https://github.com/haproxy-haptic/HAPTIC/blob/main/"
 
 
 def on_page_read_source(page, config):

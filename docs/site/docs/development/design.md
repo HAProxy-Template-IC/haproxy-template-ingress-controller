@@ -104,7 +104,7 @@ Pure business logic components (`templating`, `k8s`, `dataplane`) have no event 
 
 ### Package documentation
 
-- [Controller Package](https://gitlab.com/haproxy-haptic/haptic/blob/main/pkg/controller/README.md) - Event-driven controller implementation
-- [Template Engine](https://gitlab.com/haproxy-haptic/haptic/blob/main/pkg/templating/README.md) - Template engine API reference
-- [Kubernetes Integration](https://gitlab.com/haproxy-haptic/haptic/blob/main/pkg/k8s/README.md) - Resource watching and indexing API
-- [Dataplane Integration](https://gitlab.com/haproxy-haptic/haptic/blob/main/pkg/dataplane/README.md) - HAProxy configuration synchronization
+- [Controller Package](https://github.com/haproxy-haptic/HAPTIC/blob/main/pkg/controller/README.md) - Event-driven controller implementation
+- [Template Engine](https://github.com/haproxy-haptic/HAPTIC/blob/main/pkg/templating/README.md) - Template engine API reference
+- [Kubernetes Integration](https://github.com/haproxy-haptic/HAPTIC/blob/main/pkg/k8s/README.md) - Resource watching and indexing API
+- [Dataplane Integration](https://github.com/haproxy-haptic/HAPTIC/blob/main/pkg/dataplane/README.md) - HAProxy configuration synchronization

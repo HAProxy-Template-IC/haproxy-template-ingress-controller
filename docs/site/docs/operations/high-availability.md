@@ -340,7 +340,7 @@ The chart already grants the Lease permissions needed for leader election.
     ```
 
     ```bash
-    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+    helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
       --version 0.5.0 --namespace haptic --values haptic-values.yaml
     kubectl rollout status deployment/haptic-controller -n haptic
     ```
@@ -348,7 +348,7 @@ The chart already grants the Lease permissions needed for leader election.
 2. Set `controller.replicaCount: 2` in the same values file and apply it:
 
     ```bash
-    helm upgrade haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+    helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
       --version 0.5.0 --namespace haptic --values haptic-values.yaml
     ```
 

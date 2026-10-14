@@ -30,5 +30,5 @@ RUN . /etc/haproxy-spoa-hub/versions-spoa.env \
 
 LABEL org.opencontainers.image.title="haptic-spoa-hub"
 LABEL org.opencontainers.image.description="HAProxy SPOA hub bundled with HAPTIC plugins (api-gateway, coraza, external-auth, fingerprinting, maxmind, mirror, rate-limit, sso-auth)"
-LABEL org.opencontainers.image.source="https://gitlab.com/haproxy-haptic/haptic"
+LABEL org.opencontainers.image.source="https://github.com/haproxy-haptic/HAPTIC"
 LABEL org.opencontainers.image.licenses="Apache-2.0"

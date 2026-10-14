@@ -32,7 +32,7 @@ CONTROLLER_GEN := $(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen
 # Docker variables
 IMAGE_NAME ?= haptic# Container image name (override: IMAGE_NAME=my-image)
 IMAGE_TAG ?= dev# Image tag (override: IMAGE_TAG=v1.0.0)
-REGISTRY ?=# Container registry (e.g., registry.gitlab.com/myorg)
+REGISTRY ?=# Container registry (e.g., ghcr.io/myorg)
 FULL_IMAGE := $(if $(REGISTRY),$(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG),$(IMAGE_NAME):$(IMAGE_TAG))
 DOCKER_BINARY_ARCH ?= amd64
 DOCKER_BINARY_CONTEXT ?=
@@ -326,11 +326,7 @@ check-all: lint audit test ## Run all checks (linting, security, tests)
 
 .PHONY: test-ci-rules
 test-ci-rules: ## Check CI selection, schedules, feature coverage, and merge verification
-	python3 -m unittest scripts/tests/test_ci_chart_rules.py scripts/tests/test_ci_verification.py scripts/tests/test_ci_budget.py scripts/tests/test_ci_schedules.py scripts/tests/test_e2e_profiles.py scripts/tests/test_shard_go_tests.py scripts/tests/test_ci_nightly.py
-
-.PHONY: ci-budget
-ci-budget: ## Check live CI headroom (CI_CANDIDATE_MINUTES is required)
-	python3 -m scripts.ci.budget --candidate-minutes "$(CI_CANDIDATE_MINUTES)"
+	python3 -m unittest scripts/tests/test_e2e_profiles.py scripts/tests/test_shard_go_tests.py
 
 .PHONY: test-admission-readiness
 .PHONY: check-no-lua
@@ -408,10 +404,6 @@ test-gateway-benchmark-harness: build-map-identity-check ## Verify benchmark set
 	python3 -m unittest scripts/tests/test_record_benchmark_config_identities.py scripts/tests/test_profile_gateway_benchmark.py
 	bash scripts/tests/test_bench_gateway_api.sh
 	bash scripts/tests/test_spoa_bundle_provenance.sh
-
-.PHONY: compare-github-ci
-compare-github-ci: ## Compare completed GitHub workflow evidence with the GitLab baseline
-	python3 .github/scripts/compare-completed-run.py --run "$(GITHUB_RUN_JSON)" --jobs "$(GITHUB_JOBS_JSON)" --output "$(GITHUB_COMPARISON_JSON)"
 
 .PHONY: test-process
 test-process: ## Verify process supervision with real child processes, without a cluster
@@ -753,7 +745,7 @@ docker-build-varnish: ## Build the bundled non-root Varnish image
 		image="$$(bash scripts/chart-varnish-image.sh)"; \
 	fi; \
 	docker buildx build $(if $(VARNISH_PLATFORMS),--platform "$(VARNISH_PLATFORMS)") \
-		--label "org.opencontainers.image.source=https://gitlab.com/haproxy-haptic/haptic" \
+		--label "org.opencontainers.image.source=https://github.com/haproxy-haptic/HAPTIC" \
 		--label "org.opencontainers.image.revision=$$(git rev-parse HEAD)" \
 		--provenance=false --tag "$$image" $(VARNISH_OUTPUT) -f Dockerfile.varnish .
 
@@ -970,8 +962,8 @@ validate-helm-libraries: build ## Render the chart and run `haptic validate` aga
 	@# Smoke-tests that the chart's bundled libraries merge cleanly and
 	@# that the resulting config passes the controller's offline
 	@# validate path — engine compile + chart validationTests. Used by
-	@# CI (.validate-helm-libraries-base in .gitlab-ci.yml) and by chart
-	@# authors who want to reproduce the CI check locally.
+	@# CI (the helm-3.x jobs) and by chart authors who want to reproduce the
+	@# CI check locally.
 	@#
 	@# Delegates to scripts/test-templates.sh so the render-and-validate
 	@# flow has one source of truth — every flag/path/library decision
@@ -1082,7 +1074,7 @@ docker-build-multiarch: check-source-hash ## Build multi-platform Docker image f
 docker-build-multiarch-push: check-source-hash ## Build and push multi-platform Docker image (linux/amd64,linux/arm64)
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "Error: REGISTRY variable must be set for multi-arch push"; \
-		echo "Example: make docker-build-multiarch-push REGISTRY=registry.gitlab.com/myorg"; \
+		echo "Example: make docker-build-multiarch-push REGISTRY=ghcr.io/myorg"; \
 		exit 1; \
 	fi
 	@echo "Building and pushing multi-platform Docker image: $(FULL_IMAGE)"
@@ -1115,7 +1107,7 @@ docker-load-kind: docker-build ## Build Docker image and load into kind cluster
 docker-push: docker-build ## Build and push Docker image to registry
 	@if [ -z "$(REGISTRY)" ]; then \
 		echo "Error: REGISTRY variable must be set"; \
-		echo "Example: make docker-push REGISTRY=registry.gitlab.com/myorg"; \
+		echo "Example: make docker-push REGISTRY=ghcr.io/myorg"; \
 		exit 1; \
 	fi
 	@echo "Pushing Docker image: $(FULL_IMAGE)"
@@ -1332,21 +1324,6 @@ test-snapshot-publication: ## Verify image and chart publication in a local regi
 prepare-spoa-release: spoa-prep ## Prepare the immutable bundle for a release branch
 	bash scripts/spoa-release-image.sh prepare
 
-.PHONY: mirror-github-ci-images
-mirror-github-ci-images: ## Preserve pinned CI image digests while copying them to GHCR
-	python3 -m scripts.ci.github_mirror --copy
-
-.PHONY: mirror-github-released-artifacts
-mirror-github-released-artifacts: ## Preserve published images, charts, signatures, and SBOMs in GHCR
-	python3 -m scripts.ci.github_release_mirror --copy --owner "$(GITHUB_REPOSITORY_OWNER)" --component "$(MIRROR_COMPONENT)" --output ".pilot/released-artifacts-$(MIRROR_COMPONENT).json"
-
-.PHONY: check-release-registry-inventory
-MIRROR_COMPONENTS ?= controller chart spoa varnish
-check-release-registry-inventory: ## Verify the frozen migration inventory against published source artifacts
-	@for component in $(MIRROR_COMPONENTS); do \
-		python3 -m scripts.ci.github_release_mirror --verify-source --owner haproxy-haptic --component "$$component" --output ".pilot/released-source-$$component.json" || exit $$?; \
-	done
-
 .PHONY: tag-github-release
 tag-github-release: ## Tag and dispatch a release after canonical source verification
 	python3 -m scripts.ci.github_release_tag
@@ -1374,7 +1351,7 @@ goreleaser-snapshot: check-source-hash ## Test GoReleaser locally (no push)
 		image="$$(bash scripts/chart-haproxy-image.sh "$$series")"; \
 		export "$$pin=$$image"; \
 	done; \
-	CI_PIPELINE_ID=$${CI_PIPELINE_ID:-local} SOURCE_HASH=$(SOURCE_HASH) goreleaser release --config "$(GORELEASER_CONFIG)" --snapshot --clean --skip=sign
+	GITHUB_RUN_ID=$${GITHUB_RUN_ID:-local} SOURCE_HASH=$(SOURCE_HASH) goreleaser release --config "$(GORELEASER_CONFIG)" --snapshot --clean --skip=sign
 
 ## PGO (Profile-Guided Optimization) targets
 

@@ -17,7 +17,7 @@ tests:
     asserts:
       - equal:
           path: spec.templatingSettings.extraContext.cache.varnish.image
-          value: registry.gitlab.com/haproxy-haptic/haptic/varnish:test-version
+          value: ghcr.io/haproxy-haptic/haptic/varnish:test-version
 
   - it: should preserve an explicit Varnish image
     template: haproxytemplateconfig.yaml

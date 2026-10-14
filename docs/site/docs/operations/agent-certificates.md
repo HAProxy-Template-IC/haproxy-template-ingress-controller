@@ -72,7 +72,7 @@ For a new release:
 
 ```bash
 helm install haptic \
-  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --namespace haptic --create-namespace \
   --set haproxy.agent.tls.certManager.enabled=true
 ```
@@ -118,7 +118,7 @@ install cert-manager, then run:
 umask 077
 helm get values haptic --namespace haptic --output yaml > haptic-current-values.yaml
 helm upgrade haptic \
-  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --namespace haptic --reset-values --values haptic-current-values.yaml \
   --set haproxy.agent.tls.certManager.enabled=true \
   --set haproxy.agent.tls.issuerSecretName=haptic-cm-issuer \
@@ -214,7 +214,7 @@ intermediate certificates after its leaf certificate.
 
     ```bash
     helm install haptic \
-      oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
       --namespace haptic --values agent-tls-values.yaml
     ```
 
@@ -224,7 +224,7 @@ intermediate certificates after its leaf certificate.
     umask 077
     helm get values haptic --namespace haptic --output yaml > haptic-current-values.yaml
     helm upgrade haptic \
-      oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+      oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
       --namespace haptic --reset-values \
       --values haptic-current-values.yaml --values agent-tls-values.yaml
     ```

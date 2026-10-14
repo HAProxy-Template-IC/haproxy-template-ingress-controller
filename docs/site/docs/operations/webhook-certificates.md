@@ -80,7 +80,7 @@ Install with the manual CA bundle and cert-manager disabled. Keep your other
 settings in `haptic-values.yaml`:
 
 ```bash
-helm install haptic oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm install haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.5.0 --namespace haptic \
   --values haptic-values.yaml \
   --set controller.webhook.certManager.enabled=false \

@@ -137,8 +137,6 @@ python3 scripts/update-release-docs.py "$PREV_VERSION" "$VERSION" "$DEFAULT_HAPR
 sed -i \
     -e "s|haproxy-haptic.org/docs/dev/|haproxy-haptic.org/docs/$VERSION/|g" \
     -e "s|haproxy-haptic.org/docs/$PREV_ESC/|haproxy-haptic.org/docs/$VERSION/|g" \
-    -e "s|gitlab.com/haproxy-haptic/haptic/-/blob/main/|gitlab.com/haproxy-haptic/haptic/-/blob/v$VERSION/|g" \
-    -e "s|gitlab.com/haproxy-haptic/haptic/-/blob/v$PREV_ESC/|gitlab.com/haproxy-haptic/haptic/-/blob/v$VERSION/|g" \
     -e "s|github.com/haproxy-haptic/HAPTIC/blob/main/|github.com/haproxy-haptic/HAPTIC/blob/v$VERSION/|g" \
     -e "s|github.com/haproxy-haptic/HAPTIC/blob/v$PREV_ESC/|github.com/haproxy-haptic/HAPTIC/blob/v$VERSION/|g" \
     charts/haptic/README.md \

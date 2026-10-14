@@ -2,11 +2,10 @@
 
 ## Reporting a Vulnerability
 
-To report a security vulnerability, please open a **confidential issue** in the GitLab project:
+To report a security vulnerability, use GitHub's private vulnerability reporting:
 
-1. Go to the [HAPTIC GitLab project](https://gitlab.com/haproxy-haptic/haptic)
-2. Navigate to **Issues → New issue**
-3. Enable **Confidential issue** before submitting
+1. Go to the [HAPTIC security page](https://github.com/haproxy-haptic/HAPTIC/security)
+2. Select **Report a vulnerability**
 
 Include in your report:
 

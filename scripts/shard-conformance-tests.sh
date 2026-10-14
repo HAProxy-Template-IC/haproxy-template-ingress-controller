@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 #
 # Emit a Go test `-run` regex for one shard of the upstream Gateway-API
-# conformance suite. Used by `.gitlab-ci.yml`'s `test-gateway-conformance`
-# job, which runs with `parallel: <N>` so GitLab CI provides
-# `$CI_NODE_INDEX` (1..N) and `$CI_NODE_TOTAL` (=N) per job. Each
-# parallel job runs:
+# conformance suite. The `gateway-<n>` CI jobs each run one shard:
 #
-#   TEST_RUN_PATTERN="$(scripts/shard-conformance-tests.sh "$CI_NODE_INDEX" "$CI_NODE_TOTAL")" \
+#   TEST_RUN_PATTERN="$(scripts/shard-conformance-tests.sh "$SHARD_INDEX" 4)" \
 #     make test-gateway-conformance
 #
 # The result is a regex of the shape

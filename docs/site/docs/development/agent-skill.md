@@ -33,11 +33,11 @@ HAPTIC and HAProxy versions so it can check the matching documentation. For a
 skill snapshot from the documentation version you're reading, use the download
 below. Older releases may predate the skill.
 
-You can also install from the [source repository](https://gitlab.com/haproxy-haptic/haptic/-/tree/main/skills/haptic).
+You can also install from the [source repository](https://github.com/haproxy-haptic/HAPTIC/tree/main/skills/haptic).
 This method additionally requires Git:
 
 ```bash
-npx skills add https://gitlab.com/haproxy-haptic/haptic --skill haptic
+npx skills add https://github.com/haproxy-haptic/HAPTIC --skill haptic
 ```
 
 ### Download the skill

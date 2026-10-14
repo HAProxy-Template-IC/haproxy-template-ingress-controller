@@ -219,8 +219,7 @@ fix the failure before claiming conformance for that release.
 Once the chart is published, add upgrade jobs for the new stable version on both
 current and minimum Kubernetes to `.github/workflows/ci-speed-proof.yml`. Add both
 jobs to `.github/ci-verification.json` and `.github/job-duration-weights.json`, then
-run `make schedule-github-verification`. While `.gitlab-ci.yml` remains in the
-checkout, also update its `test-chart-upgrade.parallel.matrix`. Until you add it,
+run `make schedule-github-verification`. Until you add it,
 `check-chart-upgrade-baselines` fails on every pipeline that runs the upgrade
 tests, so the new release can't go untested. Pre-releases aren't required.
 The check covers published stable versions at or below `VERSION`; a matrix

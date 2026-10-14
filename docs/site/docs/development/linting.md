@@ -47,11 +47,10 @@ publication; merging it doesn't update the live documentation.
 
 ## CI minutes
 
-CI runs on a finite compute-minute budget, and an MR pipeline for Go or chart
-changes costs about 3,000 compute minutes. Run `make lint`, `make test`, and,
-for chart changes, `./scripts/test-templates.sh` before you push, and push
-review fixes together. Update an open MR from `main` only when GitLab reports a
-conflict: merged-results pipelines already test against the current `main`.
+Every pull request runs the complete CI matrix. Run `make lint`, `make test`,
+and, for chart changes, `./scripts/test-templates.sh` before you push, and push
+review fixes together. Update an open PR from `main` only when GitHub reports a
+conflict: the merge queue already tests against the current `main`.
 
 ## `golangci-lint`
 
@@ -124,7 +123,7 @@ pre-commit run --all-files
 ```
 
 !!! warning
-    Don't bypass the hooks with `git commit --no-verify`. CI runs the same checks, so a bypassed commit just turns into a failed pipeline. If a hook fails spuriously, fix the root cause — see [CLAUDE.md](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/CLAUDE.md) for the project-wide policy.
+    Don't bypass the hooks with `git commit --no-verify`. CI runs the same checks, so a bypassed commit just turns into a failed pipeline. If a hook fails spuriously, fix the root cause — see [CLAUDE.md](https://github.com/haproxy-haptic/HAPTIC/blob/main/CLAUDE.md) for the project-wide policy.
 
 ## Tooling
 

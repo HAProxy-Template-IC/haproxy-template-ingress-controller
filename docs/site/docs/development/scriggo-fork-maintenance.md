@@ -7,7 +7,7 @@ unlikely to accept, so it needs a documented, repeatable maintenance process.
 This page records why the fork exists, how far it has drifted from upstream, and
 the process for keeping it current and secure. It's the maintenance counterpart
 to the sandbox posture and fork notes in
-[`pkg/templating/README.md`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/pkg/templating/README.md).
+[`pkg/templating/README.md`](https://github.com/haproxy-haptic/HAPTIC/blob/main/pkg/templating/README.md).
 
 Origin: [issue #143](https://gitlab.com/haproxy-haptic/haptic/-/issues/143), an
 architecture review of the forked runtime as a component.
@@ -22,13 +22,13 @@ machine, so it can't be carried as a small out-of-tree patch.
 
 Parallel rendering is separate from the `go` (goroutine) *statement*. HAPTIC sets
 `AllowGoStmt: false` in
-[`pkg/templating/engine_scriggo.go`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/pkg/templating/engine_scriggo.go),
+[`pkg/templating/engine_scriggo.go`](https://github.com/haproxy-haptic/HAPTIC/blob/main/pkg/templating/engine_scriggo.go),
 which disables the statement form `{% go f() %}` for operator templates. The
 expression form above compiles to a different node (`OpGoRender`) that
 `AllowGoStmt` doesn't gate, so parallel rendering stays available with the
 statement form off. The full sandbox posture — what template execution can and
 can't reach — lives in the
-[sandbox posture table](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/pkg/templating/README.md#sandbox-posture)
+[sandbox posture table](https://github.com/haproxy-haptic/HAPTIC/blob/main/pkg/templating/README.md#sandbox-posture)
 in `pkg/templating/README.md`. Keep that table and this page consistent.
 
 ## Divergence from upstream
@@ -142,7 +142,7 @@ grep gitlab.com/haproxy-haptic/scriggo go.mod
 - **Renovate tracks the pin.** The built-in Go-module manager proposes a digest
   update whenever the fork's default branch advances — the recurring
   `renovate/…-scriggo-digest` merge requests. A `packageRule` in
-  [`renovate.json`](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/renovate.json)
+  [`renovate.json`](https://github.com/haproxy-haptic/HAPTIC/blob/main/renovate.json)
   marks these updates for human review rather than auto-merge, because a fork
   bump can carry an upstream security fix that a reviewer must recognize and note
   against the [security advisory watch](#security-advisory-watch).

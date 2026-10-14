@@ -51,7 +51,7 @@ workflows too.
 | `haproxyVersion` | string | `"3.4"` | HAProxy major.minor series. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
 | `haproxyPatchVersions` | map | See values.yaml | Tested Community Edition patch versions for each HAProxy series. |
 | `haproxyEnterprisePatchVersions` | map | See values.yaml | Per-`haproxyVersion` enterprise revision pins (for example `"3.2": "3.2r1"`). Used when `haproxy.enterprise.enabled=true` |
-| `controller.image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic` | Controller image repository |
+| `controller.image.repository` | string | `ghcr.io/haproxy-haptic/haptic` | Controller image repository |
 | `controller.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `controller.image.tag` | string | `""` | Controller image tag *without* the HAProxy-series suffix; empty uses the chart `appVersion`. The rendered reference is always `<tag>-haproxy<haproxyVersion>`, so the suffix is appended to an explicit value too |
 | `nameOverride` | string | `""` | Override chart name |
@@ -794,7 +794,7 @@ One `PodMonitor` for every metrics endpoint on the HAProxy pod. See [Where to sc
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `spoaHub.enabled` | bool/null | `null` | Master enable. `null` auto-derives from `spoaHub.plugins.*.enabled`. Set `true` to force the sidecar on with no plugins enabled (test rendering); set `false` to force it off even when a plugin is enabled |
-| `spoaHub.image.repository` | string | `registry.gitlab.com/haproxy-haptic/haptic/spoa-hub` | SPOA hub image repository |
+| `spoaHub.image.repository` | string | `ghcr.io/haproxy-haptic/haptic/spoa-hub` | SPOA hub image repository |
 | `spoaHub.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
 | `spoaHub.image.tag` | string | `""` | Override the tag; empty uses `.Chart.AppVersion` |
 | `spoaHub.resources.requests.cpu` | string | `50m` | SPOA hub CPU request |

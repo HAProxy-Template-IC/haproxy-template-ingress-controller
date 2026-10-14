@@ -1778,9 +1778,8 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
       if (SCRIGGO_GLOBAL_ANCHOR[root]) return `${DOCS}/#${SCRIGGO_GLOBAL_ANCHOR[root]}`;
       if (SCRIGGO_FUNCS.has(root)) return `${DOCS}/#helper-functions`;
       if (SCRIGGO_KEYWORDS.has(root)) return `${DOCS}/#template-syntax`;
-      // Unknown identifier (user macro, Go stdlib call, …): repo blob search at the selected version.
-      const ref = document.documentElement.dataset.version || 'main';
-      return `https://gitlab.com/haproxy-haptic/haptic/-/search?search=${encodeURIComponent(root)}&scope=blobs&ref=${encodeURIComponent(ref)}`;
+      // Unknown identifier (user macro, Go stdlib call, …): code search; GitHub indexes the default branch only.
+      return `https://github.com/search?type=code&q=${encodeURIComponent('repo:haproxy-haptic/HAPTIC ' + root)}`;
     }
     function gotoDefinition({ token, scriggo }) {
       const url = scriggo ? scriggoDocURL(token) : haproxyDocURL(token);

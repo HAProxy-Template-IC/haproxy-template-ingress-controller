@@ -78,10 +78,12 @@ verification. Work through the sections in order.
     `make lint` runs `scripts/check-gwapi-version-pins.sh`, which fails if a
     version literal reappears in either place.
 
-6. Update the nightly old-release matrix. If you added a schema bundle in
-    step 3, add the same release tag to the `GWAPI_RELEASE` list of the
-    `nightly-gwapi-matrix` job in `.gitlab-ci.yml` — the list mirrors the
-    `tests/schemas-ga-*` bundles.
+6. Update the old-release matrix. If you added a schema bundle in step 3,
+    add a `gateway-compatibility-<release>` job to
+    `.github/workflows/ci-speed-proof.yml`, the release to the `compatibility`
+    matrix in `.github/workflows/nightly.yml`, and both to
+    `.github/ci-verification.json`; then run `make schedule-github-verification`.
+    The list mirrors the `tests/schemas-ga-*` bundles.
 
 ## Suite adaptation
 
@@ -103,8 +105,9 @@ verification. Work through the sections in order.
 3. Expect the shards to rebalance. `scripts/shard-conformance-tests.sh` maps
     each test name to a shard via a CRC32 hash modulo the shard count, so new
     upstream tests shift existing assignments and shard durations change. If
-    a shard outgrows its job timeout, raise the `parallel:` count of the
-    `test-gateway-conformance` job in `.gitlab-ci.yml`.
+    a shard outgrows its job timeout, add a `gateway-<n>` shard job to
+    `.github/workflows/ci-speed-proof.yml` and raise the shard count those
+    jobs pass to `scripts/shard-conformance-tests.sh`.
 
 4. Skip individual broken upstream tests via `opts.SkipTests`, each entry
     with an issue link in a comment. Never `t.Skip()` the whole suite.

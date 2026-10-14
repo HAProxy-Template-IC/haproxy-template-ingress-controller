@@ -24,7 +24,7 @@ from mkdocs.structure.files import File
 
 DEST_DIR = "development/adr"
 NAV_GROUP = "Architecture Decision Records"
-EDIT_URL = "https://gitlab.com/haproxy-haptic/haptic/-/edit/main/docs/adr/"
+EDIT_URL = "https://github.com/haproxy-haptic/HAPTIC/edit/main/docs/adr/"
 
 
 def _adr_paths(config):

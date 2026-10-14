@@ -32,7 +32,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.initContainers[?(@.name=="agent")].image
-          value: registry.gitlab.com/haproxy-haptic/haptic:9.8.7-test-haproxy3.4
+          value: ghcr.io/haproxy-haptic/haptic:9.8.7-test-haproxy3.4
       - isNull:
           path: spec.template.spec.initContainers[?(@.name=="agent")].command
       - isNull:

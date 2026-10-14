@@ -26,10 +26,13 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 SCRIPT = Path(__file__).parents[1] / "analyze-gateway-api-children.py"
 RUNNER = Path(__file__).parents[1] / "bench-gateway-api.sh"
-CI_CONFIG = Path(__file__).parents[2] / ".gitlab-ci.yml"
+REPO_ROOT = Path(__file__).parents[2]
+BENCHMARK_WORKFLOW = REPO_ROOT / ".github/workflows/gateway-benchmark-proof.yml"
 SPEC = importlib.util.spec_from_file_location("analyze_gateway_api_children", SCRIPT)
 ANALYZER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = ANALYZER
@@ -2120,38 +2123,17 @@ validate_haptic_scale_routes 1 "$3" "$4"
         )
 
     def test_hosted_ci_job_is_an_explicit_bounded_smoke(self):
-        ci_config = CI_CONFIG.read_text(encoding="utf-8")
-        match = re.search(
-            r"(?m)^gateway-api-benchmark-smoke:\n(.*?)(?=^# Upstream Kubernetes Ingress)",
-            ci_config,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(match)
-        job = match.group(1) + (CI_CONFIG.parent / "scripts/bench-gateway-api-ci.sh").read_text(encoding="utf-8")
+        workflow = yaml.safe_load(BENCHMARK_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertNotIn("pull_request", workflow["on"])
+        self.assertNotIn("schedule", workflow["on"])
+        self.assertIn("workflow_call", workflow["on"])
+        benchmark = workflow["jobs"]["benchmark"]
+        self.assertEqual(benchmark["name"], "gateway-api-benchmark-smoke")
+        self.assertEqual(benchmark["timeout-minutes"], 165)
+        steps = "\n".join(step.get("run", "") for step in benchmark["steps"])
+        self.assertIn("make bench-gateway-api-ci", steps)
+        job = (REPO_ROOT / "scripts/bench-gateway-api-ci.sh").read_text(encoding="utf-8")
         for setting in (
-            "image: ${CI_IMAGE_BASE}:${CI_IMAGE_TAG}-hp3.4",
-            'timeout: 2 hours 45 minutes',
-            'BENCH_REF: "e81292ed876472804e0a2245876a7c445ab80881"',
-            'BENCH_GATEWAY_API_VERSION: "v1.4.0"',
-            'BENCH_GATEWAYS: "haptic-bench/haptic"',
-            'BENCH_SCENARIOS: "probe,scale,routechange"',
-            'BENCH_PROBE_ROUTES: "300"',
-            'BENCH_PROBE_TIMEOUT: "45m"',
-            'BENCH_DEPLOY_INTERVAL: "100ms"',
-            'BENCH_WATCH_DEBOUNCE: "100ms"',
-            'BENCH_SCALE_NAMESPACES: "50"',
-            'BENCH_SCALE_ROUTES_PER_NAMESPACE: "100"',
-            'BENCH_SCALE_DURATION: "10m"',
-            'BENCH_SCALE_STARTUP_TIMEOUT: "20m"',
-            'BENCH_ROUTECHANGE_ITERATIONS: "20"',
-            'BENCH_ROUTECHANGE_GRACE_PERIOD: "200ms"',
-            'BENCH_ROUTECHANGE_TIMEOUT: "10m"',
-            'HAPROXY_VERSION: "3.4"',
-            'BENCH_KEEP_CLUSTER: "false"',
-            'BENCH_ALLOW_DIRTY: "false"',
-            'BENCH_ALLOW_COSCHEDULED_CLUSTERS: "false"',
-            'REUSE_CLUSTER: "false"',
-            'BUILD_ONLY: "false"',
             'timeout --preserve-status --kill-after=20m 135m ./scripts/bench-gateway-api.sh',
             '.comparison.published_workload_inputs_match == false',
             '.comparison.controlled_default_profile == false',
@@ -2187,7 +2169,6 @@ validate_haptic_scale_routes 1 "$3" "$4"
             "BUILD_ONLY=false",
         ):
             self.assertIn(assignment, job)
-        self.assertNotRegex(ci_config, r"(?m)^gateway-api-benchmark:")
         runner = RUNNER.read_text(encoding="utf-8")
         self.assertIn("readonly DEFAULT_PROBE_ROUTES=3000", runner)
         self.assertIn('BENCH_DEPLOY_INTERVAL="${BENCH_DEPLOY_INTERVAL:-}"', runner)
@@ -2229,7 +2210,7 @@ exit "$rc"
                 self.assertEqual(result.stdout.strip(), str(expected_calls))
 
     def test_ci_retains_failed_diagnostics_only_after_security_and_provenance_checks(self):
-        wrapper = (CI_CONFIG.parent / "scripts/bench-gateway-api-ci.sh").read_text(encoding="utf-8")
+        wrapper = (REPO_ROOT / "scripts/bench-gateway-api-ci.sh").read_text(encoding="utf-8")
         staging = wrapper[wrapper.index("trusted=false"):wrapper.index('exit "$runner_rc"') + len('exit "$runner_rc"')]
         for case in (
             "complete", "aborted", "one-scan", "redacted", "untrusted",

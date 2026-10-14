@@ -34,11 +34,3 @@ func TestUpgradeBaselinesPreserveReleasedAndPrereleaseCoverage(t *testing.T) {
 	_, err = UpgradeBaselines(tags, "dev")
 	require.ErrorContains(t, err, "not semver")
 }
-
-func TestUpgradeMatrixRequiresExactCoverage(t *testing.T) {
-	content := []byte("test-chart-upgrade:\n  parallel:\n    matrix:\n    - BASELINE_CHART_VERSION: [0.1.0, 0.2.0-alpha.3]\n")
-	require.NoError(t, CheckUpgradeMatrix([]string{"0.1.0", "0.2.0-alpha.3"}, content))
-	require.ErrorContains(t, CheckUpgradeMatrix([]string{"0.1.0"}, content), "unknown=[0.2.0-alpha.3]")
-	require.ErrorContains(t, CheckUpgradeMatrix([]string{"0.1.0", "0.2.0-alpha.3", "0.4.1"}, content), "missing=[0.4.1]")
-	require.Error(t, CheckUpgradeMatrix(nil, []byte("{}")))
-}

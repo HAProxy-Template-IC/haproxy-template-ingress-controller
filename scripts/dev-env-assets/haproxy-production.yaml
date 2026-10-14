@@ -112,7 +112,7 @@ spec:
         # It runs the controller's own image — one binary, two roles — so the
         # image tag must match the controller's.
         - name: agent
-          image: registry.gitlab.com/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.2
+          image: ghcr.io/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.2
           imagePullPolicy: IfNotPresent
           args:
             - agent

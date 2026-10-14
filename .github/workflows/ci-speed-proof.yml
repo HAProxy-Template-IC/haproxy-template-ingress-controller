@@ -32,7 +32,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -40,7 +40,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: unit-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -205,7 +205,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -213,7 +213,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -243,7 +243,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -251,7 +251,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: gitops
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: flux
       GITOPS_CERTIFICATES: external
@@ -281,7 +281,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -289,7 +289,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: acceptance
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -319,7 +319,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -327,7 +327,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: chart-minimum
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -357,7 +357,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: conformance
@@ -365,7 +365,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -397,7 +397,7 @@ jobs:
       PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       SCALE_SEED_WORKERS: '4'
@@ -469,13 +469,13 @@ jobs:
     timeout-minutes: 60
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       PILOT_SUITE: integration-coverage
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       SHARD_ID: ''
       PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
-      CI_SUITE: '{"name":"integration-3.4","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.4","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad","shard":""}'
+      CI_SUITE: '{"name":"integration-3.4","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.4","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad","shard":""}'
     steps: &id002
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -518,10 +518,10 @@ jobs:
     timeout-minutes: 60
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       PILOT_SUITE: coverage-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       SHARD_ID: rest
       PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
       CI_SUITE: '{"name":"coverage-rest","kind":"x64","runner":"ubuntu-24.04","suite":"coverage-shard","shard":"rest","haproxy":"","image":""}'
@@ -538,7 +538,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -546,7 +546,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.3.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -576,7 +576,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -584,7 +584,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.2.2
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -614,7 +614,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -622,7 +622,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.2.0-alpha.3
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -652,7 +652,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.2'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -660,7 +660,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: helm
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -676,7 +676,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"helm-3.2","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.2","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
+      CI_SUITE: '{"name":"helm-3.2","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.2","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_e2e_hp3_3_4:
@@ -690,7 +690,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.3'
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: ''
@@ -698,7 +698,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -728,7 +728,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.2'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: ''
@@ -736,7 +736,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -766,7 +766,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.1'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -774,7 +774,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: helm
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -790,7 +790,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"helm-3.1","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.1","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
+      CI_SUITE: '{"name":"helm-3.1","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.1","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_e2e_hp3_2_3:
@@ -804,7 +804,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.2'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: ''
@@ -812,7 +812,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -842,7 +842,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.1'
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: ''
@@ -850,7 +850,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -880,7 +880,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.2'
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: ''
@@ -888,7 +888,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -918,7 +918,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -926,7 +926,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: snapshot
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -956,7 +956,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.0'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: ''
@@ -964,7 +964,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -994,7 +994,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.3'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: ''
@@ -1002,7 +1002,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1032,7 +1032,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.0'
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: ''
@@ -1040,7 +1040,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1070,7 +1070,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.0'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1078,7 +1078,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1108,7 +1108,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.0'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1116,7 +1116,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: helm
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1132,7 +1132,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"helm-3.0","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.0","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
+      CI_SUITE: '{"name":"helm-3.0","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.0","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_e2e_hp3_1_2:
@@ -1146,7 +1146,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.1'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: ''
@@ -1154,7 +1154,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1184,7 +1184,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.3'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1192,7 +1192,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1222,7 +1222,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: ''
@@ -1230,7 +1230,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1260,7 +1260,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.3'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: ''
@@ -1268,7 +1268,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1298,7 +1298,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1306,7 +1306,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1336,7 +1336,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.0'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: ''
@@ -1344,7 +1344,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1374,7 +1374,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: ''
@@ -1382,7 +1382,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1412,7 +1412,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.2'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1420,7 +1420,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1450,7 +1450,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.1'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1458,7 +1458,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1483,10 +1483,10 @@ jobs:
     timeout-minutes: 60
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       PILOT_SUITE: coverage-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       SHARD_ID: renderer
       PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
       CI_SUITE: '{"name":"coverage-renderer","kind":"x64","runner":"ubuntu-24.04","suite":"coverage-shard","shard":"renderer","haproxy":"","image":""}'
@@ -1503,7 +1503,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.1'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: ''
@@ -1511,7 +1511,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1541,7 +1541,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: ''
@@ -1549,7 +1549,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1579,7 +1579,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: rest
       HAPTIC_E2E_PROFILE: ''
@@ -1587,7 +1587,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: unit-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1617,7 +1617,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1625,7 +1625,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: helm
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1641,7 +1641,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"helm-3.4","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.4","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
+      CI_SUITE: '{"name":"helm-3.4","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.4","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_helm_3_3:
@@ -1655,7 +1655,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.3'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1663,7 +1663,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: helm
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1679,7 +1679,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"helm-3.3","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.3","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
+      CI_SUITE: '{"name":"helm-3.3","kind":"build","runner":"ubuntu-24.04","suite":"helm","haproxy":"3.3","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102","baseline":"","certificates":"","provider":"","index":"","shard":"","profile":"","channel":"","node":"","settings":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_e2e_hp3_4_4:
@@ -1693,7 +1693,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: ''
@@ -1701,7 +1701,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1731,7 +1731,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: ''
@@ -1739,7 +1739,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1769,7 +1769,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1777,7 +1777,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: gitops
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: flux
       GITOPS_CERTIFICATES: cert-manager
@@ -1807,7 +1807,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1815,7 +1815,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.3.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1845,7 +1845,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1853,7 +1853,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: gitops
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: argo
       GITOPS_CERTIFICATES: cert-manager
@@ -1883,7 +1883,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1891,7 +1891,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.4.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1921,7 +1921,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1929,7 +1929,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.2.2
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1959,7 +1959,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -1967,7 +1967,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.5.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -1999,7 +1999,7 @@ jobs:
       PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       SCALE_SEED_WORKERS: '4'
@@ -2059,7 +2059,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2067,7 +2067,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.4.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2097,7 +2097,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2105,7 +2105,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.2.1
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2135,7 +2135,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2143,7 +2143,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: gitops
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: argo
       GITOPS_CERTIFICATES: external
@@ -2173,7 +2173,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2181,7 +2181,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.5.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2211,7 +2211,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2219,7 +2219,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.4.1
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2249,7 +2249,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2257,7 +2257,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.2.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2282,13 +2282,13 @@ jobs:
     timeout-minutes: 60
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.0'
       PILOT_SUITE: integration-coverage
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
       SHARD_ID: ''
       PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
-      CI_SUITE: '{"name":"integration-3.0","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.0","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000","shard":""}'
+      CI_SUITE: '{"name":"integration-3.0","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.0","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000","shard":""}'
     steps: *id002
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_ingress_2:
@@ -2302,7 +2302,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: conformance
@@ -2310,7 +2310,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2335,13 +2335,13 @@ jobs:
     timeout-minutes: 60
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.1'
       PILOT_SUITE: integration-coverage
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
       SHARD_ID: ''
       PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
-      CI_SUITE: '{"name":"integration-3.1","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.1","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae","shard":""}'
+      CI_SUITE: '{"name":"integration-3.1","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.1","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae","shard":""}'
     steps: *id002
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_integration_3_2:
@@ -2350,13 +2350,13 @@ jobs:
     timeout-minutes: 60
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.2'
       PILOT_SUITE: integration-coverage
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
       SHARD_ID: ''
       PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
-      CI_SUITE: '{"name":"integration-3.2","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.2","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07","shard":""}'
+      CI_SUITE: '{"name":"integration-3.2","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.2","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07","shard":""}'
     steps: *id002
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_integration_3_3:
@@ -2365,13 +2365,13 @@ jobs:
     timeout-minutes: 60
     env:
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.3'
       PILOT_SUITE: integration-coverage
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
       SHARD_ID: ''
       PILOT_GO_CACHE_DIR: /tmp/haptic-go-cache
-      CI_SUITE: '{"name":"integration-3.3","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.3","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102","shard":""}'
+      CI_SUITE: '{"name":"integration-3.3","kind":"x64","runner":"ubuntu-24.04","suite":"integration-coverage","haproxy":"3.3","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102","shard":""}'
     steps: *id002
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_unit_command_2:
@@ -2385,7 +2385,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: ''
@@ -2393,7 +2393,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: unit-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2424,7 +2424,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2432,7 +2432,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ci-image
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2448,7 +2448,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"ci-image-3.4","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.4","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
+      CI_SUITE: '{"name":"ci-image-3.4","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.4","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() }}
     needs: suite_e2e_minimum_kubernetes_1
@@ -2463,7 +2463,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: renderer
       HAPTIC_E2E_PROFILE: ''
@@ -2471,7 +2471,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: unit-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2502,7 +2502,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2510,7 +2510,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: lint
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2541,7 +2541,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2549,7 +2549,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.1.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2580,7 +2580,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2588,7 +2588,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.1.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2619,7 +2619,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: conformance
@@ -2627,7 +2627,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2658,7 +2658,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2666,7 +2666,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.2.0
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2693,7 +2693,7 @@ jobs:
     env:
       PILOT_SUITE: coverage-combined
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -2745,7 +2745,7 @@ jobs:
       PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       SCALE_SEED_WORKERS: '4'
@@ -2806,7 +2806,7 @@ jobs:
       PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       SCALE_SEED_WORKERS: '4'
@@ -2867,7 +2867,7 @@ jobs:
       PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       SCALE_SEED_WORKERS: '4'
@@ -2926,7 +2926,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.3'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2934,7 +2934,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ci-image
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -2950,7 +2950,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"ci-image-3.3","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.3","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
+      CI_SUITE: '{"name":"ci-image-3.3","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.3","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:df051fa5e261664aed9a4ee4cf056721f247a3a8e5314fd21863818dd496f102","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() }}
     needs: suite_e2e_minimum_kubernetes_3
@@ -2965,7 +2965,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -2973,7 +2973,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: docs-image
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3004,7 +3004,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3012,7 +3012,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: docs
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci/python-docs@sha256:bd8734af3450c5c7a62260e80a8fe9b9d2aa563a4d89afc5fa19dea5c0237695
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:bd8734af3450c5c7a62260e80a8fe9b9d2aa563a4d89afc5fa19dea5c0237695
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3028,7 +3028,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"docs","kind":"build","runner":"ubuntu-24.04","suite":"docs","image":"registry.gitlab.com/haproxy-haptic/haptic/ci/python-docs@sha256:bd8734af3450c5c7a62260e80a8fe9b9d2aa563a4d89afc5fa19dea5c0237695","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","node":"","baseline":""}'
+      CI_SUITE: '{"name":"docs","kind":"build","runner":"ubuntu-24.04","suite":"docs","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:bd8734af3450c5c7a62260e80a8fe9b9d2aa563a4d89afc5fa19dea5c0237695","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","node":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() }}
     needs: suite_e2e_hp3_1_1
@@ -3043,7 +3043,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: ''
@@ -3051,7 +3051,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3082,7 +3082,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.1'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3090,7 +3090,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ci-image
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3106,7 +3106,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"ci-image-3.1","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.1","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
+      CI_SUITE: '{"name":"ci-image-3.1","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.1","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() }}
     needs: suite_e2e_hp3_1_3
@@ -3121,7 +3121,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3129,7 +3129,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: spoa
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3160,7 +3160,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3168,7 +3168,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: test-support
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3199,7 +3199,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.0'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3207,7 +3207,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ci-image
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3223,7 +3223,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"ci-image-3.0","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.0","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
+      CI_SUITE: '{"name":"ci-image-3.0","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.0","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() }}
     needs: suite_helm_3_4
@@ -3238,7 +3238,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3246,7 +3246,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: vector
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3277,7 +3277,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: renderer
       HAPTIC_E2E_PROFILE: ''
@@ -3285,7 +3285,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: unit-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3316,7 +3316,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.0'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3324,7 +3324,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: agent
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3340,7 +3340,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"agent-3.0","kind":"x64","runner":"ubuntu-24.04","suite":"agent","haproxy":"3.0","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
+      CI_SUITE: '{"name":"agent-3.0","kind":"x64","runner":"ubuntu-24.04","suite":"agent","haproxy":"3.0","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:75e4761cf4db2ced4da3d874c4d6946dbd4eac88b0d65333e5359c46426d6000","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
     needs: suite_e2e_hp3_4_2
@@ -3355,7 +3355,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3363,7 +3363,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: agent
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3379,7 +3379,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"agent-3.4","kind":"x64","runner":"ubuntu-24.04","suite":"agent","haproxy":"3.4","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
+      CI_SUITE: '{"name":"agent-3.4","kind":"x64","runner":"ubuntu-24.04","suite":"agent","haproxy":"3.4","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
     needs: suite_gitops_flux_cert_manager
@@ -3394,7 +3394,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: cache
       HAPTIC_E2E_PROFILE: cache
@@ -3402,7 +3402,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3433,7 +3433,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: api-gateway
       HAPTIC_E2E_PROFILE: api-gateway
@@ -3441,7 +3441,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3472,7 +3472,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3480,7 +3480,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: plain
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3511,7 +3511,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: conformance
@@ -3519,7 +3519,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3550,7 +3550,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3558,7 +3558,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: chart
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3589,7 +3589,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: conformance
@@ -3597,7 +3597,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3628,7 +3628,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: conformance
@@ -3636,7 +3636,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3667,7 +3667,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: conformance
@@ -3675,7 +3675,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3706,7 +3706,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3714,7 +3714,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: defaults
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3745,7 +3745,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3753,7 +3753,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: plain
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3784,7 +3784,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3792,7 +3792,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: wasm
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3825,7 +3825,7 @@ jobs:
       PILOT_NATIVE_BUILD: '1'
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       SCALE_SEED_WORKERS: '4'
@@ -3900,7 +3900,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -3908,7 +3908,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.2.1
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3939,7 +3939,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: rate-limit
       HAPTIC_E2E_PROFILE: rate-limit
@@ -3947,7 +3947,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi;spoaHub.resources.requests.cpu=200m;rateLimit.shared.managedStore.resources.requests.cpu=100m
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -3978,7 +3978,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: conformance
@@ -3986,7 +3986,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -4017,7 +4017,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -4025,7 +4025,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.4.1
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -4056,7 +4056,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -4064,7 +4064,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: 0.2.0-alpha.3
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -4095,7 +4095,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: ''
@@ -4103,7 +4103,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: unit-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -4134,7 +4134,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.4'
       E2E_SHARD_INDEX: renderer
       HAPTIC_E2E_PROFILE: ''
@@ -4142,7 +4142,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: unit-shard
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -4173,7 +4173,7 @@ jobs:
       HAPTIC_E2E_CONTROLLER_STARTUP: parallel
       PILOT_CAPTURE_PROFILES: '0'
       PILOT_SOURCE_SHA: ${{ github.sha }}
-      PILOT_VARNISH_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/varnish@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
+      PILOT_VARNISH_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:2cb9e813ede03e1e272695d1b6ca2be6c50dacc75fdee69485989f4d7a6e97bb
       HAPROXY_VERSION: '3.2'
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
@@ -4181,7 +4181,7 @@ jobs:
       KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ci-image
-      PILOT_CI_IMAGE: registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
+      PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07
       BASELINE_CHART_VERSION: ''
       GITOPS_PROVIDER: ''
       GITOPS_CERTIFICATES: ''
@@ -4197,7 +4197,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"ci-image-3.2","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.2","image":"registry.gitlab.com/haproxy-haptic/haptic/ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
+      CI_SUITE: '{"name":"ci-image-3.2","kind":"build","runner":"ubuntu-24.04","suite":"ci-image","haproxy":"3.2","image":"ghcr.io/haproxy-haptic/haptic-ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","node":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() }}
     needs: suite_test_support

@@ -49,7 +49,7 @@ ignored such keys, so a values file that installs 0.3 can fail on 0.4. If you ru
 0.2, complete [Upgrading to 0.3](#upgrading-to-03) first.
 
 Confirm that the target version is available on the
-[releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) before
+[releases page](https://github.com/haproxy-haptic/HAPTIC/releases) before
 running the upgrade commands.
 
 ### 1. Save your values
@@ -82,7 +82,7 @@ nothing:
 
 ```bash
 helm template "$HAPTIC_RELEASE" \
-  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.4.1 --namespace "$HAPTIC_NAMESPACE" \
   --values haptic-values-0.4.yaml > /dev/null
 ```
@@ -169,7 +169,7 @@ defaults, so the release doesn't carry rejected keys forward:
 
 ```bash
 helm upgrade "$HAPTIC_RELEASE" \
-  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --namespace "$HAPTIC_NAMESPACE" --version 0.4.1 \
   --reset-values \
   --values haptic-values-0.4.yaml
@@ -182,7 +182,7 @@ each step says what to change, and what fails if you don't. If you run 0.1.0 or
 a 0.2.0 alpha, complete [Upgrading to 0.2](#upgrading-to-02) first.
 
 Confirm that the target version is available on the
-[releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases) before
+[releases page](https://github.com/haproxy-haptic/HAPTIC/releases) before
 running the upgrade commands. Development documentation can describe a release
 before its artifacts are published.
 
@@ -504,7 +504,7 @@ Use the `haptic` binary matching the chart version to run
 [preflight validation](operations/validate-before-deploy.md):
 
 ```bash
-helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm pull oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.3.0 --untar --untardir ./haptic-0.3-chart
 haptic preflight --values ./haptic-values-0.3.yaml \
   --chart ./haptic-0.3-chart/haptic --expect-chart-version 0.3.0 \
@@ -518,7 +518,7 @@ Fix every reported error and run it again until it passes.
 manage CRDs separately, apply the target chart's schemas before upgrading:
 
 ```bash
-helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm show crds oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version 0.3.0 | kubectl apply --server-side --force-conflicts -f -
 ```
 
@@ -530,7 +530,7 @@ release:
 
 ```bash
 helm upgrade "$HAPTIC_RELEASE" \
-  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --namespace "$HAPTIC_NAMESPACE" --version 0.3.0 \
   --reset-values \
   --values haptic-values-0.3.yaml
@@ -594,7 +594,7 @@ Use this guide to upgrade from 0.1.0 or a 0.2.0 alpha to a stable 0.2 release. T
 and chart share one version. The chart replaces the HAProxy Data Plane API with
 the HAPTIC agent and changes several values paths.
 
-Confirm that the target version is available on the [releases page](https://gitlab.com/haproxy-haptic/haptic/-/releases)
+Confirm that the target version is available on the [releases page](https://github.com/haproxy-haptic/HAPTIC/releases)
 before running the upgrade commands. Development documentation can describe a
 release before its artifacts are published.
 
@@ -773,7 +773,7 @@ Use the `haptic` binary matching the chart version below to run
 [preflight validation](operations/validate-before-deploy.md):
 
 ```bash
-helm pull oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm pull oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version "$HAPTIC_VERSION" --untar --untardir ./haptic-0.2-chart
 haptic preflight --values ./haptic-values-0.2.yaml \
   --chart ./haptic-0.2-chart/haptic --expect-chart-version "$HAPTIC_VERSION" \
@@ -784,7 +784,7 @@ Keep the default CRD upgrade and pre-rollout validation hooks enabled. If your
 deployment manages CRDs separately, apply the target chart's schemas before upgrading:
 
 ```bash
-helm show crds oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+helm show crds oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --version "$HAPTIC_VERSION" | kubectl apply --server-side --force-conflicts -f -
 ```
 
@@ -799,7 +799,7 @@ carried forward from the installed release:
 
 ```bash
 helm upgrade "$HAPTIC_RELEASE" \
-  oci://registry.gitlab.com/haproxy-haptic/haptic/charts/haptic \
+  oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
   --namespace "$HAPTIC_NAMESPACE" --version "$HAPTIC_VERSION" \
   --reset-values \
   --values haptic-values-0.2.yaml

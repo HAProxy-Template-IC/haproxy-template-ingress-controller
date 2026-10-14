@@ -28,6 +28,13 @@ class ReleaseTagTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.plan()
 
+    def test_maintenance_branches_release_from_their_own_verification(self):
+        self.receipt["branch"] = "maint/0.5"
+        self.assertEqual(self.plan()["tag"], "v1.2.3")
+        self.receipt["branch"] = "maintenance/0.5"
+        with self.assertRaises(ValueError):
+            self.plan()
+
     def test_dispatch_follows_verified_tag_creation(self):
         api = FakeAPI(self.sha)
         result = tag_and_dispatch(api, "owner/repo", self.plan())

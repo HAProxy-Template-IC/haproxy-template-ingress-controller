@@ -308,7 +308,7 @@ templates/haproxy-deployment.yaml (volumes.configMap.name).
 {{/*
 SPOA hub container image reference.
 Uses spoaHub.image.tag if set, otherwise falls back to .Chart.AppVersion.
-Example: registry.gitlab.com/haproxy-haptic/haptic/spoa-hub:0.1.0
+Example: ghcr.io/haproxy-haptic/haptic/spoa-hub:0.1.0
 */}}
 {{- define "haptic.spoaHub.image" -}}
 {{- printf "%s:%s" .Values.spoaHub.image.repository (.Values.spoaHub.image.tag | default .Chart.AppVersion) -}}

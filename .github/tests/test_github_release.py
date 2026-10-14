@@ -4,7 +4,7 @@ import unittest
 
 import yaml
 
-from scripts.ci.github_release import SOURCE_REGISTRY, configuration
+from scripts.ci.github_release import configuration
 
 
 ROOT = Path(__file__).parents[2]
@@ -14,32 +14,17 @@ class GitHubReleaseTests(unittest.TestCase):
     def setUp(self):
         self.source = yaml.safe_load((ROOT / ".goreleaser.yml").read_text())
 
-    def test_preserves_builds_platforms_signatures_and_release_behavior(self):
+    def test_publishes_every_image_to_the_repository_owner(self):
         original = copy.deepcopy(self.source)
         result = configuration(self.source, "haproxy-haptic/HAPTIC")
         self.assertEqual(self.source, original)
-        self.assertNotIn("gitlab_urls", result)
-        self.assertEqual(result["release"]["github"], {
-            "owner": "haproxy-haptic", "name": "HAPTIC"})
+        self.assertEqual(result, original)
         for image in result["dockers_v2"]:
             self.assertTrue(all(target.startswith("ghcr.io/haproxy-haptic/haptic")
                                 for target in image["images"]))
-            image["images"] = [target.replace("ghcr.io/haproxy-haptic/haptic", SOURCE_REGISTRY, 1)
-                               for target in image["images"]]
-        result["release"].pop("github")
-        result["release"]["gitlab"] = original["release"]["gitlab"]
-        result["gitlab_urls"] = original["gitlab_urls"]
-        result["snapshot"] = original["snapshot"]
-        self.assertEqual(result, original)
 
-    def test_rejects_unmapped_registry(self):
-        self.source["dockers_v2"][0]["images"] = [SOURCE_REGISTRY + "-unrelated"]
-        with self.assertRaisesRegex(ValueError, "Unmapped"):
-            configuration(self.source, "owner/repo")
-
-    def test_rejects_changed_source_repository(self):
-        self.source["release"]["gitlab"]["name"] = "different"
-        with self.assertRaisesRegex(ValueError, "source repository changed"):
+    def test_rejects_another_repository(self):
+        with self.assertRaisesRegex(ValueError, "another repository"):
             configuration(self.source, "owner/repo")
 
     def test_rejects_invalid_destination(self):
@@ -48,11 +33,11 @@ class GitHubReleaseTests(unittest.TestCase):
                 configuration(self.source, value)
 
     def test_snapshot_binary_version_matches_chart_app_version(self):
-        result = configuration(self.source, "owner/repo", "01234567" + "8" * 32)
+        result = configuration(self.source, "haproxy-haptic/HAPTIC", "01234567" + "8" * 32)
         self.assertEqual(result["snapshot"]["version_template"], "main-01234567")
         for sha in ("01234567", "g" * 40, "a" * 40 + "\n"):
             with self.subTest(sha=sha), self.assertRaises(ValueError):
-                configuration(self.source, "owner/repo", sha)
+                configuration(self.source, "haproxy-haptic/HAPTIC", sha)
 
 
 if __name__ == "__main__":
