@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Startup validation may use 80% of the controller's startup probe window (240 seconds by default) instead of a fixed 120 seconds, so a large validation-test suite on a small node no longer crash-loops the controller.
 - Reduce reconciliation allocations by reusing unchanged watched-resource revisions during input isolation.
 - Reduce temporary template allocations during configuration validation and rendering.
 - Log validation test totals and results at the default INFO level.

@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -236,13 +237,36 @@ func TestComponentSetup_AddCleanupNilSafe(t *testing.T) {
 	setup.RunCleanups() // must not panic
 }
 
-// A reinit re-runs the load gate under ReinitGraceWindow, not the startup
+// A reinit re-runs the load gate under reinitGraceWindow, not the startup
 // probe: a grace shorter than the gate's budget lets liveness restart an
 // advancing controller.
 func TestReinitGraceWindowCoversLoadGate(t *testing.T) {
-	if ReinitGraceWindow <= initialValidationTestsRunTimeout {
-		t.Fatalf("ReinitGraceWindow (%s) must exceed initialValidationTestsRunTimeout (%s)",
-			ReinitGraceWindow, initialValidationTestsRunTimeout)
+	for _, budget := range []time.Duration{0, 240 * time.Second} {
+		infra := &persistentInfra{loadGateTimeout: budget}
+		if infra.reinitGraceWindow() <= infra.loadGateBudget() {
+			t.Fatalf("reinit grace %s must exceed the load gate budget %s", infra.reinitGraceWindow(), infra.loadGateBudget())
+		}
+	}
+	if got := (&persistentInfra{}).loadGateBudget(); got != defaultLoadGateTimeout {
+		t.Fatalf("unset budget = %s, want %s", got, defaultLoadGateTimeout)
+	}
+}
+
+func TestLoadGateTimeoutFromEnv(t *testing.T) {
+	t.Setenv("LOAD_GATE_TIMEOUT", "")
+	got, err := loadGateTimeoutFromEnv()
+	if err != nil || got != 0 {
+		t.Fatalf("unset: got %s, %v", got, err)
+	}
+	t.Setenv("LOAD_GATE_TIMEOUT", "240s")
+	if got, err = loadGateTimeoutFromEnv(); err != nil || got != 240*time.Second {
+		t.Fatalf("240s: got %s, %v", got, err)
+	}
+	for _, invalid := range []string{"240", "0s", "-1s"} {
+		t.Setenv("LOAD_GATE_TIMEOUT", invalid)
+		if _, err := loadGateTimeoutFromEnv(); err == nil {
+			t.Fatalf("%q was accepted", invalid)
+		}
 	}
 }
 

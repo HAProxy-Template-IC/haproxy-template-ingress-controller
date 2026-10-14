@@ -552,7 +552,7 @@ Configure controller placement, pod metadata, and runtime settings under `contro
 | `controller.startupProbe.periodSeconds` | int | `10` | Probe period |
 | `controller.startupProbe.timeoutSeconds` | int | `1` | Probe timeout |
 | `controller.startupProbe.successThreshold` | int | `1` | Success threshold |
-| `controller.startupProbe.failureThreshold` | int | `30` | Failure threshold (with `periodSeconds: 10` this gives 5 minutes for startup) |
+| `controller.startupProbe.failureThreshold` | int | `30` | Failure threshold (with `periodSeconds: 10` this gives 5 minutes for startup). Startup validation may use 80% of the window; raise it if a large set of validation tests needs longer |
 
 ## Resources & scheduling
 

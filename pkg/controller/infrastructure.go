@@ -147,7 +147,7 @@ func beginIteration(infra *persistentInfra) *configState {
 
 // applyReinitGrace rewrites unhealthy entries as healthy-with-annotation
 // while a voluntary reinitialization is within persistentInfra's grace
-// window (see ReinitGraceWindow). The entry detail is preserved so
+// window (see reinitGraceWindow). The entry detail is preserved so
 // operators can still see what is re-initializing; only the aggregate
 // HTTP status (and thus the liveness/readiness verdict) is softened.
 func applyReinitGrace(

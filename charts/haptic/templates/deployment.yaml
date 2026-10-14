@@ -166,6 +166,13 @@ spec:
               value: {{ $ports.healthz | quote }}
             - name: METRICS_PORT
               value: {{ $ports.metrics | quote }}
+            {{- with $controller.startupProbe }}
+            {{- if .enabled }}
+            {{- /* The load-path validationTests run before the startup probe can pass; leave a fifth of the window for the rest of startup. */}}
+            - name: LOAD_GATE_TIMEOUT
+              value: {{ printf "%ds" (div (mul (add (int .initialDelaySeconds) (mul (int .failureThreshold) (int .periodSeconds))) 4) 5) | quote }}
+            {{- end }}
+            {{- end }}
             {{- with $controller.kubeClient }}
             - name: KUBE_CLIENT_QPS
               value: {{ .qps | quote }}

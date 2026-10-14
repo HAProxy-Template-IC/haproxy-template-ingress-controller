@@ -2,6 +2,7 @@ import copy
 import hashlib
 import io
 import json
+import tempfile
 import unittest
 import urllib.error
 import zipfile
@@ -10,7 +11,7 @@ from unittest import mock
 from scripts.ci.github import GitHub, jobs_for_run
 from scripts.ci.github_history import successful_job_metrics
 from scripts.ci.github_nightly import plan, required
-from scripts.ci.github_scale import TREND
+from scripts.ci.github_scale import TREND, run_head_sha
 
 
 class HistoryTests(unittest.TestCase):
@@ -158,6 +159,14 @@ class HistoryTests(unittest.TestCase):
         current["head_sha"] = "other"
         with self.assertRaises(ValueError):
             plan(self.api, env, event)
+
+    def test_scale_gate_binds_pull_requests_to_their_head_commit(self):
+        self.assertEqual(run_head_sha({"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "abc"}), "abc")
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as event:
+            json.dump({"pull_request": {"head": {"sha": "head"}}}, event)
+            event.flush()
+            env = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_SHA": "merge", "GITHUB_EVENT_PATH": event.name}
+            self.assertEqual(run_head_sha(env), "head")
 
     def test_scale_gate_reuses_existing_comparison_contract(self):
         self.assertEqual(TREND.HARD, {"change_convergence_seconds_p95": 0.5,

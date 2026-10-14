@@ -71,6 +71,31 @@ tests:
             containerPort: 9090
             protocol: TCP
 
+  - it: should size the load-gate budget from the startup probe window
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "LOAD_GATE_TIMEOUT")].value
+          value: "240s"
+
+  - it: should grow the load-gate budget with a longer startup probe window
+    set:
+      controller.startupProbe.initialDelaySeconds: 20
+      controller.startupProbe.failureThreshold: 60
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name == "LOAD_GATE_TIMEOUT")].value
+          value: "496s"
+
+  - it: should leave the load-gate budget at the controller default without a startup probe
+    set:
+      controller.startupProbe.enabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LOAD_GATE_TIMEOUT
+          any: true
+
   - it: should configure process listeners from the same controller port values
     set:
       controller.ports.healthz: 8888

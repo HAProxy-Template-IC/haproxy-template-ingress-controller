@@ -83,7 +83,7 @@ func newFailingReinit(t *testing.T) *probeFixture {
 		return applyReinitGrace(f.infra, successor, entries)
 	})
 	f.infra.NoteAttemptReturned(successor)
-	f.now = f.now.Add(ReinitGraceWindow + time.Second)
+	f.now = f.now.Add(f.infra.reinitGraceWindow() + time.Second)
 	f.setSiblings(true)
 	return f
 }
@@ -193,7 +193,7 @@ func TestProbes_ConvergedIterationUsesHealthz(t *testing.T) {
 // leaves the webhook Service even while /healthz is softened by the grace.
 func TestProbes_ReadinessRequiresInstalledValidators(t *testing.T) {
 	f := newFailingReinit(t)
-	f.now = f.now.Add(-ReinitGraceWindow)
+	f.now = f.now.Add(-f.infra.reinitGraceWindow())
 	f.setSiblings(true)
 	f.infra.clearServing(f.predecessor)
 	server := f.installWebhookServer(t)
@@ -229,7 +229,7 @@ func TestProbes_HungStartupFailsLiveness(t *testing.T) {
 	hung := f.infra.NoteIterationStart()
 	require.True(t, healthy(f.infra.livenessHealth()))
 
-	f.now = f.now.Add(ReinitGraceWindow)
+	f.now = f.now.Add(f.infra.reinitGraceWindow())
 	f.setSiblings(true)
 	liveness := f.infra.livenessHealth()
 	assert.False(t, healthy(liveness))
