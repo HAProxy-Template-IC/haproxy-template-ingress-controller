@@ -6,6 +6,9 @@ import urllib.parse
 import urllib.request
 
 
+# GitHub answers 502 for 100-job pages of a rerun attempt (run 38581317265).
+PAGE_SIZE = 50
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -30,10 +33,10 @@ class GitHub:
     def all(self, path, field, **params):
         page = 1
         while True:
-            result = self.get(path, per_page=100, page=page, **params)
+            result = self.get(path, per_page=PAGE_SIZE, page=page, **params)
             values = result[field] if field is not None else result
             yield from values
-            if len(values) < 100:
+            if len(values) < PAGE_SIZE:
                 return
             page += 1
 

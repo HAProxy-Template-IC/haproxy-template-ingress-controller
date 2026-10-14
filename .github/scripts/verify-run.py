@@ -173,7 +173,7 @@ def main():
     jobs = []
     page = 1
     while True:
-        response = api(f"{base}/attempts/{attempt}/jobs?per_page=100&page={page}")
+        response = api(f"{base}/attempts/{attempt}/jobs?per_page=50&page={page}")
         jobs.extend(response["jobs"])
         if len(jobs) >= response["total_count"]:
             break
