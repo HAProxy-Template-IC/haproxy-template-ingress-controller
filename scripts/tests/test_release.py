@@ -184,8 +184,14 @@ class ReleaseTests(unittest.TestCase):
                     '    - name: varnish\n'
                     '      image: registry.gitlab.com/haproxy-haptic/haptic/varnish:0.1.0\n'
                 ),
-                "charts/haptic/README.md": "https://haproxy-haptic.org/docs/dev/\n",
-                "charts/haptic/values.yaml": "# https://gitlab.com/haproxy-haptic/haptic/-/blob/main/README.md\n",
+                "charts/haptic/README.md": (
+                    "https://haproxy-haptic.org/docs/dev/\n"
+                    "https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/main/README.md\n"
+                ),
+                "charts/haptic/values.yaml": (
+                    "# https://gitlab.com/haproxy-haptic/haptic/-/blob/main/README.md\n"
+                    "# https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/blob/v0.1.0/README.md\n"
+                ),
                 "charts/haptic/templates/NOTES.txt": "https://haproxy-haptic.org/docs/dev/\n",
                 "README.md": "helm install haptic --version 0.1.0\n",
                 "docs/site/docs/install.md": "helm upgrade haptic --version 0.1.0\n",
@@ -234,6 +240,13 @@ class ReleaseTests(unittest.TestCase):
                 with self.subTest(version=version):
                     run("bash", "scripts/release.sh", version)
                     self.assertEqual(run("git", "status", "--porcelain"), "")
+                    for path in ("charts/haptic/README.md", "charts/haptic/values.yaml"):
+                        committed = run("git", "show", "HEAD:" + path)
+                        self.assertIn(
+                            "https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/"
+                            f"blob/v{version}/README.md", committed,
+                        )
+                        self.assertNotIn("/blob/main/", committed)
                     self.assertIn(f"haptic/varnish:{version}\n", run("git", "show", "HEAD:charts/haptic/Chart.yaml"))
                     committed = run("git", "show", "HEAD:docs/site/docs/upgrade-notes.md")
                     self.assertIn(f"--version {version}\n", committed)

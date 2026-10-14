@@ -316,6 +316,10 @@ merge affordable. A budget shortfall leaves the MR unmerged with the reason repo
 
 ### GitLab CLI (glab) Commands
 
+GitLab remains authoritative during the GitHub migration. After cutover, use the
+GitHub commands in [issue tracking](docs/agents/issue-tracker.md) and
+[CI verification](docs/agents/ci.md). Preserve historical GitLab issue and MR URLs.
+
 Common `glab` commands for development workflow:
 
 ```bash
@@ -1131,7 +1135,8 @@ For detailed development context on specific packages, see:
 
 ### Issue tracker
 
-Issues live as GitLab issues on `gitlab.com:haproxy-haptic/haptic`. Use the `glab` CLI. See `docs/agents/issue-tracker.md`.
+Use the authoritative tracker for the migration stage documented in
+`docs/agents/issue-tracker.md`; it lists both GitLab and GitHub commands.
 
 ### Triage labels
 

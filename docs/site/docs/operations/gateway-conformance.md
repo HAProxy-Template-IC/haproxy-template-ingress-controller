@@ -27,15 +27,20 @@ Check the [Gateway API implementations listing](https://gateway-api.sigs.k8s.io/
 for an accepted report matching your HAPTIC and Gateway API versions. A report for
 another version doesn't establish coverage for your installation.
 
-When a HAPTIC release has a successful `release-gateway-conformance` job, you can
-also open its artifacts from the release tag's pipeline on
-[GitLab](https://gitlab.com/haproxy-haptic/haptic/-/pipelines):
+For a release published by GitHub Actions, download its
+`gateway-conformance-<version>-<run>-<attempt>.tar.gz` asset from
+[GitHub Releases](https://github.com/HAProxy-Template-IC/haproxy-template-ingress-controller/releases).
+The release workflow attaches it after the conformance job succeeds. The archive contains:
 
 - `report.yaml` lists the tested profiles, supported features, and skipped tests.
 - `provenance.json` identifies the tested release and environment. Its `verified`
   and `release_evidence` fields must both be `true`.
 - `SHA256SUMS` contains checksums for those files.
 
-A manual `gateway-conformance-report` job tests a development candidate, not a
+For earlier releases, check the `release-gateway-conformance` job in the original
+[GitLab release pipeline](https://gitlab.com/haproxy-haptic/haptic/-/pipelines).
+An absent report doesn't establish conformance.
+
+A manual conformance report job tests a development candidate, not a
 published release. A local artifact or passing regression test doesn't establish
 upstream acceptance; use the implementations listing for that.

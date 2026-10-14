@@ -34,40 +34,74 @@ Before releasing:
 2. **All tests passing** - CI pipeline green on main branch
 3. **Documentation updated** - Any new features documented
 
+Run the commands below from a clone with `origin` pointing to
+`github.com:HAProxy-Template-IC/haproxy-template-ingress-controller`. Authenticate
+the [GitHub CLI](https://cli.github.com/) with `gh auth login`, then set:
+
+```bash
+haptic_repo=HAProxy-Template-IC/haproxy-template-ingress-controller
+```
+
 ## Publish a main snapshot
 
 Ordinary `main` pipelines build pipeline-scoped test images but don't publish the multi-architecture `main-<sha>` controller, SPOA-hub, and chart snapshot.
 
-1. Open **Build > Pipelines > New pipeline** in GitLab.
-2. Select the `main` branch.
-3. Add the variable `PUBLISH_MAIN_SNAPSHOT` with value `true`.
-4. Run the pipeline.
+1. Find the successful canonical `CI` run for the `main` commit you want to publish:
 
-The three snapshot publishers run as one dependency chain, so the chart is published only after both matching images succeed.
+   ```bash
+   gh run list --repo "$haptic_repo" --workflow ci.yml --branch main \
+     --status success --json databaseId,headSha,event,url
+   ```
+
+2. Dispatch the snapshot workflow with that run ID:
+
+   ```bash
+   read -r -p 'Successful main CI run ID: ' verification_run
+   gh workflow run snapshot.yml --repo "$haptic_repo" --ref main \
+     -f verification_run="$verification_run"
+   ```
+
+The workflow checks every required job and the retained verification receipt,
+then publishes the exact verified commit. A prose-only run can't authorize a
+snapshot. The controller and SPOA images build in parallel; the chart waits for
+both images and the native amd64 and arm64 SPOA smoke tests.
 
 ## Release process
 
-The main branch is protected, so releases are made via merge requests. CI automatically creates the tag when the `VERSION` file changes on main.
+Releases go through a pull request (PR) and the merge queue. After the merged
+commit passes canonical CI, the tagging workflow creates its missing release
+tag and dispatches publication.
 
-### Step 1: Curate the changelog
+<a id="step-2-cut-a-release-branch"></a>
+
+### Step 1: Cut a release branch
+
+Branch from current `main`; the release script commits to the checked-out branch.
+
+```bash
+read -r -p 'Release version without v: ' release_version
+git fetch origin main
+git switch -c "release/v$release_version" origin/main
+```
+
+<a id="step-1-curate-the-changelog"></a>
+
+### Step 2: Curate the changelog
 
 Rewrite the accumulated `## [Unreleased]` entries in `CHANGELOG.md` into user-facing release notes: merge related entries, and drop items that never shipped in a release. Update the hand-curated `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml` with summary bullets for the new release.
 
 Don't rename `[Unreleased]` yourself — the release script does the mechanical promotion.
-
-### Step 2: Cut a release branch
-
-`main` is protected, so the release commit lands via merge request. Branch first; the script commits to whatever branch is currently checked out.
+Commit your edits so the script starts with a clean working directory:
 
 ```bash
-git checkout -b release/v<version>
+git add CHANGELOG.md charts/haptic/Chart.yaml
+git diff --cached --quiet || git commit -m "docs: curate release $release_version"
 ```
 
 ### Step 3: Run the release script
 
 ```bash
-make release RELEASE_VERSION=<version>
-# or directly: ./scripts/release.sh <version>
+make release RELEASE_VERSION="$release_version"
 ```
 
 The script:
@@ -79,31 +113,35 @@ The script:
 - Updates the `helm install ... --version <version>` examples in the READMEs and docs, and the landing page's fallback version
 - Keeps commands under `Upgrading to <version>` headings within that version line; older migration steps retain their target version
 - Re-pins the controller image tag in the docs' `migrate-check` docker one-liner (`haptic:<version>-haproxy<series>`, with the series taken from `versions.env`'s `DEFAULT_HAPROXY`)
-- Rewrites hosted-docs links (`/docs/dev/` → `/docs/<version>/`) and repo-blob links (`/-/blob/main/` → `/-/blob/v<version>/`) so a released page links to the matching sources
+- Pins the chart's hosted documentation links and GitHub or historical GitLab source links to the release version
 - Stages and commits everything as `release: haptic v<version>`
 
 The docs-site changelog page needs no release-time sync: it's generated from `CHANGELOG.md` on every mkdocs build (`docs/site/hooks/changelog.py`).
 
-The script **doesn't** create a tag — that happens in CI after the MR merges.
+The script **doesn't** create a tag — that happens in CI after the PR merges.
 
-### Step 4: Push and open the MR
+<a id="step-4-push-and-open-the-mr"></a>
+
+### Step 4: Push the release branch
 
 ```bash
-git push -u origin release/v<version>
-
-glab mr create --title "release: haptic v<version>" \
-  --description "Release haptic v<version>" \
-  --target-branch main
+git push -u origin "release/v$release_version"
 ```
 
 ### Step 5: Prepare the SPOA release image
 
-Wait for the MR preflight pipeline and code review to pass, then enable auto-merge
-to enter the merge train. Run the manual `prepare-spoa-release` job in the train
-pipeline. It builds
-all three architectures under the chart's release tag, before the chart's
-install tests need that image. Install-test jobs wait for this job to succeed
-before starting. The chart itself remains unpublished.
+Run the `Prepare immutable release bundle` workflow on the release branch:
+
+```bash
+gh workflow run prepare-spoa-release.yml --repo "$haptic_repo" \
+  --ref "release/v$release_version"
+gh run list --repo "$haptic_repo" --workflow prepare-spoa-release.yml \
+  --branch "release/v$release_version" --json databaseId,headSha,status,conclusion,url
+```
+
+Wait for that run to succeed before opening the PR. This separate workflow builds
+all three architectures under the chart's release tag, so install tests can pull
+the exact image the chart references. The chart remains unpublished.
 
 The job records the upstream image digest, Docker build inputs, and verified
 plugin bytes in the image's input identity. An existing release image must
@@ -111,51 +149,66 @@ match those inputs and contain all three architectures; it's never rebuilt
 or overwritten. If the bundle changes after preparation, choose a new release
 version.
 
-Temporary preparation tags use `ci-spoa-prepare-*`, covered by the project's
-configured `^ci-.*` registry cleanup policy. The versioned release tag is retained.
+Temporary preparation tags use `ci-spoa-prepare-*`. Keep the versioned release
+tag: publication verifies and reuses it, signs it, attaches its software bill of
+materials, and smoke-tests amd64 and arm64 before publishing the chart.
 
-The train merges only after image preparation and the full pipeline pass. The final
-tag pipeline verifies and reuses the prepared image, then signs it, attaches its
-software bill of materials, and smoke-tests amd64 and arm64 before publishing
-the chart.
+### Step 6: Open and merge the PR
+
+```bash
+gh pr create --repo "$haptic_repo" --base main \
+  --head "release/v$release_version" --title "release: haptic v$release_version" \
+  --body "Release haptic v$release_version"
+```
+
+Finish code review and required PR checks, then enter the merge queue with the
+reviewed commit:
+
+```bash
+gh pr merge "release/v$release_version" --repo "$haptic_repo" \
+  --auto --match-head-commit "$(git rev-parse HEAD)"
+```
+
+The queue tests the combined tree before merging. Don't use `--admin` to bypass it.
 
 ### Automatic tag creation
 
-After the MR is merged, CI automatically:
+After the PR is merged, CI automatically:
 
-1. Verifies the merged tree against its successful merge train; during the initial rollout, also repeats the full test matrix
+1. Runs full canonical CI; verified merge-queue evidence can replace repeated tests only after post-merge reuse is enabled
 2. Verifies `VERSION`, `Chart.yaml` `version`, and `appVersion` agree
-3. Creates and pushes the `v<version>` tag
-4. Triggers the release pipeline
+3. Creates the annotated `v<version>` tag on the verified commit
+4. Dispatches `release.yml` with that tag and the canonical CI run ID
 
-??? note "Manual Tagging (Fallback)"
-    If automatic tagging fails, you can create the tag manually:
+??? note "Recover a failed release dispatch"
+    Inspect the `Tag verified releases` logs first. If tag creation failed, fix the
+    cause and rerun that workflow. If the tag exists on the verified commit but
+    dispatch failed, start publication explicitly:
 
     ```bash
-    git checkout main
-    git pull origin main
-    git tag -a v<version> -m "Release <version>"
-    git push origin v<version>
+    read -r -p 'Successful canonical CI run ID for this release: ' verification_run
+    gh workflow run release.yml --repo "$haptic_repo" --ref "v$release_version" \
+      -f verification_run="$verification_run"
     ```
+
+    Pushing a tag alone doesn't start publication. The release workflow rejects
+    missing verification or a tag that differs from the verified source.
 
 ### What CI does automatically
 
-When a `v*` tag is pushed, CI does the following:
+The dispatched release workflow:
 
-1. **Build binaries** for linux/amd64, linux/arm64, linux/arm/v7
-2. **Create the GitLab release** with:
-    - Signed binaries
-    - SHA256 checksums
-    - Release notes from the version's `CHANGELOG.md` section (controller + chart)
-    - Pre-release flag (for alpha/beta/rc versions)
-3. **Build Docker images** for every supported HAProxy series (3.0-3.4)
-4. **Verify the prepared spoa-hub image** (`spoa-hub:<version>`) without rebuilding it
-5. **Package the Helm chart** and push it as a signed OCI artifact to `registry.gitlab.com/haproxy-haptic/haptic/charts`
-6. **Sign all artifacts** with Cosign using keyless OpenID Connect (OIDC)
-7. **Generate a Software Bill of Materials (SBOM)** for each image and attach it as a Cosign attestation
-8. **Trigger the versioned documentation build** (the `/docs/` site)
-9. **Run release conformance** against the published image and retain the
+1. **Verify and sign the prepared SPOA image** (`spoa-hub:<version>`) without rebuilding it, then attach its software bill of materials (SBOM)
+2. **Build controller binaries and images** for linux/amd64, linux/arm64, and linux/arm/v7, including every supported HAProxy series (3.0–3.4) and the Varnish image
+3. **Create the GitHub release** with binary archives, signed SHA256 checksums, and release notes from `CHANGELOG.md`; mark alpha, beta, and release candidates as pre-releases
+4. **Sign the controller and Varnish images** and attach their SBOM attestations
+5. **Require native amd64 and arm64 SPOA smoke tests**, which run alongside the controller build
+6. **Publish the signed Helm chart** to `ghcr.io/haproxy-template-ic/haptic/charts/haptic` after the images and smoke tests pass
+7. **Run release conformance** against the published image and retain the
    [report and provenance](../operations/gateway-conformance.md) without scheduled expiration
+8. **Publish versioned documentation** after the chart and release conformance succeed
+
+Signing uses Cosign with keyless OpenID Connect (OIDC).
 
 The conformance job runs after publication. A failed job marks the release
 pipeline failed but doesn't retract published artifacts; inspect its report and
@@ -163,9 +216,11 @@ fix the failure before claiming conformance for that release.
 
 ### Add the release to the upgrade test
 
-Once the chart is published, add the new stable version to
-`test-chart-upgrade.parallel.matrix` in `.gitlab-ci.yml`. Each entry runs the
-upgrade test from that release in its own job. Until you add it,
+Once the chart is published, add upgrade jobs for the new stable version on both
+current and minimum Kubernetes to `.github/workflows/ci-speed-proof.yml`. Add both
+jobs to `.github/ci-verification.json` and `.github/job-duration-weights.json`, then
+run `make schedule-github-verification`. While `.gitlab-ci.yml` remains in the
+checkout, also update its `test-chart-upgrade.parallel.matrix`. Until you add it,
 `check-chart-upgrade-baselines` fails on every pipeline that runs the upgrade
 tests, so the new release can't go untested. Pre-releases aren't required.
 The check covers published stable versions at or below `VERSION`; a matrix
@@ -179,33 +234,37 @@ A patch release for an older minor version (for example `0.2.2` while `main` alr
 
 Port only security fixes and severe regressions, and only to the latest released minor version. Never port a feature: a patch release must not change behaviour beyond the fix. If `main` holds nothing unreleased beyond fixes, release from `main` instead.
 
-The fix lands on `main` first, or in parallel; the port is a separate merge request.
+The fix lands on `main` first, or in parallel; the port is a separate PR.
 
 ### Step 1: Create the maintenance branch
 
-Branch from the last tag of the release line. `maint/*` is a protected branch pattern: only maintainers push to or merge into it, and nobody can force-push.
+Branch from the last tag of the release line. Apply the same review, required CI,
+merge queue, and force-push protections as `main` before accepting PRs.
 
 ```bash
+read -r -p 'Maintenance line (major.minor): ' maintenance_line
+read -r -p 'Last released version on that line without v: ' maintenance_base
 git fetch origin --tags
-git push origin "v<major>.<minor>.<patch>^{commit}:refs/heads/maint/<major>.<minor>"
+git push origin "v$maintenance_base^{commit}:refs/heads/maint/$maintenance_line"
 ```
 
 Skip this step if the branch already exists.
 
 ### Step 2: Port the fix
 
-Branch off the maintenance branch and open a merge request into it:
+Branch off the maintenance branch:
 
 ```bash
+read -r -p 'Fix branch name: ' fix_branch
 git fetch origin
-git checkout -b fix/<issue>-<slug>-<major>.<minor> origin/maint/<major>.<minor>
+git switch -c "$fix_branch" "origin/maint/$maintenance_line"
 ```
 
 Adapt the fix to the older code instead of cherry-picking it blindly: helpers, file layout, and tests may differ. Port the tests that prove the fix, and add the `CHANGELOG.md` entry under `## [Unreleased]` on the maintenance branch.
 
 ```bash
-glab mr create --target-branch maint/<major>.<minor> \
-  --title "fix: <summary> (<major>.<minor> backport)"
+git push -u origin "$fix_branch"
+gh pr create --repo "$haptic_repo" --base "maint/$maintenance_line" --head "$fix_branch"
 ```
 
 ### Step 3: Prepare the release
@@ -213,25 +272,37 @@ glab mr create --target-branch maint/<major>.<minor> \
 Once the fix is merged, prepare the release on a branch named exactly `release/v<version>`. The `prepare-spoa-release` job only runs for that name.
 
 ```bash
+read -r -p 'Patch release version without v: ' release_version
 git fetch origin
-git checkout -b release/v<version> origin/maint/<major>.<minor>
-./scripts/release.sh <version>
+git switch -c "release/v$release_version" "origin/maint/$maintenance_line"
+make release RELEASE_VERSION="$release_version"
 ```
 
-Update the `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml` for the new version, then commit, push, and open the merge request into the maintenance branch:
+Update the `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml` for
+the new version, then commit and push the release branch:
 
 ```bash
-git push -u origin release/v<version>
-glab mr create --target-branch maint/<major>.<minor> \
-  --title "release: haptic v<version>" \
-  --description "Release haptic v<version>"
+git add charts/haptic/Chart.yaml
+git diff --cached --quiet || git commit -m "docs: describe release $release_version"
+git push -u origin "release/v$release_version"
 ```
 
-Run the manual `prepare-spoa-release` job in the merge train pipeline, as in [Step 5](#step-5-prepare-the-spoa-release-image) of the regular release.
+Complete [SPOA image preparation](#step-5-prepare-the-spoa-release-image), then
+open the PR into the maintenance branch:
+
+```bash
+gh pr create --repo "$haptic_repo" --base "maint/$maintenance_line" \
+  --head "release/v$release_version" --title "release: haptic v$release_version" \
+  --body "Release haptic v$release_version"
+```
 
 ### Step 4: Merge and let CI tag
 
-Maintenance merge requests run the same full merge-train matrix as `main`, including every supported HAProxy version and both conformance suites. The post-merge pipeline verifies the tested tree before `create-release-tag` creates `v<version>`, with the same `VERSION`/`Chart.yaml` check as on `main`.
+Complete review and use the same merge-queue command as
+[Step 6](#step-6-open-and-merge-the-pr). Maintenance PRs run the same full matrix
+as `main`, including every supported HAProxy version and the conformance suites.
+Canonical post-merge CI authorizes `Tag verified releases`, with the same
+`VERSION`/`Chart.yaml` check as on `main`.
 
 `test-chart-upgrade` upgrades only from published stable versions at or below the branch's `VERSION`, so a release from a newer line, such as `0.3.0` on `maint/0.2`, is never used as a baseline.
 
@@ -248,17 +319,26 @@ A maintenance branch never publishes `main`-only artifacts: no `main-<sha>` snap
 
 ### Step 5: Follow up on main
 
-After the chart is published, open one merge request into `main` that:
+After the chart is published, open one PR into `main` that:
 
 1. Adds the `## [<version>]` section to `CHANGELOG.md`, in version order below `## [Unreleased]`.
-2. Adds `<version>` to `test-chart-upgrade.parallel.matrix` in `.gitlab-ci.yml` (see [Add the release to the upgrade test](#add-the-release-to-the-upgrade-test)).
+2. Adds the version to both Kubernetes variants of the [upgrade tests](#add-the-release-to-the-upgrade-test).
 3. Runs `./scripts/release.sh <version>` if the release line is the newest one, so `VERSION`, `Chart.yaml`, and the install examples on `main` point at the patched version. The script skips the changelog promotion because the section from item 1 already exists.
 
 Don't open it before the chart is published: `check-chart-upgrade-baselines` fails on a matrix entry that isn't published yet.
 
 ### Security fixes
 
-Keep the issue confidential until the release is published, and describe the fix in merge requests without an exploit recipe. List it under `### Security` (or `#### Security` in the Helm chart subsection) in `CHANGELOG.md`, which becomes the GitLab release notes. After publication, request a CVE ID from the confidential issue (**Create CVE ID Request** in the issue sidebar; GitLab is the CVE Numbering Authority), then make the issue public.
+Use a [draft repository security advisory](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/fix-reported-vulnerabilities/create-repository-advisory)
+to discuss an undisclosed vulnerability privately. Collaborate in its temporary
+private fork; a public issue or PR exposes its contents. Keep the advisory private
+until the fix is released.
+
+List the fix under `### Security` (or `#### Security` in the Helm chart subsection)
+in `CHANGELOG.md`, without an exploit recipe. Before publishing the advisory,
+record affected and fixed versions. You can
+[request a CVE ID from GitHub](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/fix-reported-vulnerabilities/publish-repository-advisory)
+through the advisory if one hasn't already been assigned.
 
 ## Documentation versioning
 
@@ -288,7 +368,7 @@ Pre-releases (alpha, beta, rc) have these differences:
 
 - Docker images built but **don't get `latest` tag**
 - Documentation created but **not marked as `latest`**
-- GitLab release marked as **pre-release**
+- GitHub release marked as **pre-release**
 - Not recommended for production use
 
 ### Final releases
@@ -312,15 +392,15 @@ Final releases (no suffix):
 
 ### CI pipeline fails
 
-1. **Check GitLab CI logs** for specific error
-2. **Verify tests pass locally** with `make test`
-3. **Check Docker builds** work locally
+1. Open the failed run in GitHub Actions and read the first failed step.
+2. Fix the cause and run `make lint audit` before `make test` locally.
+3. Rerun the affected workflow only after the fix or a diagnosed infrastructure failure.
 
 ### Docker image missing
 
 If images don't appear after release:
 
-1. Check the `release-controller` job completed
+1. Check the release workflow's `controller` job completed
 2. Verify registry authentication succeeded
 3. Check for build errors in job logs
 
@@ -332,19 +412,34 @@ All release artifacts are signed and include security metadata:
 
 All artifacts are signed with [Cosign](https://github.com/sigstore/cosign) using keyless OIDC:
 
-- **Binaries**: Checksums file signed with detached signature
+- **Binaries**: Checksums file signed with a `.sigstore.json` verification bundle
 - **Docker images**: Each image tag signed
 - **Helm chart**: OCI artifact signed
 
 **Verify image signature:**
 
-Release tags produce one image per supported HAProxy series (`<version>-haproxy<series>`). The `v` prefix from the git tag is stripped, so the git tag `v0.1.0` yields image tags `0.1.0-haproxy3.0`, `0.1.0-haproxy3.1`, `0.1.0-haproxy3.2`, `0.1.0-haproxy3.3`, `0.1.0-haproxy3.4`:
+Release tags produce one image per supported HAProxy series
+(`<version>-haproxy<series>`). Images published by GitHub Actions use its OIDC
+issuer and the exact release workflow and tag as their certificate identity:
+
+```bash
+read -r -p 'GitHub-published release version without v: ' release_version
+release_identity="https://github.com/$haptic_repo/.github/workflows/release.yml@refs/tags/v$release_version"
+cosign verify \
+  --certificate-identity="$release_identity" \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
+  "ghcr.io/haproxy-template-ic/haptic:$release_version-haproxy3.4"
+```
+
+Historical releases copied from GitLab retain their original signatures and
+GitLab issuer. Copying an image into GitHub Container Registry doesn't change who
+signed it. For example, verify the copied 0.1.0 image with its original issuer:
 
 ```bash
 cosign verify \
   --certificate-identity-regexp='https://gitlab.com/haproxy-haptic/.*' \
   --certificate-oidc-issuer='https://gitlab.com' \
-  registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.4
+  ghcr.io/haproxy-template-ic/haptic:0.1.0-haproxy3.4
 ```
 
 ### SBOM (software bill of materials)
@@ -353,12 +448,14 @@ Each controller image includes an SBOM attestation in Software Package Data Exch
 
 **View SBOM:**
 
+For the GitHub-published release selected above:
+
 ```bash
 cosign verify-attestation \
   --type spdxjson \
-  --certificate-identity-regexp='https://gitlab.com/haproxy-haptic/.*' \
-  --certificate-oidc-issuer='https://gitlab.com' \
-  registry.gitlab.com/haproxy-haptic/haptic:0.1.0-haproxy3.4 \
+  --certificate-identity="$release_identity" \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
+  "ghcr.io/haproxy-template-ic/haptic:$release_version-haproxy3.4" \
   | jq -r '.payload' | base64 -d | jq '.predicate'
 ```
 
@@ -372,4 +469,4 @@ The SBOM lists all packages, libraries, and dependencies in the container image.
 | `Chart.yaml:version` | Same value as `VERSION` | Release script |
 | `Chart.yaml:appVersion` | Same value as `VERSION` | Release script |
 | `Chart.yaml` `artifacthub.io/images` | Controller and spoa-hub image tags | Release script |
-| `Chart.yaml` `artifacthub.io/changes` | Release summary bullets | By hand (Step 1) |
+| `Chart.yaml` `artifacthub.io/changes` | Release summary bullets | By hand (Step 2) |

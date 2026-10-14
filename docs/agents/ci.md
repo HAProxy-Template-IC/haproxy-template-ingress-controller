@@ -1,5 +1,8 @@
 # CI spending and merge verification
 
+GitLab remains authoritative until migration cutover. Its train and budget rules
+below still apply. Preparing GitHub workflows does not authorize disabling them.
+
 Every merge to `main` or a maintenance branch goes through a successful merge
 train. A local test result, a review comment, and a skipped pipeline cannot
 replace required CI. These instructions apply to every agent and future session.
@@ -90,6 +93,43 @@ Ordinary pushes to `main` and `maint/*` then verify the train receipt and build
 publication artifacts. Weekly, explicit verification, and release-tag pipelines
 retain full verification. Every code train still runs the full matrix. A missing
 or mismatched receipt stops publication even when reuse is enabled.
+
+## GitHub verification after cutover
+
+Every code PR and merge-group run executes the combined full matrix, including
+the former nightly suites. The [scheduling policy](github-scheduling.md) records
+shared compilation, cache dependencies, isolation, and measured timing evidence.
+Prose-only changes retain their verified common checks.
+
+Before queueing, inspect every Gitar review and thread for the final source SHA,
+fix valid findings, and resolve discussions with evidence. A missing review
+integration is a blocker, not permission to waive review. Confirm the required
+PR checks passed, then queue the exact reviewed source:
+
+```bash
+gh pr merge "$pr_number" \
+  --repo HAProxy-Template-IC/haproxy-template-ingress-controller \
+  --auto --match-head-commit "$reviewed_sha"
+```
+
+This command requires the target branch's merge-queue rule to be active. Never use
+`--admin`, disable a required check, or merge immediately to bypass the queue.
+The canonical `CI` workflow must run on `merge_group`; success from a manually
+dispatched benchmark cannot authorize a merge or publication. The receipt checks
+the exact source, complete required job inventory, and run attempt.
+
+Keep CI within the user's EUR 20 monthly limit. Use the approved standard runners
+for the public repository, short artifact retention, and bounded caches. Do not
+enable paid larger runners, change spending limits, or change the plan without
+authorization. Check actual billable usage and runner types before a campaign;
+gross metered usage is not the payable amount. `make ci-budget` reports GitLab
+compute usage and cannot establish the GitHub budget.
+
+Batch fixes and diagnose failures before dispatching another full matrix. Cancel
+only superseded work owned by the task. The additional suites must pass on the
+combined workflow without increasing PR lead time before retiring the daily
+schedule. Weekly verification calls the combined matrix once, including when the
+source is unchanged.
 
 ## GitHub post-merge reuse
 
