@@ -402,22 +402,16 @@
       "run_id": 38483303507
     },
     "unit-renderer-1": {
-      "seconds": 300,
-      "run_id": 38483303507,
-      "source_job": "unit-renderer",
-      "estimated": true
+      "seconds": 317,
+      "run_id": 38487659388
     },
     "unit-renderer-2": {
-      "seconds": 300,
-      "run_id": 38483303507,
-      "source_job": "unit-renderer",
-      "estimated": true
+      "seconds": 239,
+      "run_id": 38487659388
     },
     "unit-renderer-3": {
-      "seconds": 300,
-      "run_id": 38483303507,
-      "source_job": "unit-renderer",
-      "estimated": true
+      "seconds": 315,
+      "run_id": 38487659388
     }
   },
   "early_jobs": [

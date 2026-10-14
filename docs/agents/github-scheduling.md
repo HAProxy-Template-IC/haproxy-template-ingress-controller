@@ -36,8 +36,14 @@ inventory with tests, examples, and fuzz seeds included. All retain `-race` and
 `-count=1`. Their weights use top-level JUnit durations from both combined runs;
 subtest times are not counted twice. They restore the same renderer compiler
 cache, with one writer. Job weights take the slower comparable native measurement
-from the earlier warm-cache baseline and the second combined run. Renderer shard
-job durations remain estimates until the focused hosted proof completes.
+from the earlier warm-cache baseline and the second combined run.
+
+Focused run `38487659388` passed all three renderer shards in 5m19s overall,
+with individual jobs taking 3m59s, 5m15s, and 5m17s. Every compiler cache missed.
+The retained inventories cover all 941 compiled entry points exactly once;
+their JUnit reports contain the same 1,694 cases and five existing skips as the
+unsplit run. The scheduler uses these measured job durations. This validates
+the split, not the complete workflow's lead time.
 
 The failing rollout returned two 503s, at `23:30:18.015` and `23:30:18.216` UTC.
 The controller received the replacement's Ready endpoint at `23:30:17.809` and
