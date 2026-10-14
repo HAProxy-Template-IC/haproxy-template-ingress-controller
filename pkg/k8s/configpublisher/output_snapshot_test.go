@@ -277,6 +277,11 @@ type configPublisherOutputFixture struct {
 
 func newConfigPublisherOutputFixture(tb testing.TB) configPublisherOutputFixture {
 	tb.Helper()
+	return newConfigPublisherOutputFixtureWithConfig(tb, "global\n")
+}
+
+func newConfigPublisherOutputFixtureWithConfig(tb testing.TB, config string) configPublisherOutputFixture {
+	tb.Helper()
 	reload := true
 	files := &dataplane.AuxiliaryFiles{
 		MapFiles: []auxiliaryfiles.MapFile{{
@@ -306,7 +311,6 @@ func newConfigPublisherOutputFixture(tb testing.TB) configPublisherOutputFixture
 	artifacts, err := dataplane.BuildAuxiliaryFileSnapshot(artifactAuthority, nil, files)
 	require.NoError(tb, err)
 
-	config := "global\n"
 	plan := &renderplan.Plan{
 		SchemaVersion: renderplan.SchemaVersion,
 		Sections: []renderplan.Section{{

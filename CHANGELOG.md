@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recreate pruned recovery checkpoints when their configuration is deployed again.
 - Account for recovery plans when compressing retained configurations to prevent storage-limit publication failures.
 - Prevent a 30-second agent startup stall when HAProxy is still starting its worker.
 - Retained configuration recovery now starts after leader failover when a critical HTTP source is unavailable, including with large watched resource sets.

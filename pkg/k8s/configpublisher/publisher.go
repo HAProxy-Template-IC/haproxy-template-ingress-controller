@@ -198,6 +198,16 @@ func (p *Publisher) forgetPublished(req *PublishRequest) {
 	delete(p.published, publishedKey{namespace: req.TemplateConfigNamespace, name: req.TemplateConfigName, nameSuffix: req.NameSuffix})
 }
 
+func (p *Publisher) forgetPublishedResource(namespace, name string) {
+	p.publishedMu.Lock()
+	defer p.publishedMu.Unlock()
+	for key := range p.published {
+		if key.namespace == namespace && p.published[key].result.RuntimeConfigName == name {
+			delete(p.published, key)
+		}
+	}
+}
+
 // ResetAuxiliaryStampCache drops every remembered auxiliary-file status stamp.
 // Call it on a leadership transition so a new leader re-stamps each (pod, file)
 // once rather than trusting a cache it did not populate.
