@@ -104,6 +104,14 @@ class RevisionIdentityTests(unittest.TestCase):
         self.assertEqual(self.identity(), {"api_sha": "head", "source_sha": "head", "base_sha": "base",
                                            "source_repository": "fork/repo", "base_branch": "main", "pull_request": 43})
 
+    def test_pr_accepts_a_base_branch_that_moved_forward_after_the_event(self):
+        moved = VERIFY.revision_identity("pull_request", self.event, repository="owner/repo", tested_sha="merge",
+                                         parents=["newer", "head"], is_ancestor=lambda old, new: (old, new) == ("base", "newer"))
+        self.assertEqual(moved["base_sha"], "newer")
+        with self.assertRaises(ValueError):
+            VERIFY.revision_identity("pull_request", self.event, repository="owner/repo", tested_sha="merge",
+                                     parents=["older", "head"], is_ancestor=lambda old, new: False)
+
     def test_pr_rejects_head_checkout_stale_base_and_other_repository(self):
         for parents in (["base"], ["head", "base"], ["stale", "head"], ["base", "other"], []):
             with self.subTest(parents=parents), self.assertRaises(ValueError):
