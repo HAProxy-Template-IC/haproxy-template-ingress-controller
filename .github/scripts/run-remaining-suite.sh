@@ -16,15 +16,15 @@ case "$PILOT_SUITE" in
         PKG=$(tr '\n' ' ' < .pilot/unit-packages-selected.txt)
         export PKG
         export GOFLAGS=-p=4
-        if [[ "$SHARD_ID" == command ]]; then
-            PKG=./cmd/haptic make test-unit-inventory > .pilot/unit-command-inventory.txt
+        if [[ "$SHARD_ID" == command || "$SHARD_ID" == renderer ]]; then
+            make test-unit-inventory > ".pilot/unit-$SHARD_ID-inventory.txt"
         fi
         if [[ "$PILOT_SUITE" == unit-cache ]]; then
             export TEST_RUN_PATTERN='^$'
-        elif [[ "$SHARD_ID" == command ]]; then
-            TEST_RUN_PATTERN=$(python3 scripts/shard-go-tests.py --kinds Test Example Fuzz --weights .github/unit-command-weights.json "$SHARD_INDEX" 3 < .pilot/unit-command-inventory.txt)
+        elif [[ "$SHARD_ID" == command || ( "$SHARD_ID" == renderer && -n "${SHARD_INDEX:-}" ) ]]; then
+            TEST_RUN_PATTERN=$(python3 scripts/shard-go-tests.py --kinds Test Example Fuzz --weights ".github/unit-$SHARD_ID-weights.json" "$SHARD_INDEX" 3 < ".pilot/unit-$SHARD_ID-inventory.txt")
             export TEST_RUN_PATTERN
-            printf '%s\n' "$TEST_RUN_PATTERN" > .pilot/unit-command-selection.txt
+            printf '%s\n' "$TEST_RUN_PATTERN" > ".pilot/unit-$SHARD_ID-selection.txt"
         fi
         make test-unit COUNT=1
         cp report.xml .pilot/unit-report.xml

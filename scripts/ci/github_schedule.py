@@ -7,6 +7,51 @@ from pathlib import Path
 import yaml
 
 
+def balance_groups(groups, durations, count, early, handoff_seconds):
+    costs = [sum(durations[name] + handoff_seconds for name in group) for group in groups]
+    result = [[] for _ in range(min(count, len(groups)))]
+    totals = [0] * len(result)
+    for index, cost in enumerate(costs):
+        lane = min(range(len(result)), key=lambda item: (totals[item], item))
+        result[lane].append(index)
+        totals[lane] += cost
+
+    def fits(lane):
+        return sum(groups[index][0] in early for index in lane) <= 1
+
+    while True:
+        score = sorted(totals, reverse=True)
+        choice = None
+        for left, first in enumerate(result):
+            for right, second in enumerate(result):
+                if left == right:
+                    continue
+                for give in first:
+                    for take in [None] + second:
+                        if take is None and len(first) == 1:
+                            continue
+                        after_left = [index for index in first if index != give]
+                        after_right = [index for index in second if index != take] + [give]
+                        if take is not None:
+                            after_left.append(take)
+                        if not fits(after_left) or not fits(after_right):
+                            continue
+                        delta = costs[give] - (costs[take] if take is not None else 0)
+                        trial = totals.copy()
+                        trial[left] -= delta
+                        trial[right] += delta
+                        candidate = sorted(trial, reverse=True)
+                        if candidate < score:
+                            score = candidate
+                            choice = left, right, after_left, after_right, trial
+        if choice is None:
+            break
+        left, right, result[left], result[right], totals = choice
+    return [[name for index in sorted(lane, key=lambda item: (
+        groups[item][0] not in early, -costs[item], groups[item])) for name in groups[index]]
+        for lane in result]
+
+
 def lanes(durations, count, *, early=(), chains=(), handoff_seconds=4):
     if count < 1 or not durations or any(value <= 0 for value in durations.values()):
         raise ValueError("Scheduling requires positive durations and runner capacity")
@@ -19,15 +64,9 @@ def lanes(durations, count, *, early=(), chains=(), handoff_seconds=4):
     if set(early) & {name for chain in chains for name in chain[1:]}:
         raise ValueError("Early suites cannot wait for another suite")
     groups = [list(chain) for chain in chains] + [[name] for name in durations if name not in chained]
-    result = [[] for _ in range(min(count, len(groups)))]
-    totals = [0] * len(result)
     ordered = sorted(groups, key=lambda group: (
         group[0] not in early, -sum(durations[name] + handoff_seconds for name in group), group))
-    for group in ordered:
-        index = min(range(len(result)), key=lambda item: (totals[item], item))
-        result[index].extend(group)
-        totals[index] += sum(durations[name] + handoff_seconds for name in group)
-    return result
+    return balance_groups(ordered, durations, count, early, handoff_seconds)
 
 
 def schedule(workflow, weights):

@@ -96,6 +96,24 @@ class WorkflowInventoryTests(unittest.TestCase):
             with self.subTest(group=group):
                 self.assertEqual(indexes, {1, 2, 3, 4})
 
+    def test_unit_shards_cover_command_and_renderer_with_one_cache_writer_each(self):
+        groups = collections.defaultdict(list)
+        for job in self.workflow["jobs"].values():
+            suite = json.loads(job.get("env", {}).get("CI_SUITE", "{}"))
+            if suite.get("suite") != "unit-shard" or suite["shard"] == "rest":
+                continue
+            groups[suite["shard"]].append(int(suite["index"]))
+            self.assertEqual(job["env"]["SHARD_INDEX"], suite["index"])
+            cache_steps = {step.get("name"): step for step in job["steps"]}
+            writer = cache_steps["Reuse Go downloads and compilation"]
+            reader = cache_steps["Restore shared unit compilation"]
+            self.assertEqual(writer["with"]["key"], reader["with"]["key"])
+            self.assertIn("fromJSON(env.CI_SUITE).index == 1", writer["if"])
+            self.assertIn("fromJSON(env.CI_SUITE).index != 1", reader["if"])
+        self.assertEqual(set(groups), {"command", "renderer"})
+        for indexes in groups.values():
+            self.assertEqual(sorted(indexes), [1, 2, 3])
+
 
 if __name__ == "__main__":
     unittest.main()

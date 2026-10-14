@@ -23,6 +23,13 @@ class ScheduleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             lanes({"a": 1}, 2, early=["unknown"])
 
+    def test_rebalances_a_greedy_tail_without_losing_jobs_or_early_roots(self):
+        durations = {"a": 8, "b": 7, "c": 6, "d": 5, "e": 4}
+        selected = lanes(durations, 2, early=["a"], handoff_seconds=0)
+        self.assertEqual(sorted(sum(durations[name] for name in lane) for lane in selected), [15, 15])
+        self.assertCountEqual([name for lane in selected for name in lane], durations)
+        self.assertIn("a", {lane[0] for lane in selected})
+
     def test_consumers_wait_for_cache_producer_and_retain_their_execution_slot(self):
         self.assertEqual(lanes({"producer": 20, "consumer": 5, "long": 30, "short": 5}, 2,
                                early=["producer"], chains=[["producer", "consumer"]]),
