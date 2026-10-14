@@ -4,12 +4,45 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestUpgradeWorkflowCoverageChecksEveryExistingProvider(t *testing.T) {
+	root := t.TempDir()
+	repository, err := os.OpenRoot(root)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, repository.Close()) })
+	require.ErrorContains(t, checkUpgradeWorkflows(repository, []string{"0.1.0"}), "no CI upgrade configuration")
+	gitlab := "test-chart-upgrade:\n  parallel:\n    matrix:\n    - BASELINE_CHART_VERSION: [0.1.0]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte(gitlab), 0o600))
+	require.NoError(t, checkUpgradeWorkflows(repository, []string{"0.1.0"}))
+	path := filepath.Join(root, ".github", "workflows", "ci-speed-proof.yml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("jobs: {}"), 0o600))
+	require.ErrorContains(t, checkUpgradeWorkflows(repository, []string{"0.1.0"}), ".github/workflows/ci-speed-proof.yml")
+	github := "jobs:\n  verified:\n    needs: [current, minimum]\n"
+	for _, variant := range []string{"current", "minimum"} {
+		github += fmt.Sprintf(`  %s:
+    name: upgrade-0.1.0-%s
+    env:
+      PILOT_SUITE: upgrade
+      BASELINE_CHART_VERSION: 0.1.0
+      KIND_NODE_IMAGE: kindest/node:%s
+      CI_SUITE: '{"name":"upgrade-0.1.0-%s","suite":"upgrade","baseline":"0.1.0","node":"kindest/node:%s"}'
+`, variant, variant, variant, variant, variant)
+	}
+	require.NoError(t, os.WriteFile(path, []byte(github), 0o600))
+	require.NoError(t, checkUpgradeWorkflows(repository, []string{"0.1.0"}))
+	require.NoError(t, os.Remove(filepath.Join(root, ".gitlab-ci.yml")))
+	require.NoError(t, checkUpgradeWorkflows(repository, []string{"0.1.0"}))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".gitlab-ci.yml"), []byte("{}"), 0o600))
+	require.ErrorContains(t, checkUpgradeWorkflows(repository, []string{"0.1.0"}), ".gitlab-ci.yml")
+}
 
 func TestScenarioOptionsRetainEnvironmentAndFlags(t *testing.T) {
 	t.Setenv("PLAIN_CLUSTER_NAME", "owned-plain")

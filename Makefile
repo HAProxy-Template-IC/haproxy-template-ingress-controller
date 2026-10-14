@@ -383,6 +383,10 @@ lint-github-actions: ## Validate GitHub workflow syntax and expressions
 test-github-verification: lint-github-actions ## Check GitHub verification evidence fails closed
 	python3 -m unittest discover -s .github/tests -v
 
+.PHONY: check-chart-upgrade-baselines
+check-chart-upgrade-baselines: ## Require every published baseline in the active CI upgrade configurations
+	./scripts/check-chart-upgrade-baselines.sh
+
 .PHONY: schedule-github-verification
 schedule-github-verification: ## Balance GitHub jobs using the recorded runner durations
 	python3 -m scripts.ci.github_schedule

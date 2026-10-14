@@ -107,6 +107,10 @@ func CheckUpgradeMatrix(published []string, content []byte) error {
 	for _, entry := range config.Upgrade.Parallel.Matrix {
 		matrix = append(matrix, entry.Versions...)
 	}
+	return checkUpgradeSelection(published, matrix)
+}
+
+func checkUpgradeSelection(published, matrix []string) error {
 	var missing, unknown []string
 	for _, version := range published {
 		if !slices.Contains(matrix, version) {
@@ -118,8 +122,16 @@ func CheckUpgradeMatrix(published []string, content []byte) error {
 			unknown = append(unknown, version)
 		}
 	}
-	if len(published) == 0 || len(missing) != 0 || len(unknown) != 0 {
-		return fmt.Errorf("upgrade matrix differs from published baselines: missing=%v unknown=%v; update test-chart-upgrade.parallel.matrix", missing, unknown)
+	seen := make(map[string]bool, len(matrix))
+	var duplicates []string
+	for _, version := range matrix {
+		if seen[version] {
+			duplicates = append(duplicates, version)
+		}
+		seen[version] = true
+	}
+	if len(published) == 0 || len(missing) != 0 || len(unknown) != 0 || len(duplicates) != 0 {
+		return fmt.Errorf("upgrade matrix differs from published baselines: missing=%v unknown=%v duplicates=%v; update the CI upgrade jobs", missing, unknown, duplicates)
 	}
 	return nil
 }

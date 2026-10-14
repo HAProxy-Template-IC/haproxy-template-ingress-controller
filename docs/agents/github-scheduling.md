@@ -71,3 +71,11 @@ Prose-only changes keep the existing eight common checks. Weekly verification
 calls the combined workflow once; it does not also launch separate copies of
 the integrated suites. The daily schedule remains during migration until the
 combined hosted run proves no increase over the prior PR lead time.
+
+`make check-chart-upgrade-baselines` compares the registry's released versions
+with every CI upgrade configuration present in the checkout. During migration,
+both GitLab and GitHub must match. GitHub must cover each baseline on current and
+minimum Kubernetes, use distinct node images for those variants, and require
+every upgrade job in its final verification gate. Missing, duplicate, or
+unexpected baselines fail the check. Removing the GitLab configuration at cutover
+does not remove this guard.
