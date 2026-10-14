@@ -1,0 +1,46 @@
+name: Mirror released images and charts
+'on':
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/github-release-mirror-20261014
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: release-registry-mirror
+  cancel-in-progress: false
+jobs:
+  mirror:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [controller, chart, spoa, varnish]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: 1.27.2
+          cache: false
+      - name: Install pinned registry copier
+        run: go install oras.land/oras/cmd/oras@db9e29505c3059f2b8fde34ae8cae266c5c765e9
+      - name: Authenticate destination registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Preserve released manifests, platforms, signatures and SBOMs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MIRROR_COMPONENT: ${{ matrix.component }}
+        run: make mirror-github-released-artifacts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: released-artifacts-${{ matrix.component }}
+          path: .pilot/released-artifacts-${{ matrix.component }}.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error

@@ -1336,6 +1336,17 @@ prepare-spoa-release: spoa-prep ## Prepare the immutable bundle for a release br
 mirror-github-ci-images: ## Preserve pinned CI image digests while copying them to GHCR
 	python3 -m scripts.ci.github_mirror --copy
 
+.PHONY: mirror-github-released-artifacts
+mirror-github-released-artifacts: ## Preserve published images, charts, signatures, and SBOMs in GHCR
+	python3 -m scripts.ci.github_release_mirror --copy --owner "$(GITHUB_REPOSITORY_OWNER)" --component "$(MIRROR_COMPONENT)" --output ".pilot/released-artifacts-$(MIRROR_COMPONENT).json"
+
+.PHONY: check-release-registry-inventory
+MIRROR_COMPONENTS ?= controller chart spoa varnish
+check-release-registry-inventory: ## Verify the frozen migration inventory against published source artifacts
+	@for component in $(MIRROR_COMPONENTS); do \
+		python3 -m scripts.ci.github_release_mirror --verify-source --owner HAProxy-Template-IC --component "$$component" --output ".pilot/released-source-$$component.json" || exit $$?; \
+	done
+
 .PHONY: tag-github-release
 tag-github-release: ## Tag and dispatch a release after canonical source verification
 	python3 -m scripts.ci.github_release_tag
