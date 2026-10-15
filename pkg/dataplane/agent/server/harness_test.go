@@ -127,6 +127,12 @@ func newHarness(tb testing.TB, opts ...func(*options)) *harness {
 		stopOnce: stop,
 	}
 	require.Eventually(t, func() bool { return agent.Ready() }, 10*time.Second, 10*time.Millisecond)
+	for _, socket := range []string{settings.adminSocket, settings.drainSocket} {
+		if socket != "" {
+			_, err := os.Stat(socket)
+			require.NoError(t, err, "a ready agent serves its local sockets")
+		}
+	}
 	h.url = "http://" + agent.Addr()
 	if settings.serverTLS != nil {
 		h.url = "https://" + agent.Addr()

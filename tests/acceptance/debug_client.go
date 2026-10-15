@@ -389,19 +389,24 @@ func (dc *DebugClient) GetErrors(ctx context.Context) (*ErrorSummary, error) {
 	return &summary, nil
 }
 
-// WaitForValidationStatus waits for the validation status to match the expected value.
-func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected string, timeout time.Duration) error {
-	return dc.waitFor(ctx, timeout, fmt.Sprintf("validation status %q", expected),
+// WaitForValidationStatus waits for the validation status to match the expected
+// value and returns the pipeline status that matched. Assert on that snapshot: a
+// later fetch can observe the next pipeline run, whose validation hasn't run yet.
+func (dc *DebugClient) WaitForValidationStatus(ctx context.Context, expected string, timeout time.Duration) (*PipelineStatus, error) {
+	var matched *PipelineStatus
+	err := dc.waitFor(ctx, timeout, fmt.Sprintf("validation status %q", expected),
 		func(ctx context.Context) (bool, error) {
 			status, err := dc.GetPipelineStatus(ctx)
 			if err != nil {
 				return false, err
 			}
 			if status.Validation != nil && status.Validation.Status == expected {
+				matched = status
 				return true, nil
 			}
 			return false, nil
 		})
+	return matched, err
 }
 
 // getJSON fetches JSON from the loopback-only debug server.

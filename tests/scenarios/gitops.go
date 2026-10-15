@@ -15,6 +15,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 
+	"github.com/haproxy-haptic/HAPTIC/tests/admission"
 	"github.com/haproxy-haptic/HAPTIC/tests/fixtures"
 )
 
@@ -186,6 +187,10 @@ func (g *gitops) failedPreflight(ctx context.Context) error {
 }
 
 func (g *gitops) applyRoutes(ctx context.Context, routes []byte) error {
+	// A synced Application doesn't mean the admission webhook is serving yet.
+	if err := admission.Wait(ctx, g.session.Client, routes, 180*time.Second); err != nil {
+		return err
+	}
 	if _, err := g.session.Kube(ctx, bytes.NewReader(routes), "apply", "-f", "-"); err != nil {
 		return err
 	}
