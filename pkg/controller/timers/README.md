@@ -11,7 +11,7 @@ It must only be used from a single goroutine — there is no internal synchronis
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/timers"
 
 var t timers.SafeTimer
 

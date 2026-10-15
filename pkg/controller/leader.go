@@ -25,12 +25,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	leaderelectionctrl "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	k8sleaderelection "gitlab.com/haproxy-haptic/haptic/pkg/k8s/leaderelection"
-	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	leaderelectionctrl "github.com/haproxy-haptic/HAPTIC/pkg/controller/leaderelection"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
+	k8sleaderelection "github.com/haproxy-haptic/HAPTIC/pkg/k8s/leaderelection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/lifecycle"
 )
 
 // leaderOnlyComponents holds components that only the leader should run.

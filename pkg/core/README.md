@@ -5,7 +5,7 @@ Shared primitives used everywhere in the controller. Two sub-packages, both inte
 - **`pkg/core/config`** — parses and validates the YAML that comes out of a `HAProxyTemplateConfig` CRD plus the controller's credentials `Secret`. Pure functions, no Kubernetes client calls.
 - **`pkg/core/logging`** — sets up structured `log/slog` logging for the binary.
 
-Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative; this README is a short map. When in doubt, prefer `go doc ./pkg/core/config` over the prose here or in `CLAUDE.md`.
+Module path: `github.com/haproxy-haptic/HAPTIC`. Source is authoritative; this README is a short map. When in doubt, prefer `go doc ./pkg/core/config` over the prose here or in `CLAUDE.md`.
 
 ## `config` — Loading and Validating
 
@@ -13,7 +13,7 @@ Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative; this R
 import (
     "log"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+    "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 // 1. Obtain a *config.Config (the running controller gets one from
@@ -76,7 +76,7 @@ Use camelCase in CRD manifests; the `yaml:` tags in `types.go` are the authorita
 ## `logging` — slog Setup
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
+import "github.com/haproxy-haptic/HAPTIC/pkg/core/logging"
 
 // Dynamic (runtime-adjustable via SetLevel; level strings: "TRACE",
 // "DEBUG", "INFO", "WARN"/"WARNING", "ERROR")

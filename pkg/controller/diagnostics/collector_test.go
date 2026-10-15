@@ -32,8 +32,8 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	agentclient "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/client"
 )
 
 type fakePodAccess struct {

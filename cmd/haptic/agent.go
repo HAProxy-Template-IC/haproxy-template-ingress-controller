@@ -29,10 +29,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/server"
-	"gitlab.com/haproxy-haptic/haptic/pkg/metrics"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/logging"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/server"
+	"github.com/haproxy-haptic/HAPTIC/pkg/metrics"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity"
 )
 
 // Credentials come from the Secret the HAProxy pod already mounts.

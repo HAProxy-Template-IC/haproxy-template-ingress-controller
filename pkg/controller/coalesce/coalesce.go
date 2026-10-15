@@ -33,7 +33,7 @@
 package coalesce
 
 import (
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // DrainLatest drains the event channel until it is momentarily empty.

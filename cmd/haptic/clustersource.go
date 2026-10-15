@@ -24,8 +24,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
 )
 
 // liveCluster bundles the clients a command needs when an input defaults to

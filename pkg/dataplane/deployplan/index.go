@@ -18,7 +18,7 @@ import (
 	"maps"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // Index is what a diff looks up in a plan by name. A caller that holds a plan

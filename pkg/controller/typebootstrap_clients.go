@@ -41,7 +41,7 @@ import (
 	"k8s.io/kube-openapi/pkg/handler3"
 	"k8s.io/kube-openapi/pkg/spec3"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
 )
 
 // NewClusterSchemaFetcher composes the apiextensions CRD lister and the

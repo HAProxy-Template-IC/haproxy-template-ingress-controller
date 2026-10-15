@@ -17,8 +17,8 @@ package events
 import (
 	"maps"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 )
 
 // ResourceIndexUpdatedEvent is published when a watched Kubernetes resource.

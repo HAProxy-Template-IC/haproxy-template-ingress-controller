@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/certificates"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/certificates"
 )
 
 type certificateOptions struct {

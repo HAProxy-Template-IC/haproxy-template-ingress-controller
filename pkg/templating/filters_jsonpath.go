@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 // This file implements generic, resource-agnostic engine helpers for

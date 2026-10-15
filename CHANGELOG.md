@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** The Go module path is now `github.com/haproxy-haptic/HAPTIC` (was `gitlab.com/haproxy-haptic/haptic`). Programs that import HAPTIC packages must update their import paths.
 - Development, issues, releases, and container images moved to GitHub: [github.com/haproxy-haptic/HAPTIC](https://github.com/haproxy-haptic/HAPTIC) and `ghcr.io/haproxy-haptic`. Releases up to 0.5.0 are available there with their original digests and signatures.
 - Startup validation may use 80% of the controller's startup probe window (240 seconds by default) instead of a fixed 120 seconds, so a large validation-test suite on a small node no longer crash-loops the controller.
 - Reduce reconciliation allocations by reusing unchanged watched-resource revisions during input isolation.

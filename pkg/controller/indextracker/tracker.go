@@ -27,10 +27,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/logging"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // ComponentName is the unique identifier for the index synchronization tracker component.

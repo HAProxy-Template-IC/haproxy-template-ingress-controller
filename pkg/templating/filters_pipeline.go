@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 // Collection pipeline helpers. Each is a native.AdaptiveFunc so the static

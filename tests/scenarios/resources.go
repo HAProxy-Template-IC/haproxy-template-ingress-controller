@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 func resource(version, kind, namespace, name string) map[string]any {

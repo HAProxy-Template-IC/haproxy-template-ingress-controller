@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // resourceInsight handles ResourceIndexUpdated, ResourceSyncComplete, and IndexSynchronized events.

@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/scriggo"
+	"github.com/haproxy-haptic/scriggo"
 )
 
 // scriggoTemplateFS implements fs.FS, fs.ReadDirFS, and scriggo.FormatFS for Scriggo template loading.

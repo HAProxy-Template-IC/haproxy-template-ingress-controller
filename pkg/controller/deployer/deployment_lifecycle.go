@@ -17,7 +17,7 @@ package deployer
 import (
 	"context"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
 )
 
 func (c *Component) flushPendingCancellationRequests() {

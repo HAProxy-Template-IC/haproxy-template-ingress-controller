@@ -18,7 +18,7 @@ import (
 	"context"
 	"errors"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func (r *incrementalRenderSession) IncrementalRankedFragments(

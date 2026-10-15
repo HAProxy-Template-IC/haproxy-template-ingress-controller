@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 // extractValidationDirConfig translates the operator-facing dataplane

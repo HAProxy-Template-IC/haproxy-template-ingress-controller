@@ -14,7 +14,7 @@
 
 package renderer
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+import "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 
 // raceScaleRenderTimeout lifts the 30s production render-timeout default for
 // chart-scale fixtures: race instrumentation pushes a 3,000-object cold

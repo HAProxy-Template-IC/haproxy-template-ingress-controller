@@ -16,7 +16,7 @@ The package defines a `Store` interface with the same methods as `pkg/k8s/types.
 ### Real provider (production)
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/stores"
+import "github.com/haproxy-haptic/HAPTIC/pkg/stores"
 
 real := stores.NewRealStoreProvider(map[string]stores.Store{
     "ingresses": ingressStore,

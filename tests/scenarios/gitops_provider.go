@@ -19,8 +19,8 @@ import (
 	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/yaml"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/fixtures"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 func (g *gitops) installManifest(ctx context.Context, name, url, namespace string, deployments []string) error {

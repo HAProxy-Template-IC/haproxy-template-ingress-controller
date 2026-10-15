@@ -19,7 +19,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+	pkgmetrics "github.com/haproxy-haptic/HAPTIC/pkg/metrics"
 )
 
 const reasonLabel = "reason"

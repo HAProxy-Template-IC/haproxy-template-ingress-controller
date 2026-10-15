@@ -25,13 +25,13 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores/storetest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
+	"github.com/haproxy-haptic/scriggo/native"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
-	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
 type directBoundResourceSpecTestResource struct {

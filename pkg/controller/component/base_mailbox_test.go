@@ -24,8 +24,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // blockingRecorder is a CoalescingHandler whose HandleEvent blocks on a

@@ -27,7 +27,7 @@ import (
 	"github.com/haproxytech/client-native/v6/runtime"
 	"github.com/haproxytech/client-native/v6/runtime/options"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 // experimentalPrefix opens every worker session: `add backend`, `publish` and

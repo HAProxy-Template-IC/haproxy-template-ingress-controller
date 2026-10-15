@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // DirectBoundStoreInvocation authenticates one allocation-free bound store call.

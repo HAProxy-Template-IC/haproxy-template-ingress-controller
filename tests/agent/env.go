@@ -28,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/client"
 )
 
 const (

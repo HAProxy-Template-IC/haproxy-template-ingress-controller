@@ -15,8 +15,8 @@ import (
     "context"
 
     "k8s.io/client-go/kubernetes"
-    "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+    "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 )
 
 p := configpublisher.NewWithListers(k8sClient, crdClient, listers, logger)

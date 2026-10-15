@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	ctrlhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	ctrlhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 // FixtureHTTPStoreWrapper wraps an HTTPStore pre-populated with fixtures for test execution.

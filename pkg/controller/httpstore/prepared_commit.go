@@ -23,8 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	purehttpstore "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 type componentPreparedState uint8

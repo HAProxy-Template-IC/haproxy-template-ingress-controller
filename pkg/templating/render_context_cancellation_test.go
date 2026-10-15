@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/haproxy-haptic/scriggo/native"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
 // Renders driven by a CANCELLABLE context take a different path through the

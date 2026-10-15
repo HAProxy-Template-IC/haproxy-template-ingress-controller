@@ -15,9 +15,9 @@ import (
 	"strings"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/immutablevector"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/orderedset"
-	"gitlab.com/haproxy-haptic/haptic/pkg/persistenttree"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental/internal/immutablevector"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental/internal/orderedset"
+	"github.com/haproxy-haptic/HAPTIC/pkg/persistenttree"
 )
 
 type dependencyKind uint8

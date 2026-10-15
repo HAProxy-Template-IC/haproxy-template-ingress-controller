@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 
-	projection "gitlab.com/haproxy-haptic/haptic/pkg/templating/internal/statuspatchprojection"
+	projection "github.com/haproxy-haptic/HAPTIC/pkg/templating/internal/statuspatchprojection"
 )
 
 // StatusPatchProjection is an immutable compiled set of status-patch calls.

@@ -28,10 +28,10 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/util/flowcontrol"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
-	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/podclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/compression"
+	hapticclient "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/podclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // DebugClient reaches the controller's loopback-only debug endpoints.

@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
+	"github.com/haproxy-haptic/HAPTIC/tests/fixtures"
 )
 
 // Paths inside the pod. Under `default-path origin`, HAProxy names a map, a

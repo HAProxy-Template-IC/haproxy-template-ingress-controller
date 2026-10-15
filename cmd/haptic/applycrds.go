@@ -35,7 +35,7 @@ import (
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/dynamic"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
 )
 
 const (

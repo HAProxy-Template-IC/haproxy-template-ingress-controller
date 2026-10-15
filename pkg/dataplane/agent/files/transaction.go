@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 // Transaction is one apply's file work: back up what it is about to change,

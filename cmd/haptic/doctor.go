@@ -25,8 +25,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/diagnostics"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/podclient"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/diagnostics"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/podclient"
 )
 
 type doctorOptions struct {

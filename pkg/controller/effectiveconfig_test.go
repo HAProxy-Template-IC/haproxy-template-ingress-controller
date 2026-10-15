@@ -24,7 +24,7 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
 )
 
 // fakeDiscoveryWithErr wraps the fake discovery to inject per-groupVersion errors.

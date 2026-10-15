@@ -7,7 +7,7 @@
 The SPOA hub runs beside HAProxy and handles request processing through plugins:
 Web Application Firewall (WAF) inspection, authentication, rate limits, mirroring, geolocation, and TLS
 fingerprinting. HAPTIC's `spoa-hub` image includes
-[haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) and the plugin
+[haproxy-spoa-hub](https://github.com/haproxy-haptic/haproxy-spoa-hub) and the plugin
 libraries listed below.
 
 SPOA means Stream Processing Offload Agent. HAProxy sends requests to this
@@ -411,6 +411,6 @@ Automatic HAProxy deadlines include sequential plugin stages plus
 
 ## See also
 
-- [haproxy-spoa-hub](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub) — upstream hub binary and SPOP gateway.
+- [haproxy-spoa-hub](https://github.com/haproxy-haptic/haproxy-spoa-hub) — upstream hub binary and SPOP gateway.
 - [Chart Values Reference — SPOA Hub Sidecar](../reference.md#spoa-hub-sidecar) — every `spoaHub.*` value.
 - [HAProxy versions matrix](./haproxy-versions.md) — supported HAProxy versions for the controller image.

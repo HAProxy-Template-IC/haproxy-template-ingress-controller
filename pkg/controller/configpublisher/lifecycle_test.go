@@ -27,11 +27,11 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	crdclientfake "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned/fake"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 )
 
 func TestComponentStartWaitsForWorkers(t *testing.T) {

@@ -20,7 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 func TestSnapshotBranchDifferencesAcrossDivergentRoots(t *testing.T) {

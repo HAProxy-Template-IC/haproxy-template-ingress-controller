@@ -1,6 +1,6 @@
 #!/bin/sh
-# Runs a command up to four times with a growing pause. For registry access in
-# CI: container registries reset connections transiently.
+# Runs a command up to four times with a growing pause. For registry and module
+# proxy access in CI, whose connections reset transiently.
 # Usage: scripts/retry.sh <command> [args...]
 attempt=1
 until "$@"; do

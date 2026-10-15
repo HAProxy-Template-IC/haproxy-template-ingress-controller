@@ -15,7 +15,7 @@ This component runs on **all replicas** — discovery is a read-only probe and t
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/discovery"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/discovery"
 
 component := discovery.New(bus, logger)
 go component.Start(ctx)

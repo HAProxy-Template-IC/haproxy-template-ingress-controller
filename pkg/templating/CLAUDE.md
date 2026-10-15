@@ -31,7 +31,7 @@ Modify this package when:
 
 This is a **pure library** with no controller or Kubernetes dependencies. Its status projection index uses the domain-free immutable container in `pkg/persistenttree`.
 
-Dependencies: Scriggo fork (from `gitlab.com/haproxy-haptic/scriggo`), `pkg/persistenttree`, and standard library.
+Dependencies: Scriggo fork (from `github.com/haproxy-haptic/scriggo`), `pkg/persistenttree`, and standard library.
 
 ### Resource-Agnostic Functions (RULE #1)
 
@@ -1265,7 +1265,7 @@ This project uses a forked version of Scriggo. The fork adds:
 The fork is consumed directly as a normal `require` in `go.mod` — no `replace` directive is involved. The pinned pseudo-version drifts as Renovate updates the dep, so check `go.mod` rather than copying a version from this file:
 
 ```sh
-grep gitlab.com/haproxy-haptic/scriggo go.mod
+grep github.com/haproxy-haptic/scriggo go.mod
 ```
 
 ### Include: Static and Glob
@@ -1469,5 +1469,5 @@ Engines must:
 
 - API documentation: `pkg/templating/README.md`
 - Scriggo documentation: <https://scriggo.com/templates>
-- Scriggo fork: `gitlab.com/haproxy-haptic/scriggo` (fork with `{% include %}` statement)
+- Scriggo fork: `github.com/haproxy-haptic/scriggo` (fork with `{% include %}` statement)
 - HAProxy template examples: `/examples/`

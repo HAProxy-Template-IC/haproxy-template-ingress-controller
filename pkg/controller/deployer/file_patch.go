@@ -18,7 +18,7 @@ import (
 	"slices"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 // filePatch is a file delivered as the bytes that differ from the one the

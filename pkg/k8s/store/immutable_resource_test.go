@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/tools/cache"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
 )
 
 func TestImmutableResourceSharesOwnedGraphWithStoreAndPinnedSnapshots(t *testing.T) {

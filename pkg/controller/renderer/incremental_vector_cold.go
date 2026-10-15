@@ -25,8 +25,8 @@ import (
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 	"golang.org/x/sync/errgroup"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func incrementalColdVectorBindings() [10]string {

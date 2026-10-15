@@ -54,7 +54,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/typegen"
 )
 
 // wrapSliceForTest converts []map[string]any items into a typed

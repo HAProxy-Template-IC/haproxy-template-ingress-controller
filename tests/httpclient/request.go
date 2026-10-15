@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // Request is a fluent HTTP request builder. Build a Request with one of the

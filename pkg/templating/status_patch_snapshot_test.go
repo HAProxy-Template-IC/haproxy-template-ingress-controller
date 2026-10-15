@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	projectionstate "gitlab.com/haproxy-haptic/haptic/pkg/templating/internal/statuspatchprojection"
+	projectionstate "github.com/haproxy-haptic/HAPTIC/pkg/templating/internal/statuspatchprojection"
 )
 
 const statusPatchBenchmarkPatchCount = 3000

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
 )
 
 const (

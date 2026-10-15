@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/debug"
 )
 
 type staticEventSource struct {

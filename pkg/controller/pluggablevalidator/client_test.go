@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	pv "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
+	pv "github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator/testutil"
 )
 
 func newRequest() *pv.Request {

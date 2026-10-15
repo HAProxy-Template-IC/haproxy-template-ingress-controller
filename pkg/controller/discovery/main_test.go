@@ -18,8 +18,8 @@ import (
 	"os"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/dataplanetest"
 )
 
 // TestMain installs a fake HAProxy executor so the discovery tests exercise the

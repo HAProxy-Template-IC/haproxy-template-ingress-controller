@@ -10,8 +10,8 @@ import (
 	"crypto/tls"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
-	shared "gitlab.com/haproxy-haptic/haptic/tests/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/e2ecluster"
+	shared "github.com/haproxy-haptic/HAPTIC/tests/httpclient"
 )
 
 type Client = shared.Client

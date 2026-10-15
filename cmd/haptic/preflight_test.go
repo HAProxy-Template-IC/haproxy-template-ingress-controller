@@ -30,8 +30,8 @@ import (
 
 	"helm.sh/helm/v4/pkg/chart/common"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
 )
 
 func TestCollectConfigDocuments(t *testing.T) {

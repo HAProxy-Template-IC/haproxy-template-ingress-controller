@@ -39,12 +39,12 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
-	hapticv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	hapticv1alpha1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/compression"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	hapticclient "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // Scale/performance tier environment variables. The tier is opt-in: the

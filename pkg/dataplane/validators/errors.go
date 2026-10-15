@@ -19,7 +19,7 @@
 package validators
 
 import (
-	genvalidators "gitlab.com/haproxy-haptic/haptic/pkg/generated/validators"
+	genvalidators "github.com/haproxy-haptic/HAPTIC/pkg/generated/validators"
 )
 
 // FieldError represents an OpenAPI validation failure for a specific field.

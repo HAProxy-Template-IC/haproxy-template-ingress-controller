@@ -24,8 +24,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
 )
 
 func TestShutdownKeepsDependenciesAliveUntilAdmissionFinishes(t *testing.T) {

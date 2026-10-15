@@ -17,7 +17,7 @@ HTTP server for exposing Prometheus metrics via `/metrics` endpoint.
 ```go
 import (
     "github.com/prometheus/client_golang/prometheus"
-    "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+    "github.com/haproxy-haptic/HAPTIC/pkg/metrics"
 )
 
 // Create instance-based registry
@@ -53,7 +53,7 @@ Convenience functions for creating Prometheus metrics with consistent naming.
 ```go
 import (
     "github.com/prometheus/client_golang/prometheus"
-    "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+    "github.com/haproxy-haptic/HAPTIC/pkg/metrics"
 )
 
 registry := prometheus.NewRegistry()

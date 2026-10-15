@@ -22,7 +22,7 @@ import (
 	"sync"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 // failureSnapshotter dumps live HAProxy state when an httpclient

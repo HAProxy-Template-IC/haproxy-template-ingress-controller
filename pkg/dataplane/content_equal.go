@@ -17,7 +17,7 @@ package dataplane
 import (
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
 )
 
 // ContentEqual compares every rendered byte and deployment-relevant file property.

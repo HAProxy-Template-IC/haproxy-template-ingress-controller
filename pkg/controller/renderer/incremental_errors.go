@@ -14,7 +14,7 @@
 
 package renderer
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/templating"
+import "github.com/haproxy-haptic/HAPTIC/pkg/templating"
 
 type incrementalTemplateError struct {
 	component string

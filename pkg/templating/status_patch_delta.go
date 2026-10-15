@@ -20,7 +20,7 @@ import (
 	"slices"
 	"strings"
 
-	projection "gitlab.com/haproxy-haptic/haptic/pkg/templating/internal/statuspatchprojection"
+	projection "github.com/haproxy-haptic/HAPTIC/pkg/templating/internal/statuspatchprojection"
 )
 
 // ChangedPatchesForPhase materializes current patches whose contributions changed.

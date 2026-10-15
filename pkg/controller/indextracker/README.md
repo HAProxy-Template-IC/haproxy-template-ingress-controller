@@ -11,7 +11,7 @@ The tracker is constructed with the list of resource-type names that must sync (
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/indextracker"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/indextracker"
 
 tracker := indextracker.New(bus, logger, []string{
     "ingresses", "services", "endpoints", // from Config.WatchedResources

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"path"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
 )
 
 // CanonicalizeAuxiliaryFiles returns an independent, deterministically sorted

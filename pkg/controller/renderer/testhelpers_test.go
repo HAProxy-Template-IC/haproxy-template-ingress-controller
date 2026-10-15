@@ -14,7 +14,7 @@
 
 package renderer
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+import "github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 
 // defaultCapabilities returns HAProxy 3.2+ capabilities for tests.
 func defaultCapabilities() dataplane.Capabilities {

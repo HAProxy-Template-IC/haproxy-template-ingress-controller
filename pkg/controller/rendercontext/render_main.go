@@ -18,10 +18,10 @@ import (
 	"context"
 	"fmt"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // MainRender is the result of rendering and assembling haproxy.cfg.

@@ -20,7 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // ResourceItemCache reuses immutable typed resource projections within one render.

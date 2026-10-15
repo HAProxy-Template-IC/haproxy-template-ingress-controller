@@ -202,6 +202,6 @@ func run(pass *analysis.Pass) (any, error) {
 func isEventPackage(pkgPath string) bool {
 	// Match both the full path and relative path patterns
 	return strings.HasSuffix(pkgPath, "/pkg/controller/events") ||
-		strings.HasSuffix(pkgPath, "gitlab.com/haproxy-haptic/haptic/pkg/controller/events") ||
-		pkgPath == "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+		strings.HasSuffix(pkgPath, "github.com/haproxy-haptic/HAPTIC/pkg/controller/events") ||
+		pkgPath == "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
 }

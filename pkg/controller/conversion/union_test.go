@@ -22,8 +22,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 func src(origin string, tests map[string]v1alpha1.ValidationTest) ValidationTestSource {

@@ -19,9 +19,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/haproxy-haptic/scriggo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/scriggo"
 )
 
 func TestIncrementalEntryPointCompilesWithTrackedInputsAndPureHelpers(t *testing.T) {

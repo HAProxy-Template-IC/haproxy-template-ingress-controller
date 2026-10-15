@@ -20,10 +20,10 @@ import (
 	"log/slog"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configtest"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/configtest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/helpers"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // validationTestsBootstrapTimeout caps the wall-clock cost of schema

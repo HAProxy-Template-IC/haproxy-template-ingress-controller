@@ -20,7 +20,7 @@ import (
 	"slices"
 	"sync"
 
-	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	purehttpstore "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 // PrepareObservationCommitWithActiveLeases prepares verification and one

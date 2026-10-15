@@ -17,7 +17,7 @@ package main
 import (
 	"github.com/spf13/cobra"
 
-	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
+	agentclient "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/client"
 )
 
 func init() {

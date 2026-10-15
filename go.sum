@@ -336,6 +336,8 @@ github.com/gostaticanalysis/testutil v0.5.0 h1:Dq4wT1DdTwTGCQQv3rl3IvD5Ld0E6HiY+
 github.com/gostaticanalysis/testutil v0.5.0/go.mod h1:OLQSbuM6zw2EvCcXTz1lVq5unyoNft372msDY0nY5Hs=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 h1:5VipnvEpbqr2gA2VbM+nYVbkIF28c5ZQfqCBQ5g2xfk=
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0/go.mod h1:Hyl3n6Twe1hvtd9XUXDec4pTvgMSEixRuQKPTMH2bNs=
+github.com/haproxy-haptic/scriggo v0.0.0-20261015135109-ab2701c4f9fc h1:m3PSIz8GtdqfT/yfntTBQIuhSciIbNnfnCG/HCHUt1s=
+github.com/haproxy-haptic/scriggo v0.0.0-20261015135109-ab2701c4f9fc/go.mod h1:meIB9Zunfdj6hR7YxXz/UxzgSLe/6PKNXG0ukodZy2k=
 github.com/haproxytech/client-native/v5 v5.1.28 h1:s9cLjRwliQdj7ILvEhbcoAgnWkFS7/Iw9ZWFrr1RjCM=
 github.com/haproxytech/client-native/v5 v5.1.28/go.mod h1:N5+fpFTThhKX/ufddjJ2QWi+d0NZYz8fKfI6mxeeafc=
 github.com/haproxytech/client-native/v6 v6.4.3 h1:9Gk+i8/ZvAKCvlXbl4ODpjqpCWnHiD/BkZIo3vXomjs=
@@ -610,8 +612,6 @@ github.com/yuin/goldmark v1.4.1/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 gitlab.com/bosi/decorder v0.4.2 h1:qbQaV3zgwnBZ4zPMhGLW4KZe7A7NwxEhJx39R3shffo=
 gitlab.com/bosi/decorder v0.4.2/go.mod h1:muuhHoaJkA9QLcYHq4Mj8FJUwDZ+EirSHRiaTcTf6T8=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20261012130106-8f7f77cdf755 h1:Fx828MpP4i0CX8Jux4+S40/BzhIb0UBywBVXkFDA8zY=
-gitlab.com/haproxy-haptic/scriggo v0.0.0-20261012130106-8f7f77cdf755/go.mod h1:bB/SOxGvp9ErBam76hY/fPQZRpTe46QnT01tLAwB5q4=
 go-simpler.org/assert v0.9.0 h1:PfpmcSvL7yAnWyChSjOz6Sp6m9j5lyK8Ok9pEL31YkQ=
 go-simpler.org/assert v0.9.0/go.mod h1:74Eqh5eI6vCK6Y5l3PI8ZYFXG4Sa+tkr70OIPJAUr28=
 go-simpler.org/musttag v0.14.0 h1:XGySZATqQYSEV3/YTy+iX+aofbZZllJaqwFWs+RTtSo=

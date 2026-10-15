@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
 )
 
 func vectorManifests(image string) map[string]string {

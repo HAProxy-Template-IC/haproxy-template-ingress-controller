@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 
-	devassets "gitlab.com/haproxy-haptic/haptic/scripts/dev-env-assets"
+	devassets "github.com/haproxy-haptic/HAPTIC/scripts/dev-env-assets"
 )
 
 func TestSetDeploymentFixtureImagePreservesOtherFields(t *testing.T) {

@@ -2,12 +2,12 @@
 
 Generic, domain-agnostic event bus with pub/sub and scatter-gather coordination. The controller pulls this in; everything else in the tree stays clean of it (only `pkg/controller/events` knows about domain event types).
 
-Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative (`go doc ./pkg/events`); this README is a short orientation.
+Module path: `github.com/haproxy-haptic/HAPTIC`. Source is authoritative (`go doc ./pkg/events`); this README is a short orientation.
 
 ## Minimal Usage
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/events"
+import "github.com/haproxy-haptic/HAPTIC/pkg/events"
 
 bus := events.NewEventBus(100)          // pre-start buffer capacity
 ch := bus.Subscribe("my-component", 50) // per-subscriber buffer

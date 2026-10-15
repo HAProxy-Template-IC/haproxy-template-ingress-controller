@@ -15,8 +15,8 @@
 package deployer
 
 import (
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 )
 
 // FleetCapabilitiesSink receives what the fleet's HAProxy version supports.

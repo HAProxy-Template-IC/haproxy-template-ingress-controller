@@ -10,7 +10,7 @@
 # nonexistent fallback keeps BuildKit analysis warning-free but makes an
 # unpinned direct build fail fast instead of silently consuming a mutable tag.
 ARG SPOA_HUB_VERSION=version-must-be-supplied
-FROM registry.gitlab.com/haproxy-haptic/haproxy-spoa-hub:${SPOA_HUB_VERSION}
+FROM ghcr.io/haproxy-haptic/haproxy-spoa-hub:${SPOA_HUB_VERSION}
 
 # Plugin runtime dependencies the upstream debian:bookworm-slim base doesn't
 # carry. sso-auth links against libxmlsec1-openssl for SAML2 signature

@@ -20,7 +20,7 @@ import (
 	"net/http"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 // TestIngressHTTPStoreDemo covers test_ingress_http_store_demo: the chart

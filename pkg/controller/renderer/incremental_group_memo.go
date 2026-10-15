@@ -21,9 +21,9 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/persistenttree"
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/persistenttree"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 type incrementalGroupMemoAuthority struct {

@@ -17,7 +17,7 @@ package metrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
 )
 
 // mailboxDepthCollector reads every running component mailbox at scrape

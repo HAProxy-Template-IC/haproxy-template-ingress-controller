@@ -11,7 +11,7 @@ Components implement the `Component` interface (`Name() string` + `Start(ctx) er
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+import "github.com/haproxy-haptic/HAPTIC/pkg/lifecycle"
 
 registry := lifecycle.NewRegistry().WithLogger(logger)
 

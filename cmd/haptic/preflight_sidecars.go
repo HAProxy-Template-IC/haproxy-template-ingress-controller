@@ -15,7 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
 )
 
 type sidecarConfig struct {

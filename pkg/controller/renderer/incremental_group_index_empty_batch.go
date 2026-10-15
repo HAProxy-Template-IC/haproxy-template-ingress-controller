@@ -22,9 +22,9 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
-	"gitlab.com/haproxy-haptic/haptic/pkg/persistenttree"
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/persistenttree"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
 )
 
 type incrementalValidatedGroupBatch struct {

@@ -21,7 +21,7 @@ import (
 	"io"
 	"path/filepath"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 type Client struct {

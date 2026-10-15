@@ -40,9 +40,9 @@ import (
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/timers"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
 )
 
 // ComponentName identifies this component in logs.

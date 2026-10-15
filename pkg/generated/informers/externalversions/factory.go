@@ -22,9 +22,9 @@ import (
 	sync "sync"
 	time "time"
 
-	versioned "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	haproxytemplate "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions/haproxytemplate"
-	internalinterfaces "gitlab.com/haproxy-haptic/haptic/pkg/generated/informers/externalversions/internalinterfaces"
+	versioned "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	haproxytemplate "github.com/haproxy-haptic/HAPTIC/pkg/generated/informers/externalversions/haproxytemplate"
+	internalinterfaces "github.com/haproxy-haptic/HAPTIC/pkg/generated/informers/externalversions/internalinterfaces"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

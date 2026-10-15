@@ -10,8 +10,8 @@ This is a thin event-loop on top of `pkg/controller/component.Base` — same sca
 import (
     "context"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/configloader"
-    "gitlab.com/haproxy-haptic/haptic/pkg/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/configloader"
+    "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 bus := events.NewEventBus(100)

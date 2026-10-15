@@ -5,7 +5,7 @@ Parses HAProxy configuration text into a typed `StructuredConfig` that the compa
 ## Usage
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+import "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser"
 
 p, err := parser.New()
 if err != nil {

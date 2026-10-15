@@ -36,7 +36,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/e2ecluster"
 )
 
 // Client is a TLS-aware gRPC dialer for the e2e suite. Construct with

@@ -17,7 +17,7 @@ package renderer
 import (
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 )
 
 // CapabilitiesFanout keeps every RenderService that feeds a gate on one

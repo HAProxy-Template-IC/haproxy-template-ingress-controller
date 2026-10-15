@@ -18,8 +18,8 @@ import (
 
 	parser "github.com/haproxytech/client-native/v6/config-parser"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/sectionextract"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser/parserconfig"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser/sectionextract"
 )
 
 // parserMutex protects against concurrent calls to the client-native parser.

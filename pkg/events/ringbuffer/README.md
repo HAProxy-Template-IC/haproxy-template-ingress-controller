@@ -7,7 +7,7 @@ No dependencies beyond the standard library — the package could be lifted out 
 ## API
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/events/ringbuffer"
+import "github.com/haproxy-haptic/HAPTIC/pkg/events/ringbuffer"
 
 buf := ringbuffer.New[Event](1000)   // capacity, not starting length
 

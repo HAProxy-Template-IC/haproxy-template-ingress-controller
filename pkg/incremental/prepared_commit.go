@@ -7,7 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/immutablevector"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental/internal/immutablevector"
 )
 
 const (

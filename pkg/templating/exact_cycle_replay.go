@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/scriggo"
+	"github.com/haproxy-haptic/scriggo"
 )
 
 var exactCycleReplayProtocolGlobals = map[string]struct{}{

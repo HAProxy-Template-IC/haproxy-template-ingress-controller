@@ -14,8 +14,8 @@ The component subscribes only on the leader, publishes on `TemplateRenderedEvent
 import (
     "time"
 
-    k8spublisher "gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/configpublisher"
+    k8spublisher "github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/configpublisher"
 )
 
 basePublisher := k8spublisher.NewWithListers(k8sClient, crdClient, listers, logger)

@@ -18,7 +18,7 @@ import (
 	"errors"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
 )
 
 // ErrDocumentTransitionRequiresRebuild reports a transition the sparse delta protocol cannot encode.

@@ -20,7 +20,7 @@ import (
 	"os"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
 )
 
 // Cluster, deployment, and image constants. The e2e suite is self-contained:

@@ -15,7 +15,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
+	"github.com/haproxy-haptic/HAPTIC/tests/fixtures"
 )
 
 const (

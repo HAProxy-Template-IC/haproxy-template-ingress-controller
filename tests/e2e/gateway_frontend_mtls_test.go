@@ -41,7 +41,7 @@ import (
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/e2ecluster"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/textlogger"
 	streamhttp "k8s.io/streaming/pkg/httpstream"

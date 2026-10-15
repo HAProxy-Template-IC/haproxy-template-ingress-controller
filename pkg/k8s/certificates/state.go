@@ -22,7 +22,7 @@ import (
 	"io"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity/issuance"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity/issuance"
 )
 
 type identity struct {

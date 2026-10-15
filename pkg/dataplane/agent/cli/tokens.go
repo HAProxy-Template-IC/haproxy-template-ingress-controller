@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 // ErrUnsafeToken is what every negative-space rejection wraps. A token that

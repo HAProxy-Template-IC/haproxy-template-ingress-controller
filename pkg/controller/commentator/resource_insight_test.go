@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	ctlevents "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	k8stypes "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	ctlevents "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	k8stypes "github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 )
 
 // resourceInsight produces operator-facing log messages for K8s

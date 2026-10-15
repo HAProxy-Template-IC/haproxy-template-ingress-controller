@@ -21,8 +21,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer/internal/queryidentity"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/renderer/internal/queryidentity"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
 )
 
 func TestIncrementalComponentQueryCacheReauthenticatesCanonicalIdentity(t *testing.T) {

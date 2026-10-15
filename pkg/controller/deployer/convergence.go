@@ -17,8 +17,8 @@ package deployer
 import (
 	"sync/atomic"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
 )
 
 // maxAwaitingConvergence bounds the renders kept for a later observation. A

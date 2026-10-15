@@ -15,7 +15,7 @@
 package events
 
 import (
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 )
 
 // HAProxyPodsDiscoveredEvent is published when HAProxy pods are discovered or updated.

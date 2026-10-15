@@ -14,8 +14,8 @@ Components embed `*Base` and implement `EventHandler`. The base subscribes durin
 import (
     "log/slog"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
-    busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
+    busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 type MyComponent struct {

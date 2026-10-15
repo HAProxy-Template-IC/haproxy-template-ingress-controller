@@ -1,7 +1,7 @@
 package watcher
 
 import (
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 
 	"k8s.io/client-go/tools/cache"
 )

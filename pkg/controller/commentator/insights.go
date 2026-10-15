@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // Lookback window durations for event correlation in the ring buffer.

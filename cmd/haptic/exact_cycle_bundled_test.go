@@ -17,11 +17,11 @@ package main
 import (
 	"testing"
 
+	"github.com/haproxy-haptic/scriggo"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/scriggo"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/helpers"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func TestBundledRenderedRootsHaveExactCycleProtocols(t *testing.T) {

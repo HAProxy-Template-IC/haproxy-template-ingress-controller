@@ -16,10 +16,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	api "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	agentapi "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/tests/publication"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	api "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	agentapi "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/tests/publication"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 type gitopsSnapshot struct {

@@ -19,7 +19,7 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
 )
 
 func TestProjectDefinition(t *testing.T) {

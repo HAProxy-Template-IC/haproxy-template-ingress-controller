@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser/parserconfig"
 )
 
 // All() is the single CE-section extraction pass shared by both the CE parser

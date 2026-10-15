@@ -16,7 +16,7 @@ Four validators run as the responder side of the scatter-gather validation patte
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/validator"
 
 basic := validator.NewBasicValidator(bus, logger)
 tmpl := validator.NewTemplateValidator(bus, logger, bootstrap)

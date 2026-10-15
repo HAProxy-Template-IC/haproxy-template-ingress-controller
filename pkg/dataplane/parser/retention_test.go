@@ -21,7 +21,7 @@ import (
 	"github.com/haproxytech/client-native/v6/models"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser"
 )
 
 // retainedBytes reports the heap still held after fn returns, with the value fn

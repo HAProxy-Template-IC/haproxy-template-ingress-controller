@@ -17,7 +17,7 @@ package events
 import (
 	"maps"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 // ProposalValidationRequestedEvent is published when a component wants to validate

@@ -24,9 +24,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/persistenttree"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/persistenttree"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func TestIncrementalGroupAuthenticationRejectsNilAndUnsealedIndexes(t *testing.T) {

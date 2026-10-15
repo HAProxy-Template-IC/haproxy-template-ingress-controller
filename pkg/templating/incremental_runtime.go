@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"io"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 type incrementalRendererContextKey struct{}

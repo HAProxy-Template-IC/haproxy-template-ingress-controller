@@ -19,8 +19,8 @@ import (
 	"errors"
 	"fmt"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // exactCycleRootOutputs is what a cycle's auxiliary roots produced, keyed by

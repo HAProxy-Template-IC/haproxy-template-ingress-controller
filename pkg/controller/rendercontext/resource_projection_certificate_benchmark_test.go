@@ -19,8 +19,8 @@ import (
 	"reflect"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/typegen"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )
 

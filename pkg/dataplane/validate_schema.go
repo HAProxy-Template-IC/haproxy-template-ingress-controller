@@ -22,8 +22,8 @@ import (
 
 	"github.com/haproxytech/client-native/v6/models"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/validators"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/validators"
 )
 
 // validateAPISchema performs API schema validation using generated validators.

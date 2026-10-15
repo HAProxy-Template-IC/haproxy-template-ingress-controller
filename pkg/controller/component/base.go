@@ -23,7 +23,7 @@ import (
 	"slices"
 	"sync"
 
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // EventHandler dispatches a single event received on the subscription

@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
 )
 
 var benchmarkDirectResourceFrame reflect.Value

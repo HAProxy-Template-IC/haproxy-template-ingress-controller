@@ -33,7 +33,7 @@ import (
 	chartv2loader "helm.sh/helm/v4/pkg/chart/v2/loader"
 	"sigs.k8s.io/yaml"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
 )
 
 var (

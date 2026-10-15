@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/cli"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/cli"
 )
 
 func TestClientConstructionDoesNotProbeHAProxy(t *testing.T) {

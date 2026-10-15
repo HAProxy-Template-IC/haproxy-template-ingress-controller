@@ -266,8 +266,8 @@ serialized string form.
 ```go
 import (
     metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/watcher"
 )
 
 cfg := types.WatcherConfig{

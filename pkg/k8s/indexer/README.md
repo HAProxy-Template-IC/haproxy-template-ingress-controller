@@ -11,7 +11,7 @@ This is what the controller wires when it consumes the CRD's `indexBy` and `watc
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+import "github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
 
 idx, err := indexer.New(indexer.Config{
     IndexBy: []string{

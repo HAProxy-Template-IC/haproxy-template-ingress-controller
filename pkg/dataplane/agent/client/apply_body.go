@@ -20,7 +20,7 @@ import (
 	"mime/multipart"
 	"sync/atomic"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 // applySource produces the multipart body of one apply. The caller's part

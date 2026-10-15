@@ -18,7 +18,7 @@ import (
 	"context"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 // ChangesFrom compares selected roots without reading lazy resource bodies.

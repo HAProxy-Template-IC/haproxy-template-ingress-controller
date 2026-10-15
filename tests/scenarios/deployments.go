@@ -11,7 +11,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 func (s *Session) Deployment(ctx context.Context, suffix string) (*appsv1.Deployment, error) {

@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/persistenttree"
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/persistenttree"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
 )
 
 type incrementalRankedTextUpdate struct {

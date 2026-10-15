@@ -23,7 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 // buildContainerStatus builds a containerStatus map with the given name, ready

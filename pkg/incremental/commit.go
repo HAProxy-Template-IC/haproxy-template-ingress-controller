@@ -7,8 +7,8 @@ import (
 	"maps"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/orderedset"
-	"gitlab.com/haproxy-haptic/haptic/pkg/persistenttree"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental/internal/orderedset"
+	"github.com/haproxy-haptic/HAPTIC/pkg/persistenttree"
 )
 
 // CommitPublication contains the infallible phases surrounding graph publication.

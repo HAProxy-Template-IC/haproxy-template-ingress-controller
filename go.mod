@@ -1,4 +1,4 @@
-module gitlab.com/haproxy-haptic/haptic
+module github.com/haproxy-haptic/HAPTIC
 
 go 1.27.2
 
@@ -9,6 +9,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/go-logr/logr v1.4.4
 	github.com/golangci/golangci-lint/v2 v2.14.0
+	github.com/haproxy-haptic/scriggo v0.0.0-20261015135109-ab2701c4f9fc
 	github.com/haproxytech/client-native/v6 v6.4.3
 	github.com/hashicorp/go-immutable-radix/v2 v2.1.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
@@ -18,7 +19,6 @@ require (
 	github.com/rekby/fixenv v0.7.1
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
-	gitlab.com/haproxy-haptic/scriggo v0.0.0-20261012130106-8f7f77cdf755
 	golang.org/x/mod v0.41.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.49.0

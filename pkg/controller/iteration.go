@@ -22,15 +22,15 @@ import (
 	"path/filepath"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
-	dryrunvalidator "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/configchange"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/debug"
+	dryrunvalidator "github.com/haproxy-haptic/HAPTIC/pkg/controller/dryrunvalidator"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validator"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
 )
 
 // buildAndRegisterPluggableValidatorManager constructs the validator

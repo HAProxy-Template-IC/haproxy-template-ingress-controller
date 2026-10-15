@@ -23,8 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
 )
 
 var errIncrementalCacheSuperseded = errors.New("incremental cache build was superseded")

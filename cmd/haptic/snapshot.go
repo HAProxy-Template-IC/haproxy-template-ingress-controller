@@ -21,7 +21,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
 )
 
 // snapshotRenderRoot stands in for the per-run temp directory the renders point

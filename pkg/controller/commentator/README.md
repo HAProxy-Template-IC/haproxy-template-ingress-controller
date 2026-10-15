@@ -7,7 +7,7 @@ Key property: the commentator owns its own ring buffer (separate from the generi
 ## Usage
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/commentator"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/commentator"
 
 // bufferSize is the ring-buffer capacity (how many recent events
 // to keep for correlation). 500 is the controller's default

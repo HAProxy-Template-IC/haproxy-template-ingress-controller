@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 func TestIncrementalNativeFrameSignatureProbe(t *testing.T) {

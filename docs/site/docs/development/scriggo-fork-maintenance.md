@@ -1,7 +1,7 @@
 # Scriggo fork maintenance
 
 HAPTIC renders operator-authored templates through a fork of Scriggo,
-`gitlab.com/haproxy-haptic/scriggo`. The fork is a long-lived component, not a
+`github.com/haproxy-haptic/scriggo`. The fork is a long-lived component, not a
 temporary patch: it carries a large, HAPTIC-specific feature that upstream is
 unlikely to accept, so it needs a documented, repeatable maintenance process.
 This page records why the fork exists, how far it has drifted from upstream, and
@@ -101,7 +101,7 @@ Run these steps in a clone of the fork:
    which rewrites the pseudo-version in `go.mod` and the checksum in `go.sum`.
 
    ```bash
-   go get gitlab.com/haproxy-haptic/scriggo@<new-commit>
+   go get github.com/haproxy-haptic/scriggo@<new-commit>
    go mod tidy
    ```
 
@@ -117,7 +117,7 @@ Renovate surfaces a new fork commit as a pseudo-version (digest) bump, but a
 digest bump carries no security meaning — it's just a newer commit. Nothing in
 HAPTIC's tooling links the fork back to upstream Scriggo advisories, because
 `govulncheck` keys on the module path: an advisory filed against
-`github.com/open2b/scriggo` never matches `gitlab.com/haproxy-haptic/scriggo`.
+`github.com/open2b/scriggo` never matches `github.com/haproxy-haptic/scriggo`.
 The upstream watch is therefore separate and manual:
 
 - Subscribe to `open2b/scriggo`
@@ -136,21 +136,20 @@ directive — pinned to a pseudo-version. Read the live pin from `go.mod` rather
 than copying a value out of this page; it drifts as the fork advances.
 
 ```bash
-grep gitlab.com/haproxy-haptic/scriggo go.mod
+grep github.com/haproxy-haptic/scriggo go.mod
 ```
 
 - **Renovate tracks the pin.** The built-in Go-module manager proposes a digest
   update whenever the fork's default branch advances — the recurring
-  `renovate/…-scriggo-digest` merge requests. A `packageRule` in
+  `renovate/…-scriggo-digest` pull requests. A `packageRule` in
   [`renovate.json`](https://github.com/haproxy-haptic/HAPTIC/blob/main/renovate.json)
   marks these updates for human review rather than auto-merge, because a fork
   bump can carry an upstream security fix that a reviewer must recognize and note
   against the [security advisory watch](#security-advisory-watch).
 - **The fork's CI gates the merge.** A sync merges to the fork only when the
-  fork's own pipeline is green. That pipeline runs on GitLab shared runners, so
-  shared-runner availability for the `haproxy-haptic/scriggo` project is an
-  operational dependency of every sync: a runner outage blocks taking an upstream
-  security fix.
+  fork's own GitHub Actions CI is green. GitHub-hosted runner availability for
+  `haproxy-haptic/scriggo` is therefore an operational dependency of every sync:
+  a runner outage blocks taking an upstream security fix.
 
 ## Ownership and cadence
 

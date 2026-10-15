@@ -11,8 +11,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	api "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	agentapi "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	api "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	agentapi "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 type fixture struct {

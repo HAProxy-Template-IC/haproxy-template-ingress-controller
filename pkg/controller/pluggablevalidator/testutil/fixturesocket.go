@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	pv "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
+	pv "github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator"
 )
 
 // FixtureServer is a single-connection-per-request unix-socket server that

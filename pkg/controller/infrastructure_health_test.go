@@ -18,12 +18,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
-	pvtestutil "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
-	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator"
+	pvtestutil "github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/reconciler"
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/lifecycle"
 )
 
 // createEarlyHealthChecker is the health endpoint Kubernetes uses

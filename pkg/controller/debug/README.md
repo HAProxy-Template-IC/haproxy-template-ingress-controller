@@ -48,8 +48,8 @@ Every method returns a "not ready" error until the relevant event has been obser
 import (
     "context"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
-    "gitlab.com/haproxy-haptic/haptic/pkg/introspection"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/debug"
+    "github.com/haproxy-haptic/HAPTIC/pkg/introspection"
 )
 
 registry := introspection.NewRegistry()

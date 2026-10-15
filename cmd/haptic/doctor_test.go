@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/diagnostics"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/diagnostics"
 )
 
 func TestDoctorWritesEvidenceBeforeReturningUnhealthy(t *testing.T) {

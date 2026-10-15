@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 // ResumeCluster returns nil for a cluster without this harness's ownership mount.

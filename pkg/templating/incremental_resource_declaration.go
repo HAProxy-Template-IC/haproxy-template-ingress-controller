@@ -19,7 +19,7 @@ import (
 	"reflect"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 var incrementalResourceStoreTypes sync.Map

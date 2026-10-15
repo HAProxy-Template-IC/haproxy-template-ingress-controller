@@ -11,7 +11,7 @@ This is a **utility package** — pure functions, no event-bus dependency, no go
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/helpers"
 
 // Default — Scriggo engine, all standard filters auto-registered, fail()
 // auto-registered, post-processors auto-extracted from cfg.

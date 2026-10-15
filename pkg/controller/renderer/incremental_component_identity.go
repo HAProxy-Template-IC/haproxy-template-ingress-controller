@@ -17,7 +17,7 @@ package renderer
 import (
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func incrementalComponentsEqual(left, right *incrementalComponent) bool {

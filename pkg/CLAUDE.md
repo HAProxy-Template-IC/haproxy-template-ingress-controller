@@ -284,7 +284,7 @@ Use direct function calls for pure components:
 
 ```go
 // In an event-adapter component (e.g. pkg/controller/renderer)
-import "gitlab.com/haproxy-haptic/haptic/pkg/templating"
+import "github.com/haproxy-haptic/HAPTIC/pkg/templating"
 
 func (c *Component) render(ctx context.Context) (string, error) {
     // Direct call to the pure component — no event needed for this hop

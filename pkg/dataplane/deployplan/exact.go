@@ -17,7 +17,7 @@ package deployplan
 import (
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // The exact bodies (Text, Content, Body, Comments) are json:"-", so a baseline

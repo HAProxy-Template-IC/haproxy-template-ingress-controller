@@ -19,7 +19,7 @@ package e2e
 import (
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 // An explicit Accept-Encoding prevents the Go client from decompressing the response.

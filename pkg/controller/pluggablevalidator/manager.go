@@ -25,8 +25,8 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pipeline"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
 )
 
 // DefaultMaxParallelDispatch caps the number of concurrent

@@ -121,7 +121,7 @@ This separation allows different buffer sizes, retention policies, and use cases
 Acceptance tests drive the controller and assert on its state through these endpoints. `tests/acceptance/debug_client.go` provides a `*DebugClient` that port-forwards into ready controller pods and rotates across them, because `/debug/*` is loopback-only — a request arriving through the API server's service-proxy comes from the pod network and would be rejected with 403:
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/tests/acceptance"
+import "github.com/haproxy-haptic/HAPTIC/tests/acceptance"
 
 // Most tests use the helper that waits for the pod and the debug service
 // endpoints before constructing the client (handles pod restarts cleanly).

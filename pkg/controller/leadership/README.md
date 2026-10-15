@@ -12,8 +12,8 @@ The controller has a small but recurring problem: leader-only components subscri
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/leadership"
 )
 
 // All-replica side (e.g. configchange.ConfigChangeHandler):

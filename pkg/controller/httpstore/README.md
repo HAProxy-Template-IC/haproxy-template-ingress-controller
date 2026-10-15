@@ -20,7 +20,7 @@ One wrapper represents one render and accepts only one authentication and option
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
 
 evictionMaxAge := 2 * cfg.Dataplane.GetDriftPreventionInterval()
 hsComponent := httpstore.New(eventBus, logger, evictionMaxAge)

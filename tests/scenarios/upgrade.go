@@ -16,8 +16,8 @@ import (
 
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/admission"
-	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
+	"github.com/haproxy-haptic/HAPTIC/tests/admission"
+	"github.com/haproxy-haptic/HAPTIC/tests/fixtures"
 )
 
 const chartOCI = "oci://ghcr.io/haproxy-haptic/haptic/charts/haptic"

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	controllerwebhook "gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
-	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
+	controllerwebhook "github.com/haproxy-haptic/HAPTIC/pkg/controller/webhook"
+	pkgwebhook "github.com/haproxy-haptic/HAPTIC/pkg/webhook"
 )
 
 func TestEffectiveResourceAdmissionTimeout(t *testing.T) {

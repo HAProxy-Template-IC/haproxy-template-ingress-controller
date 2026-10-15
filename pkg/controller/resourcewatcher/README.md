@@ -19,7 +19,7 @@ The exposed stores are read by `pkg/controller/renderer` and `pkg/controller/dry
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/resourcewatcher"
 
 watcher, err := resourcewatcher.New(cfg, k8sClient, bus, logger)
 if err != nil { /* ... */ }

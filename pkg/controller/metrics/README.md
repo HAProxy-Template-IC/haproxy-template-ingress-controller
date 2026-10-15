@@ -118,8 +118,8 @@ Each agent also exports its own view on the pod's `agent-metrics` port; [monitor
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-    pkgmetrics "gitlab.com/haproxy-haptic/haptic/pkg/metrics"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
+    pkgmetrics "github.com/haproxy-haptic/HAPTIC/pkg/metrics"
 
     "github.com/prometheus/client_golang/prometheus"
 )

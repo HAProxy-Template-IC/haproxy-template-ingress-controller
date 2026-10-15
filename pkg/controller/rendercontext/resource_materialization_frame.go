@@ -21,7 +21,7 @@ import (
 	"log/slog"
 	"reflect"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // DirectBoundResourceOperation identifies the exact declared result shape.

@@ -30,7 +30,7 @@ The production renderer (`pkg/controller/renderer/service.go`) builds its contex
 ## Usage
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 
 builder := rendercontext.NewBuilder(
     ctx,

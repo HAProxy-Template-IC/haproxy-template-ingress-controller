@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/cmd/playground/internal/migratecheck"
+	"github.com/haproxy-haptic/HAPTIC/cmd/playground/internal/migratecheck"
 )
 
 var safeSourceID = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)

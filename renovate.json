@@ -85,7 +85,7 @@
     },
     {
       "customType": "regex",
-      "description": "SPOA hub bundle versions in versions-spoa.env. Each entry has a `# renovate:` comment naming the upstream GitLab Generic Package, optionally followed by free-form `#` notes documenting the bump, then a `<NAME>_VERSION=\"vX.Y.Z\"` assignment. The intermediate `(?:#[^\\n]*\\n)*` group allows any number of comment lines between the renovate directive and the assignment so the file stays readable as the metric set + behaviour notes grow. The shipped customManagers:gitlabPipelineVersions preset only matches .gitlab-ci.yml so we need a dedicated manager for this file.",
+      "description": "SPOA hub bundle versions in versions-spoa.env. Each entry has a `# renovate:` comment naming the upstream GitHub repository whose releases carry the artifacts, optionally followed by free-form `#` notes documenting the bump, then a `<NAME>_VERSION=\"vX.Y.Z\"` assignment. The intermediate `(?:#[^\\n]*\\n)*` group allows any number of comment lines between the renovate directive and the assignment so the file stays readable as the metric set + behaviour notes grow. The shipped customManagers:gitlabPipelineVersions preset only matches .gitlab-ci.yml so we need a dedicated manager for this file.",
       "managerFilePatterns": [
         "/^versions-spoa\\.env$/"
       ],
@@ -231,12 +231,12 @@
       ]
     },
     {
-      "description": "The scriggo runtime is a HAPTIC fork (gitlab.com/haproxy-haptic/scriggo), tracked by the built-in gomod manager as a pseudo-version digest. A digest bump is a fork sync that may carry an upstream security fix, but nothing here links it to open2b/scriggo advisories (govulncheck keys on module path). Force human review — never auto-merge — so a reviewer checks each bump against the upstream advisory watch. See docs/site/docs/development/scriggo-fork-maintenance.md.",
+      "description": "The scriggo runtime is a HAPTIC fork (github.com/haproxy-haptic/scriggo), tracked by the built-in gomod manager as a pseudo-version digest. A digest bump is a fork sync that may carry an upstream security fix, but nothing here links it to open2b/scriggo advisories (govulncheck keys on module path). Force human review — never auto-merge — so a reviewer checks each bump against the upstream advisory watch. See docs/site/docs/development/scriggo-fork-maintenance.md.",
       "matchManagers": [
         "gomod"
       ],
       "matchPackageNames": [
-        "gitlab.com/haproxy-haptic/scriggo"
+        "github.com/haproxy-haptic/scriggo"
       ],
       "automerge": false,
       "addLabels": [

@@ -36,9 +36,9 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/certificates"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity/issuance"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/certificates"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity/issuance"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 func TestAgentCertificateRenewal(t *testing.T) {

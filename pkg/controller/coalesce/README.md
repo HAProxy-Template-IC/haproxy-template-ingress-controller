@@ -28,8 +28,8 @@ Only events that implement the `pkg/events.CoalescibleEvent` interface and retur
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/coalesce"
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/coalesce"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
 )
 
 func (c *Component) handleSomeEvent(event *events.SomeEvent) {

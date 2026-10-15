@@ -3,7 +3,7 @@ package incremental
 import (
 	"errors"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/immutablevector"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental/internal/immutablevector"
 )
 
 type preparedGraphCommitDraftRoot struct {

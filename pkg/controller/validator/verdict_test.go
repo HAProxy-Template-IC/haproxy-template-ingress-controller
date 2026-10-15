@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configtest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/configtest"
 )
 
 func TestValidationTestsVerdictRejectsIncompleteAndUnexplainedFailures(t *testing.T) {

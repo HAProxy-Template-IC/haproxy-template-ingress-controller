@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity/tlstest"
-	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity/tlstest"
+	pkgwebhook "github.com/haproxy-haptic/HAPTIC/pkg/webhook"
 )
 
 type probeFixture struct {

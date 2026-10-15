@@ -14,7 +14,7 @@
 
 package renderer
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 
 type incrementalDerivedResource struct {
 	Identity rendercontext.DerivedResourceIdentity

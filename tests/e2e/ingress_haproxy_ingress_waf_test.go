@@ -20,8 +20,8 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // TestIngressHaproxyIngressWafDeny exercises the deny-mode half of the

@@ -3,7 +3,7 @@ package watcher
 import (
 	"errors"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 

@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 // TestHapticAllowedMethods verifies allowed-methods (64-gateway-security.yaml):

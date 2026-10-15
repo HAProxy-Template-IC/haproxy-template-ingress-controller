@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 // SyncFailures contains the complete config-validator verdict by validator.

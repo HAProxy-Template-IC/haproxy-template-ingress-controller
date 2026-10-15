@@ -5,7 +5,7 @@ import (
 	"path"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
 )
 
 // Endpoint is one HAProxy pod's agent: where to reach it and which pod it is.
