@@ -24,13 +24,10 @@ If there are uncommitted changes:
 2. `git add -A` — the user expects ALL changes to be included
 3. Commit using the project's conventional commit style
 
-### 2. Rebase onto default branch
+### 2. Conflicts with the default branch
 
-Before pushing, rebase onto the default branch (`main`) to avoid merge conflicts:
-```sh
-git fetch origin main && git rebase origin/main
-```
-Resolve any conflicts if they arise.
+Update from `main` only for a conflict or another concrete requirement; see
+`docs/agents/ci.md`. Routine rebases invalidate CI and review evidence.
 
 ### 3. Push and create/update the pull request
 
@@ -53,4 +50,5 @@ Analyze the full diff `main..HEAD` (all commits, not just the latest).
 
 ### 5. After pushing
 
-Monitor the CI run until completion or a reasonable checkpoint.
+Follow `.claude/skills/steward/SKILL.md`: watch CI and reviews until the pull
+request is merged or closed.

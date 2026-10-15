@@ -313,6 +313,10 @@ Follow [CI and merge verification](docs/agents/ci.md) before pushing, starting o
 retrying CI, or merging. Batch local fixes before pushing; every pull request runs
 the complete matrix. Merge only once the required `verified` check passes.
 
+After implementing and verifying a change, open the pull request without asking,
+subscribe to its activity, and drive it to a mergeable state: fix CI failures and
+address review findings, Gitar's included. See `.claude/skills/steward/SKILL.md`.
+
 ### GitHub CLI (gh) Commands
 
 Issues and pull requests live in `haproxy-haptic/HAPTIC`; see

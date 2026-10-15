@@ -105,7 +105,7 @@ Changes to shared helpers and fixtures must select every affected required job.
 Selection tests cover moved paths, and merge/publication verification continues
 to reject missing, skipped, canceled, failed, and wrong-source evidence. Record
 local elapsed time, hosted compute cost, cleanup results, and diagnostic parity
-with the MR evidence; do not infer savings from the language change.
+with the pull request evidence; do not infer savings from the language change.
 
 ## Coverage map
 

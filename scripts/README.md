@@ -56,7 +56,7 @@ Always prefer this over running `haptic validate` against a library file directl
 
 ## test-helm-defaults.sh
 
-Renders the chart with default values and asserts key invariants — useful as a quick "does the chart still produce valid output after my change?" check. Runs in CI on every MR.
+Renders the chart with default values and asserts key invariants — useful as a quick "does the chart still produce valid output after my change?" check. Runs in CI on every pull request.
 
 ## bench-gateway-api.sh
 
