@@ -92,28 +92,34 @@ func cachedBranchEntries(ctx context.Context, snapshot *cachedReadSnapshot, prev
 		if !found {
 			break
 		}
-		version, _ := snapshot.root.identityVersions.Get(key)
-		old, _ := previous.entries.Get(key)
-		if matchesObservedRevision(old, snapshot.RevisionSource(), version) {
-			continue
-		}
-		warm := iradix.New[cachedSnapshotValue]()
-		if value, found := snapshot.root.warm.Get(key); found {
-			warm, _, _ = warm.Insert(key, value)
-		}
-		// Retain only this reference's warm value, not an entire older store root.
-		lazy := &cachedReadSnapshot{
-			root: &cachedReadRoot{warm: warm}, store: snapshot.store,
-			pinnedAt: snapshot.pinnedAt, loads: map[string]*cachedSnapshotLoad{},
-		}
-		result[string(key)] = &branchEntry{
-			identity: resourceIdentity{namespace: ref.namespace, name: ref.name},
-			keys:     slices.Clone(ref.indexKeys), origin: snapshot.IdentityRevision(ref.namespace, ref.name),
-			source: snapshot.RevisionSource(), version: version,
-			lazy: lazy, ref: cloneResourceRef(&ref),
+		if entry := snapshot.changedBranchEntry(key, &ref, previous); entry != nil {
+			result[string(key)] = entry
 		}
 	}
 	return result, nil
+}
+
+func (snapshot *cachedReadSnapshot) changedBranchEntry(key []byte, ref *resourceRef, previous *SnapshotBranch) *branchEntry {
+	version, _ := snapshot.root.identityVersions.Get(key)
+	old, _ := previous.entries.Get(key)
+	if matchesObservedRevision(old, snapshot.RevisionSource(), version) {
+		return nil
+	}
+	warm := iradix.New[cachedSnapshotValue]()
+	if value, found := snapshot.root.warm.Get(key); found {
+		warm, _, _ = warm.Insert(key, value)
+	}
+	// Retain only this reference's warm value, not an entire older store root.
+	lazy := &cachedReadSnapshot{
+		root: &cachedReadRoot{warm: warm}, store: snapshot.store,
+		pinnedAt: snapshot.pinnedAt, loads: map[string]*cachedSnapshotLoad{},
+	}
+	return &branchEntry{
+		identity: resourceIdentity{namespace: ref.namespace, name: ref.name},
+		keys:     slices.Clone(ref.indexKeys), origin: snapshot.IdentityRevision(ref.namespace, ref.name),
+		source: snapshot.RevisionSource(), version: version,
+		lazy: lazy, ref: cloneResourceRef(ref),
+	}
 }
 
 func matchesObservedRevision(entry *branchEntry, source stores.RevisionSource, version uint64) bool {

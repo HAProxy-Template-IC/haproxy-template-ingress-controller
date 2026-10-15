@@ -16,6 +16,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 
@@ -251,4 +252,77 @@ func newBranchCaptureStore(t *testing.T, backend string) branchCaptureStore {
 		return true, nil, errors.New("unexpected body fetch")
 	})
 	return newProjectedSnapshotStore(t, client)
+}
+
+func TestSnapshotBranchCaptureInspectsOnlyJournaledIdentities(t *testing.T) {
+	indexBy := []string{"metadata.namespace", "metadata.name"}
+	for _, backend := range []string{"memory", "cached"} {
+		t.Run(backend, func(t *testing.T) {
+			live := newBranchCaptureStore(t, backend)
+			for _, name := range []string{"a", "b", "c"} {
+				require.NoError(t, live.Add(cachedSnapshotResource("default", name, "1", "before"), []string{"default", name}))
+			}
+			capture := func(base *SnapshotBranch) []BranchChange {
+				snapshot, err := live.Pin()
+				require.NoError(t, err)
+				changes, err := base.Changes(t.Context(), snapshot, indexBy)
+				require.NoError(t, err)
+				return changes
+			}
+			base := NewSnapshotBranch(2)
+			accepted := base.Apply(capture(base))
+			require.Empty(t, capture(accepted))
+			_, incremental := accepted.captureCandidates(mustPin(t, live), indexBy)
+			require.True(t, incremental, "a captured branch must not rescan the watched set")
+
+			require.NoError(t, live.Update(cachedSnapshotResource("default", "a", "2", "after"), []string{"default", "a"}))
+			require.NoError(t, live.Delete("default", "b", []string{"default", "b"}))
+			require.NoError(t, live.Add(cachedSnapshotResource("default", "d", "1", "new"), []string{"default", "d"}))
+			candidates, incremental := accepted.captureCandidates(mustPin(t, live), indexBy)
+			require.True(t, incremental)
+			assert.Len(t, candidates, 3)
+
+			changes := capture(accepted)
+			require.Len(t, changes, 3)
+			assert.Equal(t, []string{"a", "b", "d"}, []string{changes[0].Name(), changes[1].Name(), changes[2].Name()})
+			assert.True(t, changes[1].Deleted())
+			partial := accepted.Apply(changes[:1])
+			pending := capture(partial)
+			require.Len(t, pending, 2, "unaccepted changes stay pending without a rescan")
+			assert.Equal(t, "b", pending[0].Name())
+			assert.Equal(t, "d", pending[1].Name())
+			assert.Empty(t, capture(partial.Apply(pending)))
+		})
+	}
+}
+
+func TestSnapshotBranchCaptureRescansWhenJournalIsIncomplete(t *testing.T) {
+	indexBy := []string{"metadata.namespace", "metadata.name"}
+	live := NewMemoryStore(2)
+	require.NoError(t, live.Add(cachedSnapshotResource("default", "target", "1", "before"), []string{"default", "target"}))
+	base := NewSnapshotBranch(2)
+	changes, err := base.Changes(t.Context(), mustPin(t, live), indexBy)
+	require.NoError(t, err)
+	accepted := base.Apply(changes)
+	_, err = accepted.Changes(t.Context(), mustPin(t, live), indexBy)
+	require.NoError(t, err)
+	for revision := range defaultRevisionJournalCapacity + 1 {
+		value := cachedSnapshotResource("default", "target", fmt.Sprint(revision+2), "after")
+		require.NoError(t, live.Update(value, []string{"default", "target"}))
+	}
+	snapshot := mustPin(t, live)
+	_, incremental := accepted.captureCandidates(snapshot, indexBy)
+	require.False(t, incremental)
+	changes, err = accepted.Changes(t.Context(), snapshot, indexBy)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	_, incremental = accepted.captureCandidates(snapshot, []string{"metadata.name", "metadata.namespace"})
+	assert.False(t, incremental, "a different index configuration needs a full scan")
+}
+
+func mustPin(t *testing.T, live stores.SnapshotProvider) stores.ReadSnapshot {
+	t.Helper()
+	snapshot, err := live.Pin()
+	require.NoError(t, err)
+	return snapshot
 }
