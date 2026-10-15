@@ -409,7 +409,7 @@ test-gateway-benchmark-harness: build-map-identity-check ## Verify benchmark set
 test-process: ## Verify process supervision with real child processes, without a cluster
 	$(GO) tool gotestsum --junitfile report-process.xml --format testname -- -race -count=1 -tags=testinfra ./tests/process/...
 
-test-unit: ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
+test-unit: go-mod-download ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 	@# No coverage flags here: instrumenting the module for coverage costs a
 	@# further 3.2x on top of -race (measured on the renderer chart-scale
 	@# suite, 25.5s -> 82.1s). `make test-coverage` and the CI coverage job
@@ -1009,7 +1009,7 @@ build: check-source-hash ## Build the controller binary for local development (w
 		-o bin/haptic \
 		./cmd/haptic
 
-build-for-docker: check-source-hash ## Build binary in platform-structured path for Docker builds with --build-context
+build-for-docker: check-source-hash go-mod-download ## Build binary in platform-structured path for Docker builds with --build-context
 	@echo "Building controller for Docker..."
 	@echo "  Version: $(VERSION)"
 	@echo "  Platform: linux/$(DOCKER_BINARY_ARCH)"
@@ -1165,8 +1165,12 @@ tidy: ## Run go mod tidy
 	@echo "Running go mod tidy..."
 	$(GO) mod tidy
 
-vendor: ## Sync vendor directory with go.mod (auto-runs before lint/audit)
+vendor: go-mod-download ## Sync vendor directory with go.mod (auto-runs before lint/audit)
 	@$(GO) mod vendor
+
+.PHONY: go-mod-download
+go-mod-download: ## Download every module in go.mod, retrying a reset proxy connection
+	@scripts/retry.sh $(GO) mod download
 
 verify: ## Verify dependencies
 	@echo "Verifying dependencies..."
