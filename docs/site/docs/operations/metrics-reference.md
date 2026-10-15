@@ -286,6 +286,7 @@ Exposed when the validating admission webhook is enabled (`controller.webhook.en
 |--------|------|--------|-------------|
 | `haptic_webhook_requests_total` | Counter | `gvk`, `result` | Total admission requests by GroupVersionKind and result |
 | `haptic_webhook_request_duration_seconds` | Histogram | — | Time spent processing webhook requests |
+| `haptic_admission_render_slot_wait_seconds` | Histogram | — | Time an admission dry-run render waited for a render slot before rendering. Each replica runs one admission render per two cores at a time; a rising p95 means admissions are queueing behind each other. |
 | `haptic_webhook_validation_total` | Counter | `gvk`, `result` | Validation outcomes per GVK. `result` is `allowed`, `denied`, or `unregistered`. An unregistered request is denied with status 503; growth of the fixed `<unregistered>` series means a webhook rule and the installed validators disagree. |
 
 **Key queries:**
@@ -294,8 +295,11 @@ Exposed when the validating admission webhook is enabled (`controller.webhook.en
 # Denial rate per resource kind
 sum by (gvk) (rate(haptic_webhook_validation_total{result="denied"}[5m]))
 
-# 95th percentile webhook latency (must stay well under the 10s admission timeout)
+# 95th percentile webhook latency (must stay well under the 9s admission timeout)
 histogram_quantile(0.95, rate(haptic_webhook_request_duration_seconds_bucket[5m]))
+
+# 95th percentile of that latency spent queueing for a render slot
+histogram_quantile(0.95, rate(haptic_admission_render_slot_wait_seconds_bucket[5m]))
 ```
 
 ## Reconciliation queue

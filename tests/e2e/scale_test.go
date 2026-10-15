@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -660,14 +661,16 @@ func controllerPodRuntimesEqual(before, after map[string]controllerPodRuntime) e
 // via the apiserver pod proxy) and parses every UNlabelled sample into a
 // name -> value map. Labelled families aren't needed by this tier.
 func scrapeControllerMetrics(ctx context.Context, cs kubernetes.Interface, pod string) (map[string]float64, error) {
-	body, err := cs.CoreV1().Pods(ControllerNamespace).ProxyGet(
-		"http", pod, strconv.Itoa(ControllerMetricsPort), "/metrics", nil,
-	).DoRaw(ctx)
+	body, err := scrapeControllerMetricsBody(ctx, cs, pod)
 	if err != nil {
-		return nil, fmt.Errorf("scrape %s/metrics: %w", pod, err)
+		return nil, err
 	}
+	return parseUnlabelledMetrics(body), nil
+}
+
+func parseUnlabelledMetrics(body string) map[string]float64 {
 	out := map[string]float64{}
-	for _, line := range strings.Split(string(body), "\n") {
+	for _, line := range strings.Split(body, "\n") {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -679,7 +682,17 @@ func scrapeControllerMetrics(ctx context.Context, cs kubernetes.Interface, pod s
 			out[fields[0]] = v
 		}
 	}
-	return out, nil
+	return out
+}
+
+func scrapeControllerMetricsBody(ctx context.Context, cs kubernetes.Interface, pod string) (string, error) {
+	body, err := cs.CoreV1().Pods(ControllerNamespace).ProxyGet(
+		"http", pod, strconv.Itoa(ControllerMetricsPort), "/metrics", nil,
+	).DoRaw(ctx)
+	if err != nil {
+		return "", fmt.Errorf("scrape %s/metrics: %w", pod, err)
+	}
+	return string(body), nil
 }
 
 // snapshotReloadCounters reads haptic_haproxy_reloads_total from every
@@ -808,31 +821,134 @@ func TestControllerCPUSecondsDelta(t *testing.T) {
 	}
 }
 
-func histogramAverage(ctx context.Context, cs kubernetes.Interface, name, selector string, leaderOnly bool) (float64, error) {
+// histogramSnapshot is one Prometheus histogram summed across pods.
+// cumulative maps each bucket's upper bound (le, +Inf included) to its
+// cumulative count.
+type histogramSnapshot struct {
+	sum, count float64
+	cumulative map[float64]float64
+}
+
+func scrapeHistogram(ctx context.Context, cs kubernetes.Interface, name, selector string, leaderOnly bool) (histogramSnapshot, error) {
 	list, err := cs.CoreV1().Pods(ControllerNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
-		return 0, fmt.Errorf("list histogram sources: %w", err)
+		return histogramSnapshot{}, fmt.Errorf("list histogram sources: %w", err)
 	}
-	var sum, count float64
+	var total histogramSnapshot
 	for i := range list.Items {
 		pod := &list.Items[i]
 		if pod.DeletionTimestamp != nil {
-			return 0, fmt.Errorf("histogram source %s is terminating", pod.Name)
+			return histogramSnapshot{}, fmt.Errorf("histogram source %s is terminating", pod.Name)
 		}
-		metrics, err := scrapeControllerMetrics(ctx, cs, pod.Name)
+		body, err := scrapeControllerMetricsBody(ctx, cs, pod.Name)
 		if err != nil {
-			return 0, err
+			return histogramSnapshot{}, err
 		}
-		if leaderOnly && metrics["haptic_leader_election_is_leader"] != 1 {
+		if leaderOnly && parseUnlabelledMetrics(body)["haptic_leader_election_is_leader"] != 1 {
 			continue
 		}
-		sum += metrics[name+"_sum"]
-		count += metrics[name+"_count"]
+		if err := total.add(body, name); err != nil {
+			return histogramSnapshot{}, fmt.Errorf("histogram %s on %s: %w", name, pod.Name, err)
+		}
 	}
-	if count == 0 {
-		return 0, fmt.Errorf("histogram %s has no observations from %s", name, selector)
+	if total.count == 0 {
+		return histogramSnapshot{}, fmt.Errorf("histogram %s has no observations from %s", name, selector)
 	}
-	return sum / count, nil
+	return total, nil
+}
+
+// add folds one pod's exposition of the unlabelled histogram name into h.
+func (h *histogramSnapshot) add(body, name string) error {
+	if h.cumulative == nil {
+		h.cumulative = map[float64]float64{}
+	}
+	bucketPrefix := name + `_bucket{le="`
+	for _, line := range strings.Split(body, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		value, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			continue
+		}
+		switch {
+		case fields[0] == name+"_sum":
+			h.sum += value
+		case fields[0] == name+"_count":
+			h.count += value
+		case strings.HasPrefix(fields[0], bucketPrefix):
+			le, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimPrefix(fields[0], bucketPrefix), `"}`), 64)
+			if err != nil {
+				return fmt.Errorf("parse bucket %q: %w", fields[0], err)
+			}
+			h.cumulative[le] += value
+		}
+	}
+	return nil
+}
+
+func (h histogramSnapshot) average() float64 {
+	return h.sum / h.count
+}
+
+// quantile interpolates linearly within the bucket holding rank q, as
+// Prometheus's histogram_quantile does. A rank in the +Inf bucket reports
+// the largest finite bound, so the true value is at least that.
+func (h histogramSnapshot) quantile(q float64) float64 {
+	bounds := make([]float64, 0, len(h.cumulative))
+	for le := range h.cumulative {
+		bounds = append(bounds, le)
+	}
+	sort.Float64s(bounds)
+	rank := q * h.count
+	lower, below := 0.0, 0.0
+	for _, le := range bounds {
+		count := h.cumulative[le]
+		if count >= rank {
+			if math.IsInf(le, 1) {
+				return lower
+			}
+			if count == below {
+				return le
+			}
+			return lower + (le-lower)*(rank-below)/(count-below)
+		}
+		lower, below = le, count
+	}
+	return lower
+}
+
+func TestHistogramSnapshotQuantile(t *testing.T) {
+	const exposition = `# TYPE h histogram
+h_bucket{le="1"} 50
+h_bucket{le="5"} 90
+h_bucket{le="10"} 98
+h_bucket{le="+Inf"} 100
+h_sum 300
+h_count 100
+`
+	var h histogramSnapshot
+	for range 2 {
+		if err := h.add(exposition, "h"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tt := range []struct {
+		q, want float64
+	}{
+		{q: 0.25, want: 0.5},
+		{q: 0.70, want: 3},
+		{q: 0.95, want: 8.125},
+		{q: 0.99, want: 10},
+	} {
+		if got := h.quantile(tt.q); math.Abs(got-tt.want) > 1e-9 {
+			t.Errorf("quantile(%v) = %v, want %v", tt.q, got, tt.want)
+		}
+	}
+	if got := h.average(); got != 3 {
+		t.Errorf("average() = %v, want 3", got)
+	}
 }
 
 // scaleMetricsSink accumulates the tier's flat-key metrics AS they are
@@ -1376,17 +1492,20 @@ func (s *scaleScenario) collectMetrics(ctx context.Context, t *testing.T, cfg *e
 func (s *scaleScenario) collectHistogramMetrics(ctx context.Context, t *testing.T) {
 	t.Helper()
 	for _, histogram := range []struct {
-		key, metric, selector string
-		leaderOnly            bool
+		metric     string
+		leaderOnly bool
 	}{
-		{"reconciliation_duration_seconds_avg", "haptic_reconciliation_duration_seconds", LabelSelectorController, true},
-		{"deployment_duration_seconds_avg", "haptic_deployment_duration_seconds", LabelSelectorController, true},
-		{"webhook_request_duration_seconds_avg", "haptic_webhook_request_duration_seconds", LabelSelectorController, false},
+		{"haptic_reconciliation_duration_seconds", true},
+		{"haptic_deployment_duration_seconds", true},
+		{"haptic_webhook_request_duration_seconds", false},
+		{"haptic_admission_render_slot_wait_seconds", false},
 	} {
-		avg, err := histogramAverage(ctx, s.cs, histogram.metric, histogram.selector, histogram.leaderOnly)
+		key := strings.TrimPrefix(histogram.metric, "haptic_")
+		snapshot, err := scrapeHistogram(ctx, s.cs, histogram.metric, LabelSelectorController, histogram.leaderOnly)
 		if err != nil {
-			t.Fatalf("measure %s: %v", histogram.key, err)
+			t.Fatalf("measure %s: %v", key, err)
 		}
-		s.sink.set(histogram.key, round2(avg))
+		s.sink.set(key+"_avg", round2(snapshot.average()))
+		s.sink.set(key+"_p95", round2(snapshot.quantile(0.95)))
 	}
 }

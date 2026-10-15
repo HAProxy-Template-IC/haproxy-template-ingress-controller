@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Select several validation tests in one run by repeating `haptic validate --test`.
+- Add the `haptic_admission_render_slot_wait_seconds` metric: how long admission dry runs queue for a render slot.
 - `MUTEX_PROFILE_FRACTION` and `BLOCK_PROFILE_RATE` enable the controller's mutex and block profiles on `/debug/pprof`.
 
 ### Changed
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reduce reconciliation allocations by reusing unchanged watched-resource revisions during input isolation.
 - Reduce temporary template allocations during configuration validation and rendering.
 - Log validation test totals and results at the default INFO level.
+- `haptic_webhook_request_duration_seconds` buckets now extend to 30 seconds, so latencies near the admission timeout are measurable.
 
 ### Fixed
 
@@ -32,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevent a 30-second agent startup stall when HAProxy is still starting its worker.
 - Retained configuration recovery now starts after leader failover when a critical HTTP source is unavailable, including with large watched resource sets.
 - Prevent queued mailbox events from delaying controller shutdown after cancellation during queue processing.
+- Keep a CPU free for each admission render while reconciliation renders, so valid changes are no longer denied with a timeout during heavy resource churn.
 
 ### Security
 

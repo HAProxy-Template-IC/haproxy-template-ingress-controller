@@ -427,6 +427,10 @@
     "seconds": 0.0,
     "parallel": false
   },
+  "TestHistogramSnapshotQuantile": {
+    "seconds": 0.0,
+    "parallel": false
+  },
   "TestIngressAnnotations": {
     "seconds": 0.0,
     "parallel": true

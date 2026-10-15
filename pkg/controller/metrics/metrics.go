@@ -121,9 +121,10 @@ type Metrics struct {
 	ReconciliationQueueWait prometheus.Histogram
 
 	// Webhook metrics
-	WebhookRequestsTotal   *prometheus.CounterVec
-	WebhookRequestDuration prometheus.Histogram
-	WebhookValidationTotal *prometheus.CounterVec
+	WebhookRequestsTotal    *prometheus.CounterVec
+	WebhookRequestDuration  prometheus.Histogram
+	WebhookValidationTotal  *prometheus.CounterVec
+	AdmissionRenderSlotWait prometheus.Histogram
 
 	// Leader election metrics
 	LeaderElectionIsLeader            prometheus.Gauge
@@ -376,7 +377,13 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_webhook_request_duration_seconds",
 			"Time spent processing webhook requests",
-			pkgmetrics.DurationBuckets(),
+			pkgmetrics.AdmissionDurationBuckets(),
+		),
+		AdmissionRenderSlotWait: pkgmetrics.NewHistogramWithBuckets(
+			registry,
+			"haptic_admission_render_slot_wait_seconds",
+			"Time an admission dry-run render waited for a render slot",
+			pkgmetrics.AdmissionDurationBuckets(),
 		),
 		WebhookValidationTotal: pkgmetrics.NewCounterVec(
 			registry,
@@ -645,6 +652,11 @@ func (m *Metrics) RecordEvent() {
 func (m *Metrics) RecordWebhookRequest(gvk, result string, durationSeconds float64) {
 	m.WebhookRequestsTotal.WithLabelValues(gvk, result).Inc()
 	m.WebhookRequestDuration.Observe(durationSeconds)
+}
+
+// RecordAdmissionRenderSlotWait records an admission render's wait for a slot.
+func (m *Metrics) RecordAdmissionRenderSlotWait(wait time.Duration) {
+	m.AdmissionRenderSlotWait.Observe(wait.Seconds())
 }
 
 // RecordWebhookValidation records a webhook validation result.

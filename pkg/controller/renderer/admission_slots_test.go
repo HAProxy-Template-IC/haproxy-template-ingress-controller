@@ -17,6 +17,7 @@ package renderer
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,4 +51,26 @@ func TestAdmissionSlotRefusesAnExpiredWait(t *testing.T) {
 	release, err = unlimited.acquireAdmissionSlot(expired)
 	require.NoError(t, err, "a service without slots never waits")
 	release()
+}
+
+// TestAdmissionSlotReportsEveryWait pins that the observer sees both a wait
+// that got a slot and one that expired, since the expired ones are the
+// admissions that miss their budget.
+func TestAdmissionSlotReportsEveryWait(t *testing.T) {
+	var waits []time.Duration
+	service := &RenderService{
+		admissionSlots:            make(chan struct{}, 1),
+		admissionSlotWaitObserver: func(wait time.Duration) { waits = append(waits, wait) },
+	}
+	release, err := service.acquireAdmissionSlot(t.Context())
+	require.NoError(t, err)
+
+	expiring, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	_, err = service.acquireAdmissionSlot(expiring)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	release()
+
+	require.Len(t, waits, 2)
+	assert.GreaterOrEqual(t, waits[1], 20*time.Millisecond, "the expired wait covers the time spent queued")
 }
