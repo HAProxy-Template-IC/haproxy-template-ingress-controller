@@ -88,7 +88,8 @@ func (rb *RingBuffer[T]) Add(item T) {
 
 // GetLast returns the n most recently added items, in chronological order.
 //
-// If n is greater than the number of items in the buffer, all items are returned.
+// If n is greater than the number of items in the buffer, all items are returned;
+// if n is zero or negative, none are.
 // The returned slice is ordered from oldest to newest.
 // This operation is thread-safe.
 //
@@ -102,21 +103,21 @@ func (rb *RingBuffer[T]) GetLast(n int) []T {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
 
-	if n > rb.count {
-		n = rb.count
+	count := rb.count
+	if n < count {
+		count = n
 	}
-
-	if n == 0 {
+	if count <= 0 {
 		return []T{}
 	}
 
-	result := make([]T, n)
+	result := make([]T, count)
 
-	// Calculate starting position (n items back from head)
-	start := (rb.head - n + rb.size) % rb.size
+	// Calculate starting position (count items back from head)
+	start := (rb.head - count + rb.size) % rb.size
 
 	// Copy items to result (handling wrap-around)
-	for i := 0; i < n; i++ {
+	for i := 0; i < count; i++ {
 		idx := (start + i) % rb.size
 		result[i] = rb.items[idx]
 	}
