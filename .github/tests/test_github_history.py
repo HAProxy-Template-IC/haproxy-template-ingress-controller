@@ -1,5 +1,6 @@
 import copy
 import hashlib
+import http.client
 import io
 import json
 import tempfile
@@ -136,6 +137,27 @@ class HistoryTests(unittest.TestCase):
         lines, failed = TREND.evaluate({"runner_cpu_model": "other", "controller_rss_bytes": 151}, history)
         self.assertFalse(failed, lines)
         self.assertIn("TREND UNGATED", "\n".join(lines))
+
+
+class RetryTests(unittest.TestCase):
+    @mock.patch("time.sleep")
+    @mock.patch("urllib.request.build_opener")
+    def test_truncated_response_is_retried(self, opener, sleep):
+        truncated = mock.MagicMock()
+        truncated.__enter__.return_value.read.side_effect = http.client.IncompleteRead(b"", 225283)
+        complete = mock.MagicMock()
+        complete.__enter__.return_value.read.return_value = b'{"jobs": []}'
+        opener.return_value.open.side_effect = [truncated, complete]
+        self.assertEqual(GitHub("test-token").get("repos/owner/repo/actions/runs/1/jobs"), {"jobs": []})
+        sleep.assert_called_once_with(2)
+
+    @mock.patch("time.sleep")
+    @mock.patch("urllib.request.build_opener")
+    def test_persistent_transport_failure_raises(self, opener, sleep):
+        opener.return_value.open.side_effect = urllib.error.URLError("connection reset")
+        with self.assertRaises(urllib.error.URLError):
+            GitHub("test-token").get("repos/owner/repo")
+        self.assertEqual(sleep.call_count, 5)
 
 
 class DownloadTests(unittest.TestCase):

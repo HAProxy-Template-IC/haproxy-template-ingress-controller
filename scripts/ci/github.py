@@ -1,5 +1,6 @@
 """Read GitHub workflow evidence and artifacts."""
 
+import http.client
 import json
 import time
 import urllib.error
@@ -12,6 +13,8 @@ PAGE_SIZE = 50
 # GitHub's API answers transient 5xx for large job lists (run 38607403533).
 RETRY_DELAYS = (2, 4, 8, 16, 32)
 RETRIED_STATUSES = {500, 502, 503, 504}
+# GitHub also drops connections mid-response (IncompleteRead, run 38801409038).
+RETRIED_TRANSPORT_ERRORS = (http.client.IncompleteRead, urllib.error.URLError, ConnectionError, TimeoutError)
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -39,6 +42,9 @@ class GitHub:
                 if delay is None or error.code not in RETRIED_STATUSES:
                     raise
                 error.close()
+            except RETRIED_TRANSPORT_ERRORS:
+                if delay is None:
+                    raise
             time.sleep(delay)
 
     def all(self, path, field, **params):
