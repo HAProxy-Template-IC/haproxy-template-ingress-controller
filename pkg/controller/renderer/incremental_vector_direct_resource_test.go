@@ -526,11 +526,10 @@ func awaitScheduled(tb testing.TB, cond func() bool, failure string) {
 // awaitCallGateWriter waits until a writer holds or waits for the call gate.
 func awaitCallGateWriter(tb testing.TB, execution *incrementalVectorExecution, failure string) {
 	tb.Helper()
+	gate := &execution.callGate
 	awaitScheduled(tb, func() bool {
-		if !execution.callGate.TryRLock() {
-			return true
-		}
-		execution.callGate.RUnlock()
-		return false
+		gate.mu.Lock()
+		defer gate.mu.Unlock()
+		return gate.waitingWriters > 0
 	}, failure)
 }

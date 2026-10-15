@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The dataplane agent reported ready before its admin and drain sockets existed, so a client probing right after readiness could fail with `no such file or directory`.
 - The playground escapes quotes in resource, annotation, and template names, so a shared link can no longer inject HTML attributes into the output pane.
+- A cold render cancelled while a template published a shared value, such as a follower's render when its replica becomes leader, no longer deadlocks the replica's first render, which left admission denied and input rejections unreported.
 - Reconciliation CPU and latency no longer grow with the size of the watched set: input isolation inspects only the resources changed since its last capture instead of every watched resource.
 - Shared rate limiting no longer switches to per-pod budgets for 5 seconds after one slow store reply: the bundled rate-limit plugin (v0.4.2) keeps its store connection and reconnects only when the store also misses a PING.
 - Recreate pruned recovery checkpoints when their configuration is deployed again.

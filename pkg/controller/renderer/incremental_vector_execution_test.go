@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -280,6 +281,42 @@ func TestIncrementalVectorAbortDrainsActiveCapability(t *testing.T) {
 	select {
 	case <-aborted:
 		t.Fatal("Abort returned before the active capability drained")
+	default:
+	}
+	release()
+	<-aborted
+	require.Error(t, execution.finish())
+}
+
+// shared.PublishRanked enters the gate through the item's lease and its
+// recorder enters it again. An Abort that queues between the two, as a
+// follower render cancelled by leadership does, must not deadlock the item.
+func TestIncrementalVectorNestedCapabilityCallPassesAPendingAbort(t *testing.T) {
+	execution := testIncrementalVectorExecution(t, 1)
+	recorder := &incrementalVectorRecorder{execution: execution, index: 0}
+	require.NoError(t, execution.Begin(0))
+	release, err := execution.items[0].lease.BeginIncrementalExecution(execution.items[0].ctx, "shared.PublishRanked")
+	require.NoError(t, err)
+	aborted := make(chan struct{})
+	go func() {
+		execution.Abort(0, context.Canceled)
+		close(aborted)
+	}()
+	awaitCallGateWriter(t, execution, "Abort never reached the revocation gate")
+
+	published := make(chan struct{})
+	go func() {
+		recorder.PublishRanked("userlists", "auth_default_basic-auth", "default/protected", "users")
+		close(published)
+	}()
+	select {
+	case <-published:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a nested capability call deadlocked behind a pending Abort")
+	}
+	select {
+	case <-aborted:
+		t.Fatal("Abort returned before the outer capability call drained")
 	default:
 	}
 	release()

@@ -63,7 +63,7 @@ type incrementalVectorExecution struct {
 	items     []incrementalVectorItemState
 
 	mu                       sync.RWMutex
-	callGate                 sync.RWMutex
+	callGate                 incrementalCallGate
 	active                   atomic.Int64
 	inflight                 atomic.Int64
 	failed                   atomic.Bool
