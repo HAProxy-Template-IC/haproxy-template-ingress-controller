@@ -11,8 +11,12 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+const kubeSystemNamespace = "kube-system"
+
 func (s *Session) Diagnostics(ctx context.Context) {
-	for _, namespace := range []string{s.Namespace, certManagerNamespace, argoNamespace, fluxNamespace, gitopsNamespace} {
+	// kube-system first: its kube-apiserver log is the only record of a webhook transport failure (#300),
+	// and the later namespaces can exhaust the caller's one-minute budget.
+	for _, namespace := range []string{kubeSystemNamespace, s.Namespace, certManagerNamespace, argoNamespace, fluxNamespace, gitopsNamespace} {
 		s.namespaceDiagnostics(ctx, namespace)
 	}
 	for _, resource := range []string{"haproxytemplateconfigs", "haproxycfgs", "haproxytemplatelibraries", "haproxyvalidationtests"} {
