@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -335,4 +336,131 @@ func TestRetainedRoundTripPreservesEmptyArtifactFamilies(t *testing.T) {
 			require.Equal(t, checksum, loaded[0].Reference.Checksum)
 		})
 	}
+}
+
+func TestRetainedCheckpointsShareUnchangedAuxiliaryFiles(t *testing.T) {
+	ctx, kube, crd, publisher := newTestPublisher(t)
+	first := retainedPublishRequest(t)
+	_, err := publisher.PublishConfig(ctx, &first)
+	require.NoError(t, err)
+	require.NoError(t, publisher.PublishRetained(ctx, &first))
+	children := func() int {
+		maps, err := crd.HaproxyTemplateICV1alpha1().HAProxyMapFiles(first.TemplateConfigNamespace).List(ctx, metav1.ListOptions{LabelSelector: retainedLabel})
+		require.NoError(t, err)
+		secrets, err := kube.CoreV1().Secrets(first.TemplateConfigNamespace).List(ctx, metav1.ListOptions{LabelSelector: retainedLabel})
+		require.NoError(t, err)
+		return len(maps.Items) + len(secrets.Items)
+	}
+	shared := children()
+	require.Equal(t, 3, shared, "one map, one certificate, and one CA Secret")
+
+	for _, maxConnections := range []int{1000, 2000, 3000} {
+		crd.ClearActions()
+		kube.ClearActions()
+		request := retainedPublishRequestWithConfig(t, fmt.Sprintf("global\n  maxconn %d\n", maxConnections))
+		_, err := publisher.PublishConfig(ctx, &request)
+		require.NoError(t, err)
+		require.NoError(t, publisher.PublishRetained(ctx, &request))
+		for _, action := range append(crd.Actions(), kube.Actions()...) {
+			if action.GetResource().Resource == "haproxycfgs" {
+				continue
+			}
+			assert.Contains(t, []string{"get", "list"}, action.GetVerb(), "unchanged auxiliary files are reused: %s %s", action.GetVerb(), action.GetResource().Resource)
+		}
+		assert.Equal(t, shared, children())
+	}
+	loaded, err := publisher.LoadRetained(ctx, first.TemplateConfigNamespace, first.TemplateConfigName, first.TemplateConfigUID)
+	require.NoError(t, err)
+	require.Len(t, loaded, 2)
+	for i := range loaded {
+		require.NoError(t, loaded[i].Authority.ValidateSnapshot(loaded[i].Output))
+	}
+}
+
+func TestRetainedPruningDeletesOnlyUnreferencedSharedFiles(t *testing.T) {
+	ctx, _, crd, publisher := newTestPublisher(t)
+	req := retainedPublishRequest(t)
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.NoError(t, publisher.PublishRetained(ctx, &req))
+	client := crd.HaproxyTemplateICV1alpha1().HAProxyMapFiles(req.TemplateConfigNamespace)
+	labels := map[string]string{retainedLabel: string(req.TemplateConfigUID)}
+	orphan := &v1.HAProxyMapFile{ObjectMeta: metav1.ObjectMeta{Name: "orphan" + retainedChildSuffix, Namespace: req.TemplateConfigNamespace, Labels: labels, OwnerReferences: templateConfigOwnerRefs(&req)}}
+	foreign := &v1.HAProxyMapFile{ObjectMeta: metav1.ObjectMeta{Name: "foreign" + retainedChildSuffix, Namespace: req.TemplateConfigNamespace, Labels: labels}}
+	for _, item := range []*v1.HAProxyMapFile{orphan, foreign} {
+		_, err = client.Create(ctx, item, metav1.CreateOptions{})
+		require.NoError(t, err)
+	}
+	for _, maxConnections := range []int{1000, 2000} {
+		request := retainedPublishRequestWithConfig(t, fmt.Sprintf("global\n  maxconn %d\n", maxConnections))
+		_, err := publisher.PublishConfig(ctx, &request)
+		require.NoError(t, err)
+		require.NoError(t, publisher.PublishRetained(ctx, &request))
+	}
+	_, err = client.Get(ctx, orphan.Name, metav1.GetOptions{})
+	assert.True(t, apierrors.IsNotFound(err), "unreferenced shared file is pruned with its last checkpoint")
+	_, err = client.Get(ctx, foreign.Name, metav1.GetOptions{})
+	assert.NoError(t, err, "an object the template does not own is never deleted")
+	loaded, err := publisher.LoadRetained(ctx, req.TemplateConfigNamespace, req.TemplateConfigName, req.TemplateConfigUID)
+	require.NoError(t, err)
+	require.Len(t, loaded, 2)
+}
+
+func TestRetainedRefusesSharedFileWithForeignOwner(t *testing.T) {
+	ctx, _, crd, publisher := newTestPublisher(t)
+	req := retainedPublishRequest(t)
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.NoError(t, publisher.PublishRetained(ctx, &req))
+	client := crd.HaproxyTemplateICV1alpha1().HAProxyMapFiles(req.TemplateConfigNamespace)
+	maps, err := client.List(ctx, metav1.ListOptions{LabelSelector: retainedLabel})
+	require.NoError(t, err)
+	require.Len(t, maps.Items, 1)
+	shared := &maps.Items[0]
+	shared.OwnerReferences[0].UID = "foreign"
+	_, err = client.Update(ctx, shared, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	_, err = publisher.LoadRetained(ctx, req.TemplateConfigNamespace, req.TemplateConfigName, req.TemplateConfigUID)
+	require.ErrorContains(t, err, "foreign owner")
+}
+
+func TestRetainedReadsCheckpointOwnedFiles(t *testing.T) {
+	ctx, _, crd, publisher := newTestPublisher(t)
+	req := retainedPublishRequest(t)
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.NoError(t, publisher.PublishRetained(ctx, &req))
+	cfgs := crd.HaproxyTemplateICV1alpha1().HAProxyCfgs(req.TemplateConfigNamespace)
+	main, err := cfgs.Get(ctx, GenerateRuntimeConfigName(req.TemplateConfigName), metav1.GetOptions{})
+	require.NoError(t, err)
+	checkpoint, err := cfgs.Get(ctx, main.Status.RetainedConfigs[0].Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	maps := crd.HaproxyTemplateICV1alpha1().HAProxyMapFiles(req.TemplateConfigNamespace)
+	ref := &checkpoint.Status.AuxiliaryFiles.MapFiles[0]
+	shared, err := maps.Get(ctx, ref.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	legacy := shared.DeepCopy()
+	legacy.ResourceVersion, legacy.UID = "", ""
+	legacy.Name = strings.TrimSuffix(shared.Name, retainedChildSuffix) + retainedSuffix(checkpoint.Spec.Checksum, checkpoint.Spec.RetainedPlan)
+	legacy.Labels = runtimeConfigLabels(checkpoint)
+	legacy.OwnerReferences = runtimeConfigOwnerRefs(checkpoint)
+	_, err = maps.Create(ctx, legacy, metav1.CreateOptions{})
+	require.NoError(t, err)
+	require.NoError(t, maps.Delete(ctx, shared.Name, metav1.DeleteOptions{}))
+	ref.Name = legacy.Name
+	_, err = cfgs.UpdateStatus(ctx, checkpoint, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	loaded, err := publisher.LoadRetained(ctx, req.TemplateConfigNamespace, req.TemplateConfigName, req.TemplateConfigUID)
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+
+	legacy, err = maps.Get(ctx, legacy.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	legacy.OwnerReferences = templateConfigOwnerRefs(&req)
+	legacy.Labels = map[string]string{retainedLabel: string(req.TemplateConfigUID)}
+	_, err = maps.Update(ctx, legacy, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	_, err = publisher.LoadRetained(ctx, req.TemplateConfigNamespace, req.TemplateConfigName, req.TemplateConfigUID)
+	require.ErrorContains(t, err, "content address differs", "a shared owner needs a shared name")
 }

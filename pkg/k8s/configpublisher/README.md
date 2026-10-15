@@ -47,9 +47,9 @@ result, err := p.PublishConfig(ctx, &configpublisher.PublishRequest{
 | `Secret` (Opaque) | one per `AuxiliaryFiles.SSLCertificates[i]` | Certificate bundle and target path |
 | `Secret` (Opaque) | one per `AuxiliaryFiles.SSLCaFiles[i]` | CA or trust bundle referenced separately from certificates |
 
-Every child carries `metadata.ownerReferences` pointing at the parent `HAProxyCfg`, so `kubectl delete haproxycfg <name>` cascades to maps / general files / crt-lists / Secrets.
+Every child of an ordinary publication carries `metadata.ownerReferences` pointing at the parent `HAProxyCfg`, so `kubectl delete haproxycfg <name>` cascades to maps / general files / crt-lists / Secrets.
 
-Retained `HAProxyCfg` objects include both the configuration text and a compressed recovery plan. When compression is enabled, their combined size determines whether the configuration text is compressed. A nonpositive `CompressionThreshold` still disables configuration compression.
+Retained `HAProxyCfg` objects include both the configuration text and a compressed recovery plan. Their auxiliary files are content-addressed objects owned by the `HAProxyTemplateConfig` and shared by every checkpoint with the same bytes; `PublishRetained` deletes the ones no checkpoint references after it prunes checkpoints. When compression is enabled, their combined size determines whether the configuration text is compressed. A nonpositive `CompressionThreshold` still disables configuration compression.
 
 ## Failure Mode
 

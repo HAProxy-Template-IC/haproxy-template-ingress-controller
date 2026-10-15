@@ -37,8 +37,9 @@ operation plan can confirm the new output while its last reload plan remains old
 
 After acknowledgement, the publisher writes a content-addressed `HAProxyCfg`
 owned by the same `HAProxyTemplateConfig` UID. Its auxiliary files are separate
-content-addressed objects owned by that checkpoint. Certificates and CA bundles
-remain Secrets. `spec.retainedPlan` preserves compressed deployment declarations
+content-addressed objects owned by that template UID and shared by every
+checkpoint that references the same bytes (issue #298). Certificates and CA
+bundles remain Secrets. `spec.retainedPlan` preserves compressed deployment declarations
 and artifact metadata that cannot safely be recovered by parsing HAProxy text.
 Its worker receipt is historical evidence, not current fleet membership. Pod
 termination and discovery cleanup leave checkpoint statuses and their auxiliary
@@ -50,8 +51,12 @@ then atomically promotes its name, UID, and checksum in the ordinary `HAProxyCfg
 usable. Repeated acknowledgements of identical output reuse its content address.
 Keep the newest checkpoint, its predecessor, and older checkpoints whose checksums
 still appear in pod deployment status. Garbage collection follows pointer promotion
-and removes only unreferenced checkpoints belonging to this template UID; owner
-references clean up their children. Stale pod status can retain extra storage.
+and removes only unreferenced checkpoints belonging to this template UID. The
+publisher then deletes, with UID and resource-version preconditions, shared
+children that no remaining checkpoint references; it skips this while any
+checkpoint's references are uncommitted. Children of checkpoints published before
+sharing stay owned by their checkpoint and are read and cleaned up as before.
+Stale pod status can retain extra storage.
 
 ### Deployment freshness across leadership terms
 
@@ -91,7 +96,9 @@ foreign workers outside reload adoption and invalidation of an in-flight apply's
 baseline remain enforced.
 
 Read checkpoint pointers and the exact auxiliary references from Kubernetes.
-Verify template and parent owner references, object UIDs, namespaces, kinds,
+Verify template and parent owner references (a shared child must be owned by the
+template and carry a shared name; a checkpoint-owned child a checkpoint name),
+object UIDs, namespaces, kinds,
 deletion state, content digests, content-addressed names, the complete auxiliary
 set identity from ADR-0031, artifact paths, plan identity, and its worker receipt.
 Read certificate bytes rather than trusting their checksum annotations. Re-read
@@ -188,8 +195,11 @@ two minutes. Agent rejection and readiness remain independently observable.
 - Owner references and hashes detect foreign or modified records under the
   existing Kubernetes RBAC trust boundary. They are not digital signatures against
   an administrator who can replace resources, ownership, and checkpoint pointers.
-- Separate checkpoint objects duplicate storage and add publication writes. Retain
-  complete units rather than sharing mutable children with the normal publisher.
+- Each checkpoint writes its own `HAProxyCfg` plus only the auxiliary files whose
+  bytes no retained checkpoint already holds. Checkpoints never share mutable
+  children with the normal publisher. Sharing keeps every check above: the
+  checkpoint's content checksum covers all auxiliary bytes, and each child's name,
+  owner, and digest are still verified before use.
 
 ## Verification
 

@@ -40,7 +40,7 @@ func retainedReferencesMatch(config *api.HAProxyCfg, configs map[types.UID]*api.
 			return false
 		}
 		seen[uid] = true
-		if !retainedCertificatesMatch(retained, secrets) {
+		if !retainedCertificatesMatch(retained, secrets, owner) {
 			return false
 		}
 		if retained.Spec.Checksum == config.Spec.Checksum {
@@ -57,9 +57,44 @@ func retainedReferencesMatch(config *api.HAProxyCfg, configs map[types.UID]*api.
 	})
 }
 
-func retainedCertificatesMatch(config *api.HAProxyCfg, secrets []corev1.Secret) bool {
+// retainedCertificatesMatch accepts certificates the checkpoint owns, and
+// certificates shared by every checkpoint of the template.
+func retainedCertificatesMatch(config *api.HAProxyCfg, secrets []corev1.Secret, owner *metav1.OwnerReference) bool {
 	setID := config.Annotations[annotationPrefix+"auxiliary-set-id"]
-	return setID != "" && config.Status.AuxiliaryFiles != nil && config.Status.AuxiliaryFiles.SetID == setID && certificatesMatch(config, secrets, setID)
+	refs := config.Status.AuxiliaryFiles
+	if setID == "" || refs == nil || refs.SetID != setID {
+		return false
+	}
+	var owned []corev1.Secret
+	shared := make(map[string]*corev1.Secret)
+	for i := range secrets {
+		if sharedRetainedSecret(&secrets[i], owner) {
+			shared[secrets[i].Name] = &secrets[i]
+		} else {
+			owned = append(owned, secrets[i])
+		}
+	}
+	trimmed := config.DeepCopy()
+	trimmed.Status.AuxiliaryFiles.SSLCertificates = unsharedReferences(refs.SSLCertificates, shared, setID, false)
+	trimmed.Status.AuxiliaryFiles.SSLCaFiles = unsharedReferences(refs.SSLCaFiles, shared, setID, true)
+	return certificatesMatch(trimmed, owned, setID)
+}
+
+// unsharedReferences returns the references no valid shared Secret satisfies.
+func unsharedReferences(refs []api.ResourceReference, shared map[string]*corev1.Secret, setID string, caFile bool) []api.ResourceReference {
+	var remaining []api.ResourceReference
+	for _, ref := range refs {
+		if secret := shared[ref.Name]; secret == nil || !CertificateIdentityMatches(&secret.ObjectMeta, setID, caFile) {
+			remaining = append(remaining, ref)
+		}
+	}
+	return remaining
+}
+
+func sharedRetainedSecret(secret *corev1.Secret, owner *metav1.OwnerReference) bool {
+	parent := metav1.GetControllerOf(secret)
+	return parent != nil && parent.UID == owner.UID && parent.Kind == owner.Kind && parent.APIVersion == owner.APIVersion &&
+		secret.Labels[annotationPrefix+"retained-for"] == string(owner.UID)
 }
 
 func retainedAcknowledges(pod *api.PodDeploymentStatus, checksum string) bool {
@@ -83,7 +118,11 @@ func retainedCleanupComplete(config *api.HAProxyCfg, configs map[types.UID]*api.
 			return false
 		}
 	}
+	referenced := retainedCertificateNames(config, configs)
 	for i := range secrets {
+		if sharedRetainedSecret(&secrets[i], owner) && !referenced[secrets[i].Name] {
+			return false
+		}
 		parent := metav1.GetControllerOf(&secrets[i])
 		if parent != nil && parent.Kind == "HAProxyCfg" && parent.APIVersion == api.SchemeGroupVersion.String() {
 			if live := configs[parent.UID]; live == nil || live.Name != parent.Name || live.DeletionTimestamp != nil {
@@ -92,4 +131,19 @@ func retainedCleanupComplete(config *api.HAProxyCfg, configs map[types.UID]*api.
 		}
 	}
 	return true
+}
+
+func retainedCertificateNames(config *api.HAProxyCfg, configs map[types.UID]*api.HAProxyCfg) map[string]bool {
+	names := make(map[string]bool)
+	for _, ref := range config.Status.RetainedConfigs {
+		retained := configs[types.UID(ref.UID)]
+		if retained == nil || retained.Status.AuxiliaryFiles == nil {
+			continue
+		}
+		refs := retained.Status.AuxiliaryFiles
+		for _, certificate := range append(slices.Clone(refs.SSLCertificates), refs.SSLCaFiles...) {
+			names[certificate.Name] = true
+		}
+	}
+	return names
 }

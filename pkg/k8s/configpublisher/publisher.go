@@ -316,9 +316,12 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 			fmt.Errorf("updating auxiliary references: %w", err),
 		)
 	}
-	if err := p.pruneAuxiliaryFiles(ctx, runtimeConfig, result); err != nil {
-		p.forgetPublished(req)
-		return result, err
+	// Checkpoint children are shared and pruned with the checkpoints (pruneRetained).
+	if req.RetainedPlan == "" {
+		if err := p.pruneAuxiliaryFiles(ctx, runtimeConfig, result); err != nil {
+			p.forgetPublished(req)
+			return result, err
+		}
 	}
 
 	p.recordPublished(req, result)
@@ -500,10 +503,13 @@ func (p *Publisher) publishAuxiliaryFiles(
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
 	result *PublishResult,
 ) error {
-	suffix := req.NameSuffix
+	suffix, scope := req.NameSuffix, runtimeConfig.Name+"\x00"+string(runtimeConfig.UID)
+	if req.RetainedPlan != "" {
+		suffix, scope = retainedChildSuffix, req.TemplateConfigName+"\x00"+string(req.TemplateConfigUID)
+	}
 	files := req.AuxiliaryFiles
 	var err error
-	if result.MapFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindMapFile, suffix, files.MapFiles,
+	if result.MapFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindMapFile, suffix, scope, files.MapFiles,
 		func(file auxiliaryfiles.MapFile) (string, string) {
 			return p.generateMapFileName(path.Base(file.Path)), file.Path
 		},
@@ -512,7 +518,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 		}); err != nil {
 		return err
 	}
-	if result.SecretNames, err = publishAuxiliaryKind(ctx, runtimeConfig, "Secret", suffix, files.SSLCertificates,
+	if result.SecretNames, err = publishAuxiliaryKind(ctx, runtimeConfig, "Secret", suffix, scope, files.SSLCertificates,
 		func(file auxiliaryfiles.SSLCertificate) (string, string) {
 			return p.generateSecretName(path.Base(file.Path)), file.Path
 		},
@@ -521,7 +527,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 		}); err != nil {
 		return err
 	}
-	if result.SSLCaFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, "Secret", suffix, files.SSLCaFiles,
+	if result.SSLCaFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, "Secret", suffix, scope, files.SSLCaFiles,
 		func(file auxiliaryfiles.SSLCaFile) (string, string) {
 			return p.generateCASecretName(path.Base(file.Path)), file.Path
 		},
@@ -530,7 +536,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 		}); err != nil {
 		return err
 	}
-	if result.GeneralFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindGeneralFile, suffix, files.GeneralFiles,
+	if result.GeneralFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindGeneralFile, suffix, scope, files.GeneralFiles,
 		func(file auxiliaryfiles.GeneralFile) (string, string) {
 			return p.generateGeneralFileName(file.Filename), file.Filename
 		},
@@ -539,7 +545,7 @@ func (p *Publisher) publishAuxiliaryFiles(
 		}); err != nil {
 		return err
 	}
-	result.CRTListFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindCRTListFile, suffix, files.CRTListFiles,
+	result.CRTListFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindCRTListFile, suffix, scope, files.CRTListFiles,
 		func(file auxiliaryfiles.CRTListFile) (string, string) {
 			return p.generateCRTListFileName(file.Path), file.Path
 		},
@@ -556,11 +562,12 @@ const auxiliaryPublishConcurrency = 8
 
 // publishAuxiliaryKind writes one kind's children in parallel and returns
 // the names it published, in input order. identity returns a file's base name
-// and the identity that disambiguates it.
+// and the identity that disambiguates it; scope names the owner that names
+// are disambiguated for.
 func publishAuxiliaryKind[T auxiliaryfiles.FileItem](
 	ctx context.Context,
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
-	kind, suffix string,
+	kind, suffix, scope string,
 	files []T,
 	identity func(T) (baseName, id string),
 	publish func(context.Context, T, string) (string, error),
@@ -572,9 +579,8 @@ func publishAuxiliaryKind[T auxiliaryfiles.FileItem](
 		work.Go(func() error {
 			baseName, id := identity(file)
 			contentSuffix := auxiliaryFileIdentity(kind, file) + suffix
-			ownerIdentity := runtimeConfig.Name + "\x00" + string(runtimeConfig.UID)
-			initialName := disambiguatedResourceName(baseName, contentSuffix, ownerIdentity+"\x00"+id)
-			name, attempted, err := publishAuxiliaryResource(initialName, baseName, contentSuffix, id, ownerIdentity,
+			initialName := disambiguatedResourceName(baseName, contentSuffix, scope+"\x00"+id)
+			name, attempted, err := publishAuxiliaryResource(initialName, baseName, contentSuffix, id, scope,
 				func(name string) (string, error) { return publish(workCtx, file, name) })
 			if err != nil {
 				return incompletePublicationError(PublicationStageAuxiliary, runtimeConfig.Namespace,
