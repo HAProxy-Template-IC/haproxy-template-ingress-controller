@@ -37,6 +37,7 @@ type SnapshotBranch struct {
 	keys       *iradix.Tree[uint64]
 	identities *iradix.Tree[uint64]
 	history    []branchHistory
+	capture    atomic.Pointer[branchCapture]
 }
 
 type branchAuthority struct {
@@ -99,7 +100,7 @@ func NewSnapshotBranch(numKeys int) *SnapshotBranch {
 
 // Changes captures replacements without fetching on-demand resource bodies.
 func (b *SnapshotBranch) Changes(ctx context.Context, snapshot stores.ReadSnapshot, indexBy []string) ([]BranchChange, error) {
-	observed, err := branchEntries(ctx, snapshot, indexBy, b)
+	observed, deleted, err := b.observe(ctx, snapshot, indexBy)
 	if err != nil {
 		return nil, err
 	}
@@ -113,21 +114,40 @@ func (b *SnapshotBranch) Changes(ctx context.Context, snapshot stores.ReadSnapsh
 			changes = append(changes, BranchChange{identity: entry.identity, entry: entry})
 		}
 	}
+	for _, key := range deleted {
+		entry, _ := b.entries.Get(key)
+		changes = append(changes, BranchChange{identity: entry.identity})
+	}
+	slices.SortFunc(changes, func(a, z BranchChange) int { return compareBranchIdentity(a.identity, z.identity) })
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	b.recordCapture(snapshot, indexBy, changes)
+	return changes, nil
+}
+
+func (b *SnapshotBranch) observe(ctx context.Context, snapshot stores.ReadSnapshot, indexBy []string) (observed map[string]*branchEntry, deleted [][]byte, err error) {
+	if candidates, incremental := b.captureCandidates(snapshot, indexBy); incremental {
+		return candidateEntries(ctx, snapshot, indexBy, b, candidates)
+	}
+	observed, err = branchEntries(ctx, snapshot, indexBy, b)
+	if err != nil {
+		return nil, nil, err
+	}
 	iterator := b.entries.Root().Iterator()
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		key, entry, found := iterator.Next()
+		key, _, found := iterator.Next()
 		if !found {
 			break
 		}
 		if !snapshotContainsIdentity(snapshot, key) {
-			changes = append(changes, BranchChange{identity: entry.identity})
+			deleted = append(deleted, key)
 		}
 	}
-	slices.SortFunc(changes, func(a, z BranchChange) int { return compareBranchIdentity(a.identity, z.identity) })
-	return changes, ctx.Err()
+	return observed, deleted, nil
 }
 
 // Apply creates a branch containing exactly the supplied changes.
@@ -182,10 +202,12 @@ func (b *SnapshotBranch) Apply(changes []BranchChange) *SnapshotBranch {
 			break
 		}
 	}
-	return &SnapshotBranch{
+	applied := &SnapshotBranch{
 		authority: b.authority, sequence: sequence, numKeys: b.numKeys,
 		entries: entries.Commit(), lookup: lookup.Commit(), keys: keys.Commit(), identities: identities.Commit(), history: history,
 	}
+	applied.capture.Store(b.derivedCapture(changes))
+	return applied
 }
 
 func updateBranchKeyRevisions(keys *iradix.Txn[uint64], lookup *iradix.Txn[[]*branchEntry], sequence uint64, keySets ...[]string) {
@@ -352,19 +374,26 @@ func branchEntries(ctx context.Context, snapshot stores.ReadSnapshot, indexBy []
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			key, entry, found := iterator.Next()
+			key, _, found := iterator.Next()
 			if !found {
 				break
 			}
-			if old, found := previous.entries.Get(key); found && old.origin == entry.origin {
-				continue
+			if entry := value.changedBranchEntry(key, previous); entry != nil {
+				entries[string(key)] = entry
 			}
-			entries[string(key)] = entry
 		}
 		return entries, nil
 	default:
 		return nil, fmt.Errorf("snapshot type %T cannot retain exact resource revisions: %w", snapshot, stores.ErrSnapshotUnsupported)
 	}
+}
+
+func (b *SnapshotBranch) changedBranchEntry(key []byte, previous *SnapshotBranch) *branchEntry {
+	entry, _ := b.entries.Get(key)
+	if old, found := previous.entries.Get(key); found && old.origin == entry.origin {
+		return nil
+	}
+	return entry
 }
 
 func snapshotContainsIdentity(snapshot stores.ReadSnapshot, key []byte) bool {

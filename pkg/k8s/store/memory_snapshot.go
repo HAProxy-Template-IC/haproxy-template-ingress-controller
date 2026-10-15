@@ -65,7 +65,7 @@ func (s *MemoryStore) Pin() (stores.ReadSnapshot, error) {
 	if root == nil || root.exactUnsupported {
 		return nil, stores.ErrSnapshotUnsupported
 	}
-	return &memoryReadSnapshot{root: root}, nil
+	return &memoryReadSnapshot{root: root, journal: s}, nil
 }
 
 func (s *MemoryStore) publishReadRootLocked(
@@ -186,7 +186,8 @@ func (s *MemoryStore) updatedMemoryKeyVersionRoot(
 }
 
 type memoryReadSnapshot struct {
-	root *memoryReadRoot
+	root    *memoryReadRoot
+	journal stores.RevisionJournal
 }
 
 func (s *memoryReadSnapshot) RevisionSource() stores.RevisionSource {
