@@ -38,13 +38,13 @@ func NewJSONPathValidator(eventBus *busevents.EventBus, logger *slog.Logger) *JS
 }
 
 // Validate implements ValidationHandler.
-func (v *JSONPathValidator) Validate(_ context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
+func (v *JSONPathValidator) Validate(_ context.Context, cfg *coreconfig.Config, version string) Verdict {
 	start := time.Now()
 	v.Logger().Debug("Validating JSONPath expressions", "version", version)
 
-	errors = validateJSONPaths(cfg)
+	errors := validateJSONPaths(cfg)
 
-	valid = len(errors) == 0
+	valid := len(errors) == 0
 	duration := time.Since(start)
 	expressionCount := len(cfg.WatchedResourcesIgnoreFields)
 	for name := range cfg.WatchedResources {
@@ -73,7 +73,7 @@ func (v *JSONPathValidator) Validate(_ context.Context, cfg *coreconfig.Config, 
 			"expression_count", expressionCount,
 			"error_count", len(errors))
 	}
-	return valid, errors
+	return Verdict{Valid: valid, Errors: errors}
 }
 
 func validateJSONPaths(cfg *coreconfig.Config) []string {

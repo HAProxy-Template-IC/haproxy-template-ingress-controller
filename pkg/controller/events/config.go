@@ -122,7 +122,20 @@ type ConfigValidationResponse struct {
 	// Errors contains validation error messages, empty if Valid is true.
 	Errors []string
 
+	// Inconclusive means the validator could not judge the config (for
+	// example, schemas were unavailable); Errors then say why. Never set
+	// together with Valid.
+	Inconclusive bool
+
 	timestamped
+}
+
+// NewConfigValidationInconclusiveResponse reports that a validator could not
+// reach a verdict, so the config is neither accepted nor rejected.
+func NewConfigValidationInconclusiveResponse(requestID, validatorName string, reasons []string) *ConfigValidationResponse {
+	response := NewConfigValidationResponse(requestID, validatorName, false, reasons)
+	response.Inconclusive = true
+	return response
 }
 
 // NewConfigValidationResponse creates a new ConfigValidationResponse.
@@ -218,6 +231,35 @@ func NewConfigInvalidEvent(version string, templateConfig any, validationErrors 
 }
 
 func (e *ConfigInvalidEvent) EventType() string { return EventTypeConfigInvalid }
+
+// ConfigValidationInconclusiveEvent is published when validators could not
+// judge a config version. The running config stays active and the same
+// version is validated again after RetryIn.
+type ConfigValidationInconclusiveEvent struct {
+	Version        string
+	TemplateConfig any
+	// Reasons maps validator names to why they could not reach a verdict.
+	Reasons map[string][]string
+	RetryIn time.Duration
+	Sources []ConfigSourceRef
+
+	timestamped
+}
+
+// NewConfigValidationInconclusiveEvent creates a new ConfigValidationInconclusiveEvent.
+func NewConfigValidationInconclusiveEvent(version string, templateConfig any, reasons map[string][]string, retryIn time.Duration) *ConfigValidationInconclusiveEvent {
+	return &ConfigValidationInconclusiveEvent{
+		Version:        version,
+		TemplateConfig: templateConfig,
+		Reasons:        copyStringSlicesMap(reasons),
+		RetryIn:        retryIn,
+		timestamped:    newTimestamped(),
+	}
+}
+
+func (e *ConfigValidationInconclusiveEvent) EventType() string {
+	return EventTypeConfigValidationInconclusive
+}
 
 // ConfigResourceChangedEvent is published when the HAProxyTemplateConfig CRD resource is added, updated, or deleted.
 //

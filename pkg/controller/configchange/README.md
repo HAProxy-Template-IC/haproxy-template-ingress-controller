@@ -6,7 +6,7 @@ Configuration validation orchestrator and reinitialization signaller.
 
 `ConfigChangeHandler` bridges configuration parsing, validation, and controller reinitialization. It does **not** watch any Kubernetes resource — that's the job of the CRD watcher in `pkg/controller`. Instead it consumes events:
 
-1. **Validation orchestration** — subscribes to `ConfigParsedEvent`, fans a `ConfigValidationRequest` out to all registered validators (`basic`, `template`, `jsonpath`, `validationtests`) using the bus's scatter-gather (`bus.Request`), aggregates the `ConfigValidationResponse` events, and publishes either `ConfigValidatedEvent` or `ConfigInvalidEvent`. The scatter-gather can take tens of seconds, so it runs off the event loop — single-flight, latest-wins for parsed configs arriving mid-validation — keeping side events responsive throughout.
+1. **Validation orchestration** — subscribes to `ConfigParsedEvent`, fans a `ConfigValidationRequest` out to all registered validators (`basic`, `template`, `jsonpath`, `validationtests`) using the bus's scatter-gather (`bus.Request`), aggregates the `ConfigValidationResponse` events, and publishes either `ConfigValidatedEvent` or `ConfigInvalidEvent`. When validators report that they couldn't judge the config (`ConfigValidationResponse.Inconclusive`, e.g. schemas transiently unavailable) and none rejected it, it publishes `ConfigValidationInconclusiveEvent`, keeps the running config, and validates the same candidate again with backoff (1 s doubling to 30 s) until a verdict arrives or a newer config supersedes it. The scatter-gather can take tens of seconds, so it runs off the event loop — single-flight, latest-wins for parsed configs arriving mid-validation — keeping side events responsive throughout.
 2. **Reinitialization signal** — keeps the running iteration's active snapshot separate from its latest accepted candidate and hands one authoritative snapshot to the controller. Config, credential, and effective-resolution reasons are tracked independently, so superseding a config candidate can't discard a credential or schema reload. Retiring an accepted candidate also replays the active snapshot to state consumers without producing another validation verdict or reload.
 
 This package also contains `StatusUpdater`, which writes validation results back onto the `HAProxyTemplateConfig` CRD's status subresource. It runs on the leader only and re-asserts the leader's verdict when another controller (an old version during a rolling upgrade, or a replica's startup load gate) overwrites it for the same or an older generation.
@@ -40,7 +40,7 @@ The next iteration consumes the snapshot rather than refetching a newer, unvalid
 ## Events
 
 - Subscribes: `ConfigParsedEvent`, `ConfigValidatedEvent`, `BecameLeaderEvent`, `CredentialsUpdatedEvent`
-- Publishes: `ConfigValidationRequest` (scatter), `ConfigValidatedEvent`, `ConfigInvalidEvent`
+- Publishes: `ConfigValidationRequest` (scatter), `ConfigValidatedEvent`, `ConfigInvalidEvent`, `ConfigValidationInconclusiveEvent`
 - Receives: `ConfigValidationResponse` (gather — collected via `bus.Request`, not a registered responder)
 
 ## License

@@ -31,7 +31,7 @@ const EventBufferSize = busevents.LowVolumeSubscriberBuffer
 
 // ValidationHandler validates a typed config without owning event responses.
 type ValidationHandler interface {
-	Validate(ctx context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string)
+	Validate(ctx context.Context, cfg *coreconfig.Config, version string) Verdict
 }
 
 // BaseValidator owns request decoding and response publishing for a ValidationHandler.
@@ -78,11 +78,10 @@ func (v *BaseValidator) HandleRequest(req *events.ConfigValidationRequest) {
 		v.Logger().Error("ConfigValidationRequest contains invalid config type",
 			"expected", "non-nil *coreconfig.Config",
 			"got", fmt.Sprintf("%T", req.Config))
-		v.respond(req, false, []string{fmt.Sprintf("invalid config type: %T", req.Config)})
+		v.respond(req, Verdict{Errors: []string{fmt.Sprintf("invalid config type: %T", req.Config)}})
 		return
 	}
-	valid, errors := v.handler.Validate(v.LifecycleContext(), cfg, req.Version)
-	v.respond(req, valid, errors)
+	v.respond(req, v.handler.Validate(v.LifecycleContext(), cfg, req.Version))
 }
 
 // HandlePanic rejects the request so scatter-gather does not wait for a lost response.
@@ -91,9 +90,13 @@ func (v *BaseValidator) HandlePanic(recovered any, event busevents.Event) {
 	if !ok {
 		return
 	}
-	v.respond(req, false, []string{fmt.Sprintf("validator panicked: %v", recovered)})
+	v.respond(req, Verdict{Errors: []string{fmt.Sprintf("validator panicked: %v", recovered)}})
 }
 
-func (v *BaseValidator) respond(req *events.ConfigValidationRequest, valid bool, errors []string) {
-	v.EventBus().Publish(events.NewConfigValidationResponse(req.RequestID(), v.name, valid, errors))
+func (v *BaseValidator) respond(req *events.ConfigValidationRequest, verdict Verdict) {
+	if verdict.Inconclusive {
+		v.EventBus().Publish(events.NewConfigValidationInconclusiveResponse(req.RequestID(), v.name, verdict.Errors))
+		return
+	}
+	v.EventBus().Publish(events.NewConfigValidationResponse(req.RequestID(), v.name, verdict.Valid, verdict.Errors))
 }

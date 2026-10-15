@@ -203,9 +203,9 @@ func startCRDWatch(
 // resolveEffectiveConfig resolves the config's watched resources against live
 // discovery and returns the effective config the iteration consumes (see
 // coreconfig.ResolveEffective). RequiresFields probing goes through a FRESH
-// cluster schema fetcher per call — the fetcher caches the CRD list per
-// instance, and a stale list would blind the CRD-watch re-resolution to an
-// in-place schema upgrade. Resolution outcomes are logged: per-resource
+// cluster schema fetcher per call — the fetcher caches CRDs per instance,
+// and a stale CRD would blind the CRD-watch re-resolution to an in-place
+// schema upgrade. Resolution outcomes are logged: per-resource
 // resolved versions at debug, feature stripping at info (an operator whose
 // routing silently lost a kind must find the cause in the log).
 func resolveEffectiveConfig(ctx context.Context, cfg *coreconfig.Config, k8sClient *client.Client, logger *slog.Logger) (*coreconfig.Config, *coreconfig.Resolution, error) {
@@ -213,10 +213,7 @@ func resolveEffectiveConfig(ctx context.Context, cfg *coreconfig.Config, k8sClie
 	if err != nil {
 		return nil, nil, fmt.Errorf("constructing apiextensions client for schema probing: %w", err)
 	}
-	fetcher := schemafetcher.NewClusterFetcher(
-		newAPIExtensionsCRDLister(apiextClient),
-		newDiscoveryOpenAPIV3Provider(k8sClient.Clientset().Discovery()),
-	)
+	fetcher := NewClusterSchemaFetcher(apiextClient, k8sClient.Clientset().Discovery())
 	ctx, cancel := context.WithTimeout(ctx, effectiveResolutionTimeout)
 	defer cancel()
 

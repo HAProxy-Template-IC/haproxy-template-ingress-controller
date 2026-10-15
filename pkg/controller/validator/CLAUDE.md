@@ -34,12 +34,12 @@ configchange.ConfigChangeHandler  (issues request, gathers responses)
         ↓ ConfigValidationResponse (gather)
 configchange.ConfigChangeHandler  (publishes outcome)
     ↓
-ConfigValidatedEvent  or  ConfigInvalidEvent
+ConfigValidatedEvent  or  ConfigInvalidEvent  or  ConfigValidationInconclusiveEvent (retried)
 ```
 
 ## Validators
 
-`BaseValidator` decodes each request and publishes its response. The handler receives the lifecycle context, typed config, and version, and returns a verdict with errors. A panic produces a rejection through the same response path. Startup and live validation share `validationTestsVerdict`; each caller supplies its existing timeout message and keeps its own execution budget.
+`BaseValidator` decodes each request and publishes its response. The handler receives the lifecycle context, typed config, and version, and returns a `Verdict`. A verdict is `Inconclusive` only when the handler could not judge the config — a transient `SchemaAcquisitionError` (deadline, transport, apiserver 5xx/429) — never for a defect in the config; classify by error type, not message text. A panic produces a rejection through the same response path. Startup and live validation share `validationTestsVerdict`; each caller supplies its existing timeout message and keeps its own execution budget.
 
 - **BasicValidator**: Structural validation (required fields, types)
 - **TemplateValidator**: Template syntax validation. Calls `helpers.ExtractTemplatesFromConfig`, which walks `spec.haproxyConfig`, `spec.templateSnippets`, `spec.maps`, `spec.files`, and `spec.sslCertificates` (there is no flat `spec.templates` field), then compiles them with `templating.NewScriggoWithDeclarations`.

@@ -42,9 +42,9 @@ func stubTypeBootstrapper(_ context.Context, _ *coreconfig.Config) (*typebootstr
 	}, nil
 }
 
-type validationHandlerFunc func(context.Context, *coreconfig.Config, string) (bool, []string)
+type validationHandlerFunc func(context.Context, *coreconfig.Config, string) Verdict
 
-func (f validationHandlerFunc) Validate(ctx context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
+func (f validationHandlerFunc) Validate(ctx context.Context, cfg *coreconfig.Config, version string) Verdict {
 	return f(ctx, cfg, version)
 }
 
@@ -53,11 +53,11 @@ type successHandler struct {
 	handleChan chan struct{}
 }
 
-func (h *successHandler) Validate(context.Context, *coreconfig.Config, string) (valid bool, errors []string) {
+func (h *successHandler) Validate(context.Context, *coreconfig.Config, string) Verdict {
 	if h.handleChan != nil {
 		close(h.handleChan)
 	}
-	return true, nil
+	return Verdict{Valid: true}
 }
 
 func TestBaseValidator_Stop(t *testing.T) {
@@ -111,11 +111,11 @@ func TestBaseValidator_StopIdempotent(t *testing.T) {
 func TestBaseValidator_PanicRecovery(t *testing.T) {
 	bus, logger := testutil.NewTestBusAndLogger()
 
-	handler := validationHandlerFunc(func(_ context.Context, _ *coreconfig.Config, version string) (bool, []string) {
+	handler := validationHandlerFunc(func(_ context.Context, _ *coreconfig.Config, version string) Verdict {
 		if version == "panic" {
 			panic("test panic")
 		}
-		return true, nil
+		return Verdict{Valid: true}
 	})
 	validator := NewBaseValidator(bus, logger, "test-validator", handler)
 
@@ -155,10 +155,10 @@ func TestBaseValidator_PublishesHandlerVerdict(t *testing.T) {
 		t.Run(fmt.Sprintf("%d errors", len(failures)), func(t *testing.T) {
 			bus, logger := testutil.NewTestBusAndLogger()
 			cfg := createValidTestConfig()
-			handler := validationHandlerFunc(func(_ context.Context, actual *coreconfig.Config, version string) (bool, []string) {
+			handler := validationHandlerFunc(func(_ context.Context, actual *coreconfig.Config, version string) Verdict {
 				assert.Same(t, cfg, actual)
 				assert.Equal(t, "test-version", version)
-				return false, failures
+				return Verdict{Errors: failures}
 			})
 			validator := NewBaseValidator(bus, logger, "test", handler)
 			responses := bus.SubscribeTypes("test-collector", 4, events.EventTypeConfigValidationResponse)
@@ -491,4 +491,20 @@ func TestBaseValidator_IgnoresOtherEvents(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		// Expected - handler was not called
 	}
+}
+
+func TestBaseValidator_PublishesInconclusiveVerdict(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	handler := validationHandlerFunc(func(context.Context, *coreconfig.Config, string) Verdict {
+		return Verdict{Errors: []string{"schemas unavailable"}, Inconclusive: true}
+	})
+	validator := NewBaseValidator(bus, logger, "test", handler)
+	responses := bus.SubscribeTypes("test-collector", 4, events.EventTypeConfigValidationResponse)
+	bus.Start()
+
+	validator.HandleRequest(events.NewConfigValidationRequest(createValidTestConfig(), "test-version"))
+	response := testutil.WaitForEvent[*events.ConfigValidationResponse](t, responses, testutil.LongTimeout)
+	assert.False(t, response.Valid)
+	assert.True(t, response.Inconclusive)
+	assert.Equal(t, []string{"schemas unavailable"}, response.Errors)
 }

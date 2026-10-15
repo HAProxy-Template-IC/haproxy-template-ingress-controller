@@ -130,9 +130,7 @@ type Result struct {
 // to start.
 //
 // Concurrency note: this currently runs sequentially. The fetcher
-// already coalesces concurrent calls per GroupVersion / CRD list
-// (schemafetcher's cluster fetcher uses sync.Once + per-GV done
-// channels), and the number of watched resources is small (≤20 on
+// already coalesces concurrent calls per GroupVersion / CRD, and the number of watched resources is small (≤20 on
 // any cluster we've seen), so parallelising the loop here doesn't
 // pay off. If a future controller grows the resource count by an
 // order of magnitude this becomes worth revisiting.

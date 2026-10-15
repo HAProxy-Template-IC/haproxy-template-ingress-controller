@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -48,13 +49,15 @@ const (
 	// Validation status values written to HAProxyTemplateConfig.Status.ValidationStatus.
 	statusValid   = "Valid"
 	statusInvalid = "Invalid"
+	statusUnknown = "Unknown"
 
 	// eventSourceComponent identifies this controller as the source of emitted
 	// Kubernetes Events, so they appear under `kubectl describe haproxytemplateconfig`.
 	eventSourceComponent = "haptic-controller"
 	// Event reasons (CamelCase per Kubernetes convention).
-	eventReasonValidationFailed = "ValidationFailed"
-	eventReasonValidated        = "Validated"
+	eventReasonValidationFailed       = "ValidationFailed"
+	eventReasonValidated              = "Validated"
+	eventReasonValidationInconclusive = "ValidationInconclusive"
 	// Render-gate Event reasons: HAProxy's verdict on a render that was
 	// already dispatched, as opposed to a config the load gate refused.
 	eventReasonRenderRefused   = "RenderRefusedByHAProxy"
@@ -71,6 +74,7 @@ const (
 	// Condition reasons (CamelCase per Kubernetes convention).
 	reasonValidationSucceeded     = "ValidationSucceeded"
 	reasonConfigInvalid           = "ConfigInvalid"
+	reasonValidationInconclusive  = "ValidationInconclusive"
 	reasonHAProxyValidationFailed = "HAProxyValidationFailed"
 	// reasonLoadGateFailed marks a config rejected by the fatal startup load gate
 	// (distinct from a live ConfigInvalid): the controller crash-loops fail-closed
@@ -181,6 +185,7 @@ func NewStatusUpdater(
 		EventTypes: []string{
 			events.EventTypeConfigValidated,
 			events.EventTypeConfigInvalid,
+			events.EventTypeConfigValidationInconclusive,
 			events.EventTypeValidationFailed,
 			events.EventTypeRenderGateCompleted,
 			events.EventTypeHTTPContentRevoked,
@@ -222,6 +227,8 @@ func (u *StatusUpdater) HandleEvent(event busevents.Event) {
 		u.handleConfigValidated(u.ctx, e)
 	case *events.ConfigInvalidEvent:
 		u.handleConfigInvalid(u.ctx, e)
+	case *events.ConfigValidationInconclusiveEvent:
+		u.handleConfigValidationInconclusive(u.ctx, e)
 	case *events.ValidationFailedEvent:
 		u.handleHAProxyValidationFailed(u.ctx, e)
 	case *events.RenderGateCompletedEvent:
@@ -484,6 +491,43 @@ func (u *StatusUpdater) handleConfigInvalid(ctx context.Context, event *events.C
 	}
 }
 
+// handleConfigValidationInconclusive reports that the observed generation is
+// not yet validated: neither accepted nor rejected, retried by the handler.
+func (u *StatusUpdater) handleConfigValidationInconclusive(ctx context.Context, event *events.ConfigValidationInconclusiveEvent) {
+	htc, ok := event.TemplateConfig.(*v1alpha1.HAProxyTemplateConfig)
+	if !ok {
+		u.Logger().Debug("ConfigValidationInconclusiveEvent does not contain HAProxyTemplateConfig, skipping status update",
+			"type", fmt.Sprintf("%T", event.TemplateConfig))
+		return
+	}
+
+	refs := sourceRefsOrFallback(event.Sources, htc)
+	u.cacheConfigRefs(refs)
+
+	var reasons []string
+	for _, validatorName := range slices.Sorted(maps.Keys(event.Reasons)) {
+		reasons = append(reasons, event.Reasons[validatorName]...)
+	}
+	const message = "Configuration could not be validated yet; the previous configuration keeps running and validation is retried"
+
+	for _, ref := range refs {
+		u.applyStatus(ctx, ref.Namespace, ref.Name,
+			func(status *v1alpha1.HAProxyTemplateConfigStatus) {
+				now := metav1.NewTime(time.Now())
+				status.ObservedGeneration = ref.Generation
+				status.LastValidated = &now
+				status.ValidationStatus = statusUnknown
+				status.ValidationMessage = message
+				status.ValidationErrors = reasons
+				setValidatedCondition(status, metav1.ConditionUnknown, reasonValidationInconclusive,
+					validationEventMessage(status), ref.Generation)
+			},
+			"Updated HAProxyTemplateConfig status to Unknown (validation inconclusive)",
+			"version", event.Version,
+			"retry_in", event.RetryIn)
+	}
+}
+
 // handleHAProxyValidationFailed updates CRD status when HAProxy validation fails.
 // This handles the case where config validation passes (template syntax OK) but
 // the rendered config fails HAProxy's syntax check (haproxy -c).
@@ -703,8 +747,10 @@ func (u *StatusUpdater) emitStatusEvent(htc *v1alpha1.HAProxyTemplateConfig) {
 	switch htc.Status.ValidationStatus {
 	case statusInvalid:
 		u.recorder.Event(htc, corev1.EventTypeWarning, eventReasonValidationFailed, validationEventMessage(&htc.Status))
+	case statusUnknown:
+		u.recorder.Event(htc, corev1.EventTypeWarning, eventReasonValidationInconclusive, validationEventMessage(&htc.Status))
 	case statusValid:
-		if prev == statusInvalid {
+		if prev == statusInvalid || prev == statusUnknown {
 			u.recorder.Event(htc, corev1.EventTypeNormal, eventReasonValidated, "HAProxyTemplateConfig is valid again")
 		}
 	}

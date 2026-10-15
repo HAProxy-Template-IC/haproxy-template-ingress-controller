@@ -829,11 +829,11 @@ The controller updates the status field with validation results:
 | `lastValidated` | timestamp | Last successful validation |
 | `validationStatus` | string | `Valid`, `Invalid`, or `Unknown` — the printer column shown by `kubectl get htplcfg` |
 | `validationMessage` | string | Human-readable summary |
-| `validationErrors` | `[]string` | Populated when `Invalid`; each entry names the template and error context |
+| `validationErrors` | `[]string` | Populated when `Invalid`, with each entry naming the template and error context, or when `Unknown`, with why validation couldn't complete |
 | `conditions` | `[]Condition` | Standard `metav1.Condition` list. The controller writes exactly one type, `Validated`. |
 
 The `Validated` condition carries `observedGeneration`. Compare it with
-`metadata.generation` before relying on the result: `kubectl wait --for=condition=Validated` alone can succeed on a condition from an older generation. Its reasons are `ValidationSucceeded`, `ConfigInvalid`, `HAProxyValidationFailed`, and `LoadGateFailed` — the last meaning the fatal startup load gate rejected the config, so the pod is in `CrashLoopBackOff` rather than merely having a rejected live reload.
+`metadata.generation` before relying on the result: `kubectl wait --for=condition=Validated` alone can succeed on a condition from an older generation. Its reasons are `ValidationSucceeded`, `ConfigInvalid`, `HAProxyValidationFailed`, `LoadGateFailed`, and `ValidationInconclusive`. `LoadGateFailed` means the fatal startup load gate rejected the config, so the pod is in `CrashLoopBackOff` rather than merely having a rejected live reload. `ValidationInconclusive` (condition status `Unknown`) means the controller couldn't validate the generation yet, for example because the API server didn't return the watched resources' schemas in time: the previous configuration keeps running and the controller validates the generation again with backoff, up to every 30 seconds, until it's accepted or rejected.
 
 When the config references libraries (see [`libraryRefs`](#libraryrefs)), the
 condition reports validation of the combined configuration on the owning

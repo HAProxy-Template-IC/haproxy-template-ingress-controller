@@ -69,56 +69,56 @@ func NewTemplateValidator(eventBus *busevents.EventBus, logger *slog.Logger, boo
 }
 
 // Validate implements ValidationHandler.
-func (v *TemplateValidator) Validate(ctx context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
+func (v *TemplateValidator) Validate(ctx context.Context, cfg *coreconfig.Config, version string) Verdict {
 	start := time.Now()
 	v.Logger().Debug("Validating templates", "version", version)
 
-	errors = validateTemplates(ctx, cfg, v.bootstrap)
+	verdict := validateTemplates(ctx, cfg, v.bootstrap)
 	if ctx.Err() == context.Canceled {
 		v.Logger().Debug("Template validation canceled", "version", version)
-		return false, []string{context.Cause(ctx).Error()}
+		return Verdict{Errors: []string{context.Cause(ctx).Error()}}
 	}
 	extraction := helpers.ExtractTemplatesFromConfig(cfg)
 
-	valid = len(errors) == 0
 	duration := time.Since(start)
 	templateCount := len(extraction.AllTemplates)
 
-	if valid {
+	switch {
+	case verdict.Valid:
 		v.Logger().Debug("Template validation successful",
 			"version", version,
 			"duration_ms", duration.Milliseconds(),
 			"template_count", templateCount)
-	} else {
+	case verdict.Inconclusive:
+		v.Logger().Warn("Template validation inconclusive",
+			"version", version,
+			"duration_ms", duration.Milliseconds(),
+			"reasons", verdict.Errors)
+	default:
 		v.Logger().Error("Template validation failed",
 			"version", version,
 			"duration_ms", duration.Milliseconds(),
 			"template_count", templateCount,
-			"error_count", len(errors),
-			"errors", errors)
+			"error_count", len(verdict.Errors),
+			"errors", verdict.Errors)
 	}
-	return valid, errors
+	return verdict
 }
 
 // templateValidatorBootstrapTimeout caps the wall-clock cost of
 // schema resolution during template validation. Validation is on
 // the config-change hot path (HAProxyTemplateConfig admission /
 // reload), so a slow apiserver mustn't block validation
-// indefinitely. The deadline only fires when the cluster is
-// degraded — at which point validation correctly fails with a
-// clear "schema acquisition failed" reason so the operator
-// investigates RBAC / CRD installation / apiserver health.
+// indefinitely. A deadline hit is an inconclusive verdict, not a
+// rejection: the config change handler validates the version again.
 const templateValidatorBootstrapTimeout = 5 * time.Second
 
-func validateTemplates(ctx context.Context, cfg *coreconfig.Config, bootstrap TypeBootstrapper) []string {
+func validateTemplates(ctx context.Context, cfg *coreconfig.Config, bootstrap TypeBootstrapper) Verdict {
 	bootstrapCtx, cancel := context.WithTimeout(ctx, templateValidatorBootstrapTimeout)
 	defer cancel()
 	bootstrapResult, err := bootstrap(bootstrapCtx, cfg)
 	if err != nil {
-		return []string{
-			"schema acquisition failed for one or more watched resources " +
-				"(typed template access cannot be validated without real schemas): " + err.Error(),
-		}
+		return verdictFromError(&SchemaAcquisitionError{Subject: "typed template access", Err: err})
 	}
 
 	extraction := helpers.ExtractTemplatesFromConfig(cfg)
@@ -129,7 +129,7 @@ func validateTemplates(ctx context.Context, cfg *coreconfig.Config, bootstrap Ty
 		IncrementalBindingEntryPoints: extraction.IncrementalBindingEntryPoints,
 		Declarations:                  declarations,
 	}); err != nil {
-		return []string{templating.FormatCompilationError(err, "templates", "")}
+		return verdictFromErrors([]string{templating.FormatCompilationError(err, "templates", "")})
 	}
-	return nil
+	return Verdict{Valid: true}
 }
