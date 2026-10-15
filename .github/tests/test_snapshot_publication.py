@@ -98,7 +98,14 @@ class SnapshotPublicationTests(unittest.TestCase):
         self.assertEqual(set(jobs["smoke"]["strategy"]["matrix"]["runner"]),
                          {"ubuntu-24.04", "ubuntu-24.04-arm"})
         self.assertEqual(set(jobs["images"]["strategy"]["matrix"]["phase"]), {"controller", "spoa"})
-        self.assertEqual(set(workflow["on"]), {"workflow_dispatch"})
+        self.assertEqual(workflow["on"]["workflow_run"], {"workflows": ["CI"], "types": ["completed"]})
+        self.assertIn("workflow_dispatch", workflow["on"])
+        gate = jobs["source"]["if"]
+        for condition in ("conclusion == 'success'", "event == 'push'", "head_branch == 'main'"):
+            self.assertIn(condition, gate)
+        self.assertEqual(jobs["images"]["if"], "needs.source.outputs.publish == 'true'")
+        self.assertIn("profile == 'full'", jobs["source"]["outputs"]["publish"])
+        self.assertEqual(jobs["prune"]["needs"], "chart")
 
 
 if __name__ == "__main__":
