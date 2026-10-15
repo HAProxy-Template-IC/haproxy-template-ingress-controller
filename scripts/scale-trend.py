@@ -26,6 +26,8 @@ SOFT = (
     "controller_container_cpu_seconds_delta",
     "haproxy_reloads_total_delta",
     "config_lines",
+    "webhook_request_duration_seconds_p95",
+    "admission_render_slot_wait_seconds_p95",
 )
 
 
