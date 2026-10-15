@@ -315,7 +315,8 @@ the complete matrix. Merge only once the required `verified` check passes.
 
 After implementing and verifying a change, open the pull request without asking,
 subscribe to its activity, and drive it to a mergeable state: fix CI failures and
-address review findings, Gitar's included. See `.claude/skills/steward/SKILL.md`.
+address review findings, Gitar's included. Once `verified` and the review pass,
+merge it. See `.claude/skills/steward/SKILL.md`.
 
 ### GitHub CLI (gh) Commands
 

@@ -33,9 +33,9 @@ Handle every CI result and review until the pull request is merged or closed.
 - **Human review**: implement small asks; propose larger ones to the user
   first.
 
-## Done
+## Merge
 
-The pull request is ready when the required `verified` check passed and Gitar
-reviewed the head SHA with no open findings. Report the SHA, the run, and the
-review state to the user. Merging stays with the user unless they ask you to
-merge.
+Merge without asking once the required `verified` check passed for the head SHA
+and Gitar reviewed that SHA with no open findings or unresolved threads.
+Squash-merge with the head SHA pinned, as in `docs/agents/ci.md`; never bypass
+a required check. Then report the SHA, the run, and the review state to the user.
