@@ -33,8 +33,7 @@ release checkout produces its own skill snapshot without a second release proces
 
 The landing build uses the same hook to publish the package at the site root and
 an index at `/.well-known/agent-skills/index.json`. Its description comes from
-`SKILL.md`; its digest covers the exact archive bytes. The relative archive URL
-also resolves under an MR preview's path prefix. The existing Pages publisher
+`SKILL.md`; its digest covers the exact archive bytes. The existing Pages publisher
 copies the complete landing output, including hidden directories, on dev builds.
 
 Both website and GitHub installation follow `main`. The guide states this and

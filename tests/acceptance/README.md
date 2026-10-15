@@ -32,7 +32,7 @@ Built on [`kubernetes-sigs/e2e-framework`](https://github.com/kubernetes-sigs/e2
 Tests reach `/debug/vars/*` and `/metrics` via Kubernetes API-server proxy (`client-go` `ProxyGet`), not `kubectl port-forward`. The proxy path is deliberate:
 
 - Port-forwarding uses SPDY, which fails under parallel-test load (EOF, connection reset).
-- NodePort would need `extraPortMappings` in the Kind config, which doesn't work inside GitLab CI's Docker-in-Docker executor.
+- NodePort would need `extraPortMappings` in the Kind config, which doesn't work inside a Docker-in-Docker CI executor.
 - API-server proxy rides the existing kubeconfig and is stable in every environment.
 
 `SetupDebugClient` / `SetupMetricsAccess` return clients wired to use the proxy — no `Start()`/`Stop()` lifecycle. Old notes referencing `NewDebugClient(restConfig, pod, …).Start(ctx)` describe the retired port-forward pattern; don't copy it.
