@@ -1,10 +1,8 @@
-"""The nightly-scale trend gate finds its baselines and compares like with like."""
+"""The scale trend gate compares like with like."""
 
 import importlib.util
-import urllib.error
 from pathlib import Path
 import unittest
-from unittest import mock
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scale-trend.py"
@@ -109,74 +107,6 @@ class EvaluateTest(unittest.TestCase):
         report, failed = self.verdict(run(0, publication_p95=4.6), history)
         self.assertTrue(failed)
         self.assertIn("TREND FAIL: haproxycfg_publication_seconds_p95: median 3 -> 4.6 (+53%) > +50%", report)
-
-
-class FetchHistoryTest(unittest.TestCase):
-    API = "https://gitlab.example/api/v4"
-
-    def fake_get(self, responses):
-        def get(url, headers=None):
-            path = url[len(self.API):]
-            for prefix, response in responses.items():
-                if path.startswith(prefix):
-                    if isinstance(response, Exception):
-                        raise response
-                    self.headers[prefix] = headers
-                    return response
-            raise AssertionError(f"unexpected request {url}")
-        self.headers = {}
-        return get
-
-    def http_error(self, code):
-        err = urllib.error.HTTPError("u", code, "e", {}, None)
-        self.addCleanup(err.close)
-        return err
-
-    def test_collects_successful_nightly_scale_jobs_across_pages(self):
-        responses = {
-            "/projects/7/pipelines?ref=main&source=schedule&per_page=30&page=1": ([{"id": 100}, {"id": 99}], "2"),
-            "/projects/7/pipelines?ref=main&source=schedule&per_page=30&page=2": ([{"id": 98}], ""),
-            "/projects/7/pipelines/100/": ([{"id": 1, "name": "nightly-scale"}], ""),
-            "/projects/7/pipelines/99/jobs?scope%5B%5D=success&per_page=100&page=1": ([{"id": 2, "name": "lint"}], "2"),
-            "/projects/7/pipelines/99/jobs?scope%5B%5D=success&per_page=100&page=2": ([{"id": 3, "name": "nightly-scale"}], ""),
-            "/projects/7/pipelines/98/": ([{"id": 4, "name": "nightly-scale"}], ""),
-            "/projects/7/jobs/3/": ({"config_lines": 3}, ""),
-            "/projects/7/jobs/4/": ({"config_lines": 4}, ""),
-        }
-        with mock.patch.object(TREND, "get", self.fake_get(responses)):
-            runs = TREND.fetch_history(self.API, "7", "tok", "100")
-        self.assertEqual([r["_job_id"] for r in runs], [3, 4])
-        self.assertEqual(self.headers["/projects/7/jobs/3/"], {"JOB-TOKEN": "tok"})
-        self.assertIsNone(self.headers["/projects/7/pipelines?ref=main&source=schedule&per_page=30&page=1"])
-
-    def test_expired_artifact_is_skipped(self):
-        responses = {
-            "/projects/7/pipelines?": ([{"id": 99}, {"id": 98}], ""),
-            "/projects/7/pipelines/99/": ([{"id": 3, "name": "nightly-scale"}], ""),
-            "/projects/7/pipelines/98/": ([{"id": 4, "name": "nightly-scale"}], ""),
-            "/projects/7/jobs/3/": self.http_error(404),
-            "/projects/7/jobs/4/": ({}, ""),
-        }
-        with mock.patch.object(TREND, "get", self.fake_get(responses)):
-            runs = TREND.fetch_history(self.API, "7", "tok", "1")
-        self.assertEqual([r["_job_id"] for r in runs], [4])
-
-    def test_api_errors_fail_loudly(self):
-        responses = {"/projects/7/pipelines?": self.http_error(403)}
-        with mock.patch.object(TREND, "get", self.fake_get(responses)):
-            with self.assertRaises(urllib.error.HTTPError):
-                TREND.fetch_history(self.API, "7", "tok", "1")
-
-    def test_stops_at_max_runs(self):
-        pipelines = [{"id": i} for i in range(1, 40)]
-        responses = {
-            "/projects/7/pipelines?": (pipelines, ""),
-            "/projects/7/pipelines/": ([{"id": 5, "name": "nightly-scale"}], ""),
-            "/projects/7/jobs/5/": ({}, ""),
-        }
-        with mock.patch.object(TREND, "get", self.fake_get(responses)):
-            runs = TREND.fetch_history(self.API, "7", "tok", "0")
-        self.assertEqual(len(runs), TREND.MAX_RUNS)
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ publication; merging it doesn't update the live documentation.
 Every pull request runs the complete CI matrix. Run `make lint`, `make test`,
 and, for chart changes, `./scripts/test-templates.sh` before you push, and push
 review fixes together. Update an open PR from `main` only when GitHub reports a
-conflict: the merge queue already tests against the current `main`.
+conflict: CI tests the PR merged into `main`, and post-merge CI tests it again.
 
 ## `golangci-lint`
 

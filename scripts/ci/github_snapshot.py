@@ -18,7 +18,7 @@ def snapshot_plan(receipt, values, *, repository, sha, tree, manifest):
     expected = {"repository": repository, "sha": sha, "tree": tree,
                 "branch": "main", "source_sha": sha, "source_repository": repository,
                 "manifest_sha256": hashlib.sha256(manifest).hexdigest()}
-    if (receipt.get("version") not in {2, 3} or receipt.get("profile", "full") != "full" or
+    if (receipt.get("version") != 2 or receipt.get("profile", "full") != "full" or
             any(receipt.get(key) != value for key, value in expected.items())):
         raise ValueError("Snapshot publication requires the complete verified main source")
     destination = "ghcr.io/" + repository.split("/")[0].lower() + "/haptic"

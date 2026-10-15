@@ -49,12 +49,11 @@ class ReleaseTagTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.plan()
 
-    def test_verified_reuse_preserves_the_merged_release_source(self):
-        self.receipt.update(version=3, reused_from={"run_id": 41, "sha": "b" * 40})
-        self.assertEqual(self.plan(), {"tag": "v1.2.3", "sha": self.sha, "run_id": 42})
-        self.receipt["version"] = 4
-        with self.assertRaises(ValueError):
-            self.plan()
+    def test_only_direct_receipts_are_accepted(self):
+        for version in (3, 4):
+            self.receipt["version"] = version
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                self.plan()
 
     def test_existing_release_version_and_lookup_failure_never_create_a_tag(self):
         for status in (200, 403, 503):

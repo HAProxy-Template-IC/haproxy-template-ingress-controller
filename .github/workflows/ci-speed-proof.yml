@@ -59,6 +59,7 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - name: Reuse Go downloads and compilation
+      id: go-cache-unit
       if: fromJSON(env.CI_SUITE).suite == 'unit-shard' && (fromJSON(env.CI_SUITE).shard == 'rest' || fromJSON(env.CI_SUITE).index
         == 1)
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -79,6 +80,7 @@ jobs:
         restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ fromJSON(env.CI_SUITE).shard
           == 'command' && 'command-race' || fromJSON(env.CI_SUITE).shard }}-
     - name: Restore and maintain shared Helm compilation
+      id: go-cache-helm
       if: fromJSON(env.CI_SUITE).suite == 'helm' && fromJSON(env.CI_SUITE).haproxy == '3.4'
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
@@ -172,6 +174,9 @@ jobs:
       run: KUBECONFIG=/tmp/haproxy-e2e-kubeconfig make check-controller-output
     - name: Run existing x64 suite
       if: fromJSON(env.CI_SUITE).kind == 'x64'
+      env:
+        PILOT_GO_CACHE_SAVES: ${{ (steps.go-cache-unit.conclusion == 'success' && steps.go-cache-unit.outputs.cache-hit !=
+          'true') || (steps.go-cache-helm.conclusion == 'success' && steps.go-cache-helm.outputs.cache-hit != 'true') }}
       run: bash .github/scripts/run-remaining-pilot.sh
     - name: Run native build and publication checks
       if: fromJSON(env.CI_SUITE).kind == 'build'
@@ -478,6 +483,7 @@ jobs:
         fetch-depth: 0
         persist-credentials: false
     - name: Restore and maintain coverage compilation
+      id: go-cache-coverage
       if: (fromJSON(env.CI_SUITE).suite == 'coverage-shard' && fromJSON(env.CI_SUITE).shard == 'rest') || (fromJSON(env.CI_SUITE).suite
         == 'integration-coverage' && fromJSON(env.CI_SUITE).haproxy == '3.4')
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -495,6 +501,9 @@ jobs:
           }}-${{ fromJSON(env.CI_SUITE).suite == 'coverage-shard' && 'unit' || 'integration-race' }}
     - name: Run existing x64 suite
       if: fromJSON(env.CI_SUITE).kind == 'x64'
+      env:
+        PILOT_GO_CACHE_SAVES: ${{ (steps.go-cache-coverage.conclusion == 'success' && steps.go-cache-coverage.outputs.cache-hit
+          != 'true') }}
       run: bash .github/scripts/run-remaining-pilot.sh
     - name: Retain verification evidence
       if: always()
