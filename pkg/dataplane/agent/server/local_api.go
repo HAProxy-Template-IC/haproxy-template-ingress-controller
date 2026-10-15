@@ -27,21 +27,27 @@ import (
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
-func (s *Server) serveAdmin(ctx context.Context) error {
+func (s *Server) serveAdmin(ctx context.Context, listener net.Listener) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+api.PathHealthz, s.handleHealthz)
 	mux.HandleFunc("GET "+api.PathState, s.handleState)
-	return s.serveUnix(ctx, s.cfg.AdminSocket, mux, shutdownGrace)
+	return s.serveUnix(ctx, listener, mux, shutdownGrace)
 }
 
-func (s *Server) serveUnix(ctx context.Context, path string, handler http.Handler, grace time.Duration) error {
+// listenUnix binds a local socket, replacing a stale socket a previous process left.
+func listenUnix(path string) (net.Listener, error) {
 	if err := removeStaleSocket(path); err != nil {
-		return err
+		return nil, err
 	}
 	listener, err := net.Listen("unix", path)
 	if err != nil {
-		return fmt.Errorf("listen on local agent socket %s: %w", path, err)
+		return nil, fmt.Errorf("listen on local agent socket %s: %w", path, err)
 	}
+	return listener, nil
+}
+
+func (s *Server) serveUnix(ctx context.Context, listener net.Listener, handler http.Handler, grace time.Duration) error {
+	path := listener.Addr().String()
 	server := &http.Server{
 		Handler: handler, ReadHeaderTimeout: readHeaderTimeout, WriteTimeout: grace,
 		BaseContext: func(net.Listener) context.Context { return ctx },
@@ -58,7 +64,7 @@ func (s *Server) serveUnix(ctx context.Context, path string, handler http.Handle
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
 	defer cancel()
-	err = server.Shutdown(shutdownCtx)
+	err := server.Shutdown(shutdownCtx)
 	<-done
 	if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 		s.logger.Warn("could not remove local agent socket", "error", removeErr)

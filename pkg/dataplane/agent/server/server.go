@@ -238,17 +238,24 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	bound := listener.Addr().String()
 	s.addr.Store(&bound)
+	// Bind the local sockets before any goroutine can flip readiness, so a ready
+	// agent always has them.
+	drain, admin, err := s.listenLocalSockets()
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	s.http.BaseContext = func(net.Listener) context.Context { return groupCtx }
 	group.Go(func() error { return s.deferrals.Start(groupCtx) })
 	group.Go(func() error { return s.pacer(groupCtx) })
 	group.Go(func() error { return s.initialise(groupCtx) })
-	if s.cfg.DrainSocket != "" {
-		group.Go(func() error { return s.serveDrain(groupCtx) })
+	if drain != nil {
+		group.Go(func() error { return s.serveDrain(groupCtx, drain) })
 	}
-	if s.cfg.AdminSocket != "" {
-		group.Go(func() error { return s.serveAdmin(groupCtx) })
+	if admin != nil {
+		group.Go(func() error { return s.serveAdmin(groupCtx, admin) })
 	}
 	group.Go(func() error {
 		if err := s.http.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -269,6 +276,25 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// listenLocalSockets binds the configured drain and admin sockets; a nil
+// listener means that socket isn't configured.
+func (s *Server) listenLocalSockets() (drain, admin net.Listener, err error) {
+	if s.cfg.DrainSocket != "" {
+		if drain, err = listenUnix(s.cfg.DrainSocket); err != nil {
+			return nil, nil, err
+		}
+	}
+	if s.cfg.AdminSocket != "" {
+		if admin, err = listenUnix(s.cfg.AdminSocket); err != nil {
+			if drain != nil {
+				_ = drain.Close()
+			}
+			return nil, nil, err
+		}
+	}
+	return drain, admin, nil
 }
 
 // Addr is the address the endpoint bound to, which is the resolved port when

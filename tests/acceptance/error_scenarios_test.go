@@ -179,7 +179,7 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			// Under CI load with 17 parallel tests this can take 30-60s.
 			t.Log("Waiting for validation to reject invalid config...")
 			require.NotNil(t, debugClient, "Debug client should be available")
-			err = debugClient.WaitForValidationStatus(ctx, "failed", 90*time.Second)
+			failed, err := debugClient.WaitForValidationStatus(ctx, "failed", 90*time.Second)
 			if err != nil {
 				// Dump diagnostics on failure
 				pipeline, pipelineErr := debugClient.GetPipelineStatusWithRetry(ctx, 10*time.Second)
@@ -198,13 +198,10 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			require.NoError(t, err, "Validation should report 'failed' status for invalid HAProxy config")
 
 			// Verify the validation error mentions the invalid directive
-			pipeline, pipelineErr := debugClient.GetPipelineStatusWithRetry(ctx, 10*time.Second)
-			require.NoError(t, pipelineErr)
-			require.NotNil(t, pipeline.Validation)
-			t.Logf("Validation errors: %v", pipeline.Validation.Errors)
+			t.Logf("Validation errors: %v", failed.Validation.Errors)
 
 			hasExpectedError := false
-			for _, errMsg := range pipeline.Validation.Errors {
+			for _, errMsg := range failed.Validation.Errors {
 				if strings.Contains(errMsg, "port: must be between") ||
 					strings.Contains(errMsg, "99999") ||
 					strings.Contains(errMsg, "schema") ||
@@ -225,7 +222,7 @@ func buildInvalidHAProxyConfigFeature() types.Feature {
 			require.NoError(t, err, "Debug client should be available after config restore")
 
 			// Wait for successful validation after restore (same reinitialization cycle as above)
-			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 90*time.Second)
+			_, err = debugClient.WaitForValidationStatus(ctx, "succeeded", 90*time.Second)
 			require.NoError(t, err, "Validation should report 'succeeded' after restoring valid config")
 
 			// Verify controller recovered
@@ -335,7 +332,7 @@ func buildCredentialsMissingFeature() types.Feature {
 			require.NoError(t, err, "Controller should have config after credentials provided")
 
 			// Wait for validation to succeed after credentials recovery
-			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			_, err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
 			require.NoError(t, err, "Validation should succeed after credentials recovery")
 
 			// Check errors endpoint to verify no persistent errors after recovery
@@ -516,7 +513,7 @@ func buildRapidConfigUpdatesFeature() types.Feature {
 			// Wait for validation to complete (validation happens after rendering)
 			// Use 120s timeout consistent with rendered config wait - under heavy parallel load,
 			// validation may take longer to complete after rapid updates.
-			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 120*time.Second)
+			_, err = debugClient.WaitForValidationStatus(ctx, "succeeded", 120*time.Second)
 			require.NoError(t, err, "Validation should succeed after debounce")
 
 			// Use debug endpoint to verify pipeline completed successfully after debouncing
@@ -690,7 +687,7 @@ func buildDataplaneUnreachableFeature() types.Feature {
 			require.NoError(t, err, "Controller should still be running with no HAProxy endpoints")
 
 			// Wait for validation to complete before checking status
-			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			_, err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
 			if err != nil {
 				t.Logf("Note: Validation did not reach 'succeeded' status: %v", err)
 			}
@@ -1057,7 +1054,7 @@ func buildTransactionConflictFeature() types.Feature {
 			t.Logf("Found %q in rendered config (debouncing worked)", foundVersion)
 
 			// Wait for validation to complete before checking status
-			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			_, err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
 			if err != nil {
 				t.Logf("Note: Validation did not reach 'succeeded' status: %v", err)
 			}
@@ -1178,7 +1175,7 @@ func buildPartialDeploymentFailureFeature() types.Feature {
 			require.NoError(t, err, "Config should reflect updates even with no deployment targets")
 
 			// Wait for validation to complete before checking status
-			err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
+			_, err = debugClient.WaitForValidationStatus(ctx, "succeeded", 30*time.Second)
 			if err != nil {
 				t.Logf("Note: Validation did not reach 'succeeded' status: %v", err)
 			}
