@@ -188,6 +188,7 @@ func (p *Publisher) pruneRetained(ctx context.Context, req *PublishRequest, keep
 	if err != nil {
 		return err
 	}
+	deleted := false
 	for i := range items.Items {
 		item := &items.Items[i]
 		if !ownedByTemplate(item, req.TemplateConfigName, req.TemplateConfigUID) ||
@@ -202,8 +203,13 @@ func (p *Publisher) pruneRetained(ctx context.Context, req *PublishRequest, keep
 			return err
 		}
 		p.forgetPublishedResource(req.TemplateConfigNamespace, item.Name)
+		deleted = true
 	}
-	return nil
+	// Only a checkpoint deletion can leave a shared child unreferenced.
+	if !deleted {
+		return nil
+	}
+	return p.pruneRetainedFiles(ctx, req)
 }
 
 // LoadRetained reads only checkpoints explicitly committed by this template owner.

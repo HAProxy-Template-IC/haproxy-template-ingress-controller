@@ -103,3 +103,24 @@ func TestRetainedPublicationKeepsReferencedHistoricalCertificates(t *testing.T) 
 	f.secrets = append(f.secrets, *certificate, corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials"}})
 	require.True(t, RetainedMatches(&f.config, f.configs, f.secrets))
 }
+
+func sharedRetainedCertificate(f *retainedFixture, name string) *corev1.Secret {
+	certificate := f.secrets[1].DeepCopy()
+	certificate.Name = name
+	certificate.Labels = map[string]string{annotationPrefix + "retained-for": "template-uid"}
+	certificate.OwnerReferences = []metav1.OwnerReference{{APIVersion: api.SchemeGroupVersion.String(), Kind: "HAProxyTemplateConfig", Name: "template", UID: "template-uid", Controller: new(true)}}
+	return certificate
+}
+
+func TestRetainedPublicationAcceptsSharedCertificates(t *testing.T) {
+	f := retainedPublicationFixture(t)
+	f.secrets[1] = *sharedRetainedCertificate(f, "checkpoint-certificate")
+	require.True(t, RetainedMatches(&f.config, f.configs, f.secrets))
+
+	f.secrets = append(f.secrets, *sharedRetainedCertificate(f, "unreferenced-certificate"))
+	require.False(t, RetainedMatches(&f.config, f.configs, f.secrets), "an unreferenced shared certificate awaits pruning")
+	f.secrets = f.secrets[:2]
+
+	f.secrets[1].Labels = nil
+	require.False(t, RetainedMatches(&f.config, f.configs, f.secrets), "a template-owned certificate without the checkpoint label is not shared")
+}

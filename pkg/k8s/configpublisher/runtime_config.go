@@ -127,16 +127,7 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 			Labels: map[string]string{
 				"haproxy-haptic.org/template-config": req.TemplateConfigName,
 			},
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         apiVersionV1Alpha1,
-					Kind:               kindTemplateConfig,
-					Name:               req.TemplateConfigName,
-					UID:                req.TemplateConfigUID,
-					Controller:         new(true),
-					BlockOwnerDeletion: new(true),
-				},
-			},
+			OwnerReferences: templateConfigOwnerRefs(req),
 		},
 		Spec: haproxyv1alpha1.HAProxyCfgSpec{
 			Path:         req.ConfigPath,
@@ -151,6 +142,17 @@ func (p *Publisher) buildRuntimeConfig(name string, req *PublishRequest) *haprox
 		runtimeConfig.Labels[retainedLabel] = string(req.TemplateConfigUID)
 	}
 	return runtimeConfig
+}
+
+func templateConfigOwnerRefs(req *PublishRequest) []metav1.OwnerReference {
+	return []metav1.OwnerReference{{
+		APIVersion:         apiVersionV1Alpha1,
+		Kind:               kindTemplateConfig,
+		Name:               req.TemplateConfigName,
+		UID:                req.TemplateConfigUID,
+		Controller:         new(true),
+		BlockOwnerDeletion: new(true),
+	}}
 }
 
 // createRuntimeConfig creates a new HAProxyCfg resource.

@@ -21,11 +21,123 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	v1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
 	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 )
+
+// retainedChildSuffix marks children shared by every checkpoint of one
+// template. Checkpoints published before sharing own their children and name
+// them with their own retainedSuffix instead.
+const retainedChildSuffix = "-retained"
+
+func retainedChildOwnership(req *PublishRequest) auxiliaryChildOwnership {
+	return auxiliaryChildOwnership{
+		labels:          map[string]string{retainedLabel: string(req.TemplateConfigUID)},
+		annotations:     map[string]string{},
+		ownerReferences: templateConfigOwnerRefs(req),
+		manages: func(existing metav1.Object) bool {
+			return ownedByRetainedTemplate(existing, req.TemplateConfigName, req.TemplateConfigUID)
+		},
+	}
+}
+
+func ownedByRetainedTemplate(obj metav1.Object, name string, uid types.UID) bool {
+	return obj.GetLabels()[retainedLabel] == string(uid) && ownedByTemplate(obj, name, uid)
+}
+
+// pruneRetainedFiles deletes shared children that no checkpoint references.
+func (p *Publisher) pruneRetainedFiles(ctx context.Context, req *PublishRequest) error {
+	selector := retainedLabel + "=" + string(req.TemplateConfigUID)
+	referenced, committed, err := p.retainedFileReferences(ctx, req, selector)
+	if err != nil || !committed {
+		return err
+	}
+	candidates, err := p.retainedFileCandidates(ctx, req.TemplateConfigNamespace, selector)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		if referenced[candidate.kind+"/"+candidate.obj.GetName()] ||
+			!ownedByRetainedTemplate(candidate.obj, req.TemplateConfigName, req.TemplateConfigUID) {
+			continue
+		}
+		err := candidate.remove(ctx, candidate.obj.GetName(), deletionOptions(candidate.obj))
+		if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// retainedFileReferences returns every child the template's checkpoints
+// reference; committed is false while a checkpoint's references are unknown.
+func (p *Publisher) retainedFileReferences(ctx context.Context, req *PublishRequest, selector string) (referenced map[string]bool, committed bool, err error) {
+	checkpoints, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(req.TemplateConfigNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, false, err
+	}
+	referenced = make(map[string]bool)
+	for i := range checkpoints.Items {
+		item := &checkpoints.Items[i]
+		if !ownedByTemplate(item, req.TemplateConfigName, req.TemplateConfigUID) || item.DeletionTimestamp != nil {
+			continue
+		}
+		refs := item.Status.AuxiliaryFiles
+		if refs == nil || refs.SetID != item.Annotations[AuxiliarySetIDAnnotationKey] {
+			return nil, false, nil
+		}
+		for _, group := range [][]v1.ResourceReference{refs.MapFiles, refs.GeneralFiles, refs.CRTListFiles, refs.SSLCertificates, refs.SSLCaFiles} {
+			for _, ref := range group {
+				referenced[ref.Kind+"/"+ref.Name] = true
+			}
+		}
+	}
+	return referenced, true, nil
+}
+
+type retainedFileCandidate struct {
+	kind   string
+	obj    metav1.Object
+	remove func(context.Context, string, metav1.DeleteOptions) error
+}
+
+func (p *Publisher) retainedFileCandidates(ctx context.Context, namespace, selector string) ([]retainedFileCandidate, error) {
+	crd := p.crdClient.HaproxyTemplateICV1alpha1()
+	var candidates []retainedFileCandidate
+	maps, err := crd.HAProxyMapFiles(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, err
+	}
+	for i := range maps.Items {
+		candidates = append(candidates, retainedFileCandidate{kindMapFile, &maps.Items[i], crd.HAProxyMapFiles(namespace).Delete})
+	}
+	generals, err := crd.HAProxyGeneralFiles(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, err
+	}
+	for i := range generals.Items {
+		candidates = append(candidates, retainedFileCandidate{kindGeneralFile, &generals.Items[i], crd.HAProxyGeneralFiles(namespace).Delete})
+	}
+	lists, err := crd.HAProxyCRTListFiles(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, err
+	}
+	for i := range lists.Items {
+		candidates = append(candidates, retainedFileCandidate{kindCRTListFile, &lists.Items[i], crd.HAProxyCRTListFiles(namespace).Delete})
+	}
+	secrets, err := p.k8sClient.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, err
+	}
+	for i := range secrets.Items {
+		candidates = append(candidates, retainedFileCandidate{kindSecret, &secrets.Items[i], p.k8sClient.CoreV1().Secrets(namespace).Delete})
+	}
+	return candidates, nil
+}
 
 type retainedFileKey struct {
 	family renderartifact.Family
@@ -55,8 +167,8 @@ func (p *Publisher) readRetainedFiles(ctx context.Context, owner *v1.HAProxyCfg)
 		{kindMapFile, renderartifact.Map, refs.MapFiles},
 		{kindGeneralFile, renderartifact.General, refs.GeneralFiles},
 		{kindCRTListFile, renderartifact.CRTList, refs.CRTListFiles},
-		{"Secret", renderartifact.Certificate, refs.SSLCertificates},
-		{"Secret", renderartifact.CA, refs.SSLCaFiles},
+		{kindSecret, renderartifact.Certificate, refs.SSLCertificates},
+		{kindSecret, renderartifact.CA, refs.SSLCaFiles},
 	}
 	files := make(map[retainedFileKey]retainedFile)
 	seen := make(map[string]bool)
@@ -144,7 +256,9 @@ func retainedSecretFile(item *corev1.Secret, family renderartifact.Family) (reta
 }
 
 func verifyRetainedFile(file *retainedFile, owner *v1.HAProxyCfg, kind string) error {
-	if !ownedByRuntimeConfig(file.meta, owner) || file.meta.GetDeletionTimestamp() != nil {
+	parent := metav1.GetControllerOf(owner)
+	shared := parent != nil && ownedByRetainedTemplate(file.meta, parent.Name, parent.UID)
+	if !shared && !ownedByRuntimeConfig(file.meta, owner) || file.meta.GetDeletionTimestamp() != nil {
 		return errors.New("retained auxiliary object has a foreign owner or is being deleted")
 	}
 	if file.empty != (file.content == "") || (file.empty && file.compressed) {
@@ -158,7 +272,11 @@ func verifyRetainedFile(file *retainedFile, owner *v1.HAProxyCfg, kind string) e
 		return errors.New("retained auxiliary checksum differs from its content")
 	}
 	ca := file.key.family == renderartifact.CA || file.key.family == renderartifact.GeneralCA
-	suffix := AuxiliaryContentSuffix(kind, file.key.path, file.checksum, ca) + retainedSuffix(owner.Spec.Checksum, owner.Spec.RetainedPlan)
+	address := retainedSuffix(owner.Spec.Checksum, owner.Spec.RetainedPlan)
+	if shared {
+		address = retainedChildSuffix
+	}
+	suffix := AuxiliaryContentSuffix(kind, file.key.path, file.checksum, ca) + address
 	if !strings.HasSuffix(file.meta.GetName(), suffix) {
 		return errors.New("retained auxiliary content address differs")
 	}

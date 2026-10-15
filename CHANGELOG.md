@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reduce reconciliation allocations by reusing unchanged watched-resource revisions during input isolation.
 - Reduce temporary template allocations during configuration validation and rendering.
 - Log validation test totals and results at the default INFO level.
+- Recovery checkpoints share unchanged auxiliary files instead of copying every map, file, and certificate Secret, so frequent deployments no longer create and garbage-collect a full set of objects each time.
 
 ### Fixed
 
