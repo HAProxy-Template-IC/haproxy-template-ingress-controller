@@ -58,8 +58,7 @@ Maintenance releases cannot advance `latest` past a newer stable version.
 
 The publisher rechecks the canonical CI receipt and downloads its documentation
 and playground artifacts. Their producing job IDs, run attempts, source commits,
-creation times, and GitHub SHA-256 digests must match. Merge-queue reuse follows
-the original verified run; it does not rebuild the engine. A documentation-only
+creation times, and GitHub SHA-256 digests must match. A documentation-only
 run keeps the previously published playground and records that provenance.
 
 Every new version is retained as a content-addressed archive in the

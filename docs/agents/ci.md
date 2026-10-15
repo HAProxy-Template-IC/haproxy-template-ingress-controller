@@ -1,8 +1,10 @@
 # CI and merge verification
 
-Every merge to `main` or a maintenance branch goes through GitHub's merge queue,
-which runs the canonical `CI` workflow on the exact merge result. A local test
-result, a review comment, and a skipped run cannot replace required CI. These
+A pull request to `main` or a maintenance branch merges once the required
+`verified` check passes on its merge with the target branch. The branch need not
+be up to date, so the canonical `CI` workflow runs again on every push to the
+target; a failed post-merge run blocks further merges until it is fixed. A local
+test result, a review comment, and a skipped run cannot replace required CI. These
 instructions apply to every agent and future session.
 
 ## Before pushing
@@ -21,16 +23,16 @@ instructions apply to every agent and future session.
 - Never add `[skip ci]` or otherwise skip verification.
 - Diagnose failures before retrying. Rerun a specific job once for a demonstrated
   infrastructure failure. Fix test failures instead of rerunning until they pass.
-- Rebase only for a conflict or another concrete requirement. The merge queue
+- Rebase only for a conflict or another concrete requirement. Post-merge CI
   tests the combined code; routine rebases invalidate CI and review evidence.
 
-## Before queueing
+## Before merging
 
 1. Read every Gitar review, thread, and summary for the final source SHA. Fix
    valid findings and resolve threads with evidence. A missing review is a
    blocker, not permission to waive review.
 2. Confirm the required `verified` check passed for that SHA.
-3. Queue the exact reviewed source:
+3. Merge the exact reviewed source:
 
 ```bash
 gh pr merge "$pr_number" \
@@ -38,9 +40,8 @@ gh pr merge "$pr_number" \
   --squash --auto --match-head-commit "$reviewed_sha"
 ```
 
-Never use `--admin`, disable a required check, or merge outside the queue. The
-`CI` workflow runs on `merge_group`; success from a manually dispatched workflow
-cannot authorize a merge or publication. The receipt checks the exact source,
+Never use `--admin` or disable a required check. Success from a manually
+dispatched workflow cannot authorize a merge or publication. The receipt checks the exact source,
 the complete required job inventory (`.github/ci-verification.json`), and the
 run attempt.
 
@@ -56,27 +57,6 @@ and bounded caches. Do not enable paid larger runners, change spending limits,
 or change the plan without authorization. Gross metered usage on the billing page
 is not the payable amount; check the net amount before a campaign. Cancel only
 superseded work owned by your task.
-
-## Post-merge reuse
-
-Reuse is disabled unless the repository variable `REUSE_MERGE_VERIFICATION` is
-exactly `true`. Enable it only after a real merge-queue run, its required jobs,
-and the resulting full post-merge run have passed. Record their run IDs, attempts,
-commit IDs, and equal trees before changing the variable, then read it back.
-
-Only ordinary pushes to `main` or `maint/*` qualify. The pushed commit's first
-parent must match both the previous branch tip and the merge queue's tested base.
-The original `CI` run must contain every required job and both successful
-aggregate gates. Its tree and policy must match the merged checkout, and its
-retained artifact must match GitHub's digest and producing job attempt. Pull
-requests, merge groups, and manual runs keep their checks.
-
-Discovery examines the latest 100 merge-queue runs created within one day.
-Missing, expired, mismatched, or unavailable evidence runs normal CI. A newer
-failed run of the same tree cannot be replaced by an older passing run.
-Publication independently downloads and revalidates the original jobs and
-artifact. A reused receipt cannot itself supply reuse, and reuse does not replace
-publication builds or release conformance.
 
 ## Feature and matrix coverage
 

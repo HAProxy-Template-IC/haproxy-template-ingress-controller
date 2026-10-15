@@ -107,7 +107,7 @@ def git_changed_paths(base, head):
 
 def selection(manifest, event_name, event, identity, *, sha,
               is_ancestor=git_is_ancestor, changed_paths=git_changed_paths):
-    if event_name in {"pull_request", "merge_group"}:
+    if event_name == "pull_request":
         base = identity["base_sha"]
     elif event_name == "push":
         base = event.get("before", "")
@@ -134,21 +134,6 @@ def checkout_identity(event_name, event, repository, sha):
 def revision_identity(event_name, event, *, repository, tested_sha, parents, is_ancestor=None):
     if event["repository"]["full_name"] != repository:
         raise ValueError("Trigger belongs to a different repository")
-    if event_name == "merge_group":
-        group = event["merge_group"]
-        branch = group["base_ref"].removeprefix("refs/heads/")
-        if (event["action"] != "checks_requested" or group["head_sha"] != tested_sha or
-                not re.fullmatch(r"[a-f0-9]{40}", group["base_sha"]) or
-                not re.fullmatch(r"[a-f0-9]{40}", tested_sha) or group["base_sha"] == tested_sha):
-            raise ValueError("Checkout is not the requested merge group")
-        if (group["base_ref"] != "refs/heads/" + branch or
-                not (branch == "main" or branch.startswith("maint/")) or
-                not group["head_ref"].startswith("refs/heads/gh-readonly-queue/" + branch + "/")):
-            raise ValueError("Merge group targets an unexpected branch")
-        if is_ancestor is None or not is_ancestor(group["base_sha"], tested_sha):
-            raise ValueError("Merge group does not contain its declared target revision")
-        return {"api_sha": tested_sha, "source_sha": tested_sha, "source_repository": repository,
-                "base_sha": group["base_sha"], "base_branch": branch, "merge_group_ref": group["head_ref"]}
     if event_name == "pull_request":
         request = event["pull_request"]
         if request["base"]["repo"]["full_name"] != repository:
