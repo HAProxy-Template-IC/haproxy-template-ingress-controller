@@ -310,6 +310,8 @@ Authoritative source: `cmd/haptic/run.go` (`init()` registers flags) and `cmd/ha
 | `--kube-client-qps` | `KUBE_CLIENT_QPS` | `-1` (APF) | Client-side apiserver QPS. `<= 0` disables client-side throttling so the controller relies on apiserver Priority & Fairness; a positive value installs one shared client-side rate limiter across all the controller's clients. Chart value `controller.kubeClient.qps`. |
 | `--kube-client-burst` | `KUBE_CLIENT_BURST` | `0` | Client-side apiserver burst; used only when `--kube-client-qps > 0` (`0` means `2*qps`). Chart value `controller.kubeClient.burst`. |
 | `--kubeconfig` | — | (in-cluster) | Out-of-cluster development. |
+| — | `MUTEX_PROFILE_FRACTION` | `0` (off) | Samples 1 in N mutex contentions into `/debug/pprof/mutex`. |
+| — | `BLOCK_PROFILE_RATE` | `0` (off) | Samples blocking events into `/debug/pprof/block`, about one per this many nanoseconds blocked. |
 | — | `LOG_LEVEL` | `INFO` | Initial log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive; `WARNING` accepted as alias for `WARN`). The CRD's `spec.logging.level`, when non-empty, takes over at runtime via the dynamic logger. |
 
 The chart injects `POD_NAME` and `POD_NAMESPACE` via the downward API (`fieldRef` to `metadata.name` / `metadata.namespace`). `POD_NAMESPACE` is the controller's own namespace — used for owned-resource `OwnerReference`s and the leader-election lease — and falls back to the service-account token mount (`/var/run/secrets/kubernetes.io/serviceaccount/namespace`) when unset; `POD_NAME` is the leader-election lease identity and falls back to the OS hostname. There is no `CONTROLLER_NAMESPACE` env var. Other surfaces:

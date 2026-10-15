@@ -154,8 +154,12 @@ def revision_identity(event_name, event, *, repository, tested_sha, parents, is_
         if request["base"]["repo"]["full_name"] != repository:
             raise ValueError("Pull request targets a different repository")
         head = request["head"]["sha"]
-        base = request["base"]["sha"]
-        if parents != [base, head] or tested_sha in {base, head}:
+        declared = request["base"]["sha"]
+        if len(parents) != 2 or parents[1] != head or tested_sha in set(parents):
+            raise ValueError("Checkout is not the pull request merge of the declared head and base")
+        # GitHub merges into the base branch's current tip, which may be newer than the event's base.
+        base = parents[0]
+        if base != declared and (is_ancestor is None or not is_ancestor(declared, base)):
             raise ValueError("Checkout is not the pull request merge of the declared head and base")
         return {"api_sha": head, "source_sha": head, "base_sha": base,
                 "source_repository": request["head"]["repo"]["full_name"],

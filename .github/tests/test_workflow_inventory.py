@@ -101,6 +101,7 @@ class WorkflowInventoryTests(unittest.TestCase):
                 self.assertEqual(job.get("continue-on-error", False), name == "gateway-canary")
         scale = next(step for step in jobs["scale"]["steps"] if step.get("name") == "Compare scale history")
         self.assertEqual(scale["env"]["SCALE_JOB_NAME"], "${{ inputs.verification_job_prefix }}scale")
+        self.assertEqual(jobs["scale"]["env"]["PILOT_PROFILE_SCALE"], "1")
 
     def test_e2e_has_every_shard_of_every_supported_version(self):
         groups = collections.defaultdict(set)
