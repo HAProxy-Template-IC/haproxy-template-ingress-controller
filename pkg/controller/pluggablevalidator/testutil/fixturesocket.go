@@ -118,10 +118,7 @@ func (s *FixtureServer) SetResponse(v any) error {
 	if err != nil {
 		return fmt.Errorf("response body length: %w", err)
 	}
-	frame := make([]byte, 4+len(body))
-	binary.BigEndian.PutUint32(frame[:4], length)
-	copy(frame[4:], body)
-	s.cannedResponse = frame
+	s.cannedResponse = append(binary.BigEndian.AppendUint32(nil, length), body...)
 	s.closeWithoutResp = false
 	return nil
 }

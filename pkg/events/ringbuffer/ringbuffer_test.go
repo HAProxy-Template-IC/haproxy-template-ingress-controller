@@ -64,6 +64,13 @@ func TestGetLast(t *testing.T) {
 	assert.Equal(t, []int{1, 2, 3}, all)
 }
 
+func TestGetLastNegativeCountReturnsEmpty(t *testing.T) {
+	rb := New[int](3)
+	rb.Add(1)
+
+	assert.Equal(t, []int{}, rb.GetLast(-1))
+}
+
 func TestGetLastWithWrapAround(t *testing.T) {
 	rb := New[int](3)
 
