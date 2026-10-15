@@ -5,6 +5,36 @@ you plan to deploy. Each section lists configuration changes and the steps neede
 to keep your existing routes working. For routine chart upgrades, see
 [Upgrading with Helm](deploying-with-helm.md#upgrading).
 
+## Upgrading to 0.6
+
+0.6 requires Kubernetes 1.35 or newer and moves the chart and images to the
+GitHub container registry.
+
+### 1. Check the Kubernetes version
+
+Kubernetes 1.33 is past its upstream end of life, and 1.34 reaches it on
+2026-10-27. Helm refuses to install or upgrade the 0.6 chart on an older cluster.
+
+```bash
+kubectl version
+```
+
+If the server version is older than 1.35, upgrade the cluster before you upgrade
+HAPTIC.
+
+### 2. Remove GitLab registry overrides
+
+The chart's default images come from `ghcr.io/haproxy-haptic/haptic`. Find image
+overrides that still point at the GitLab registry:
+
+```bash
+grep -n 'registry.gitlab.com/haproxy-haptic' haptic-values.yaml
+```
+
+Delete every `repository` line the command prints, then follow the
+[Helm upgrade procedure](deploying-with-helm.md#upgrading). The chart itself is
+published at `oci://ghcr.io/haproxy-haptic/haptic/charts/haptic`.
+
 ## Upgrading to 0.5
 
 0.5 lets a new HAProxy pod load a previously acknowledged configuration when a

@@ -11,7 +11,7 @@ For a first installation and an optional sample route, follow [Getting started](
 
 ## Prerequisites
 
-- Kubernetes 1.33 or newer; see [Kubernetes compatibility checks](./operations/kubernetes-versions.md)
+- Kubernetes 1.35 or newer; see [Kubernetes compatibility checks](./operations/kubernetes-versions.md)
 - Helm 3.8 or newer
 
 !!! note
@@ -115,7 +115,7 @@ Ingress and Gateway authors then select this release with `ingressClassName: hap
 
 ## Upgrading
 
-For an upgrade from 0.3, follow the [0.4 upgrade notes](upgrade-notes.md#upgrading-to-04). For an upgrade from 0.2, follow the [0.3 upgrade notes](upgrade-notes.md#upgrading-to-03). For an upgrade from 0.1.0 or a 0.2.0 alpha, read the [0.2 upgrade notes](upgrade-notes.md#upgrading-to-02) first.
+For an upgrade from 0.5, follow the [0.6 upgrade notes](upgrade-notes.md#upgrading-to-06). For an upgrade from 0.3, follow the [0.4 upgrade notes](upgrade-notes.md#upgrading-to-04). For an upgrade from 0.2, follow the [0.3 upgrade notes](upgrade-notes.md#upgrading-to-03). For an upgrade from 0.1.0 or a 0.2.0 alpha, read the [0.2 upgrade notes](upgrade-notes.md#upgrading-to-02) first.
 
 Pass your complete values file when upgrading. If you configured the release with
 `--set` and have no saved file, [export its values first](#change-settings):

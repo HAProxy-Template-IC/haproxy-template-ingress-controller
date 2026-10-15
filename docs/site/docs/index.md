@@ -27,7 +27,7 @@ types as your needs change.
 
 ## Quick start
 
-Use Kubernetes 1.33 or newer and Helm 3.8 or newer. HAPTIC is pre-1.0: pin a
+Use Kubernetes 1.35 or newer and Helm 3.8 or newer. HAPTIC is pre-1.0: pin a
 chart version and check the [upgrade notes](upgrade-notes.md) before updating.
 Choose the installed version in the documentation menu; `dev` also describes
 unreleased features.

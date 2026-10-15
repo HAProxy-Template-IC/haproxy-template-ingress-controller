@@ -38,7 +38,7 @@ case "$PILOT_SUITE" in
         gocover-cobertura < .pilot/combined.out > .pilot/combined.xml
         ;;
     helm) make validate-helm-libraries HAPROXY_VERSION="$HAPROXY_VERSION" ;;
-    chart-minimum) make lint-chart-ci KUBE_VERSION=1.33.0 check-chart-upgrade-baselines ;;
+    chart-minimum) make lint-chart-ci KUBE_VERSION=1.35.0 check-chart-upgrade-baselines ;;
     docs)
         apt-get -o Acquire::Check-Valid-Until=false update
         apt-get install --yes --no-install-recommends make
