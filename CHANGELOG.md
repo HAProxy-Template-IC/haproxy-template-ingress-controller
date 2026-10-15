@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Shared rate limiting no longer switches to per-pod budgets for 5 seconds after one slow store reply: the bundled rate-limit plugin (v0.4.2) keeps its store connection and reconnects only when the store also misses a PING.
 - Recreate pruned recovery checkpoints when their configuration is deployed again.
 - Account for recovery plans when compressing retained configurations to prevent storage-limit publication failures.
 - Prevent a 30-second agent startup stall when HAProxy is still starting its worker.

@@ -32,10 +32,11 @@ import (
 )
 
 const (
-	refused       = `Error from server (InternalError): error when creating "routes.yaml": Internal error occurred: failed calling webhook "ingresses.validation.haptic": failed to call webhook: Post "https://haptic-webhook/validate": dial tcp 10.0.0.1:443: connect: connection refused`
-	noEndpoints   = `Error from server (InternalError): error when creating "routes.yaml": Internal error occurred: failed calling webhook "ingresses.validation.haptic": no endpoints available for service "haptic-webhook"`
-	denied        = `Error from server (Forbidden): error when creating "routes.yaml": admission webhook "ingresses.validation.haptic" denied the request: invalid configuration`
-	clientTimeout = `error when creating "routes.yaml": Post "https://docker:36487/apis/networking.k8s.io/v1/namespaces/haptic/ingresses?dryRun=All&fieldManager=kubectl-create&fieldValidation=Strict&timeout=10s": context deadline exceeded`
+	refused     = `Error from server (InternalError): error when creating "routes.yaml": Internal error occurred: failed calling webhook "ingresses.validation.haptic": failed to call webhook: Post "https://haptic-webhook/validate": dial tcp 10.0.0.1:443: connect: connection refused`
+	noEndpoints = `Error from server (InternalError): error when creating "routes.yaml": Internal error occurred: failed calling webhook "ingresses.validation.haptic": no endpoints available for service "haptic-webhook"`
+	denied      = `Error from server (Forbidden): error when creating "routes.yaml": admission webhook "ingresses.validation.haptic" denied the request: invalid configuration`
+	// kubectl's --request-timeout, verbatim from GitHub run 38654861649.
+	clientTimeout = `error: error when creating "STDIN": Post "https://127.0.0.1:43119/apis/networking.k8s.io/v1/namespaces/haptic/ingresses?dryRun=All&fieldManager=kubectl-create&fieldValidation=Strict&timeout=10s": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`
 )
 
 func TestAdmissionConnectionClassification(t *testing.T) {

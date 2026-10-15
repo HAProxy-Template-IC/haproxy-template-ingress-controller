@@ -30,7 +30,7 @@ import (
 var pendingErrors = []*regexp.Regexp{
 	regexp.MustCompile(`^Error from server \(InternalError\): .*Internal error occurred: failed calling webhook .*failed to call webhook: .*connect: connection refused$`),
 	regexp.MustCompile(`^Error from server \(InternalError\): .*Internal error occurred: failed calling webhook .*no endpoints available for service .*$`),
-	regexp.MustCompile(`^error when creating .*: Post "https://.*": context deadline exceeded$`),
+	regexp.MustCompile(`^error: error when creating .*: Post "https://.*": context deadline exceeded \(Client\.Timeout exceeded while awaiting headers\)$`),
 }
 
 // ConnectionPending requires every error line to be a recognized startup failure.
