@@ -29,7 +29,7 @@ def check_artifact(artifact, job, run, suite, content):
 
 
 def download_inputs(api, repository, receipt, scratch):
-    source = receipt.get("reused_from", receipt)
+    source = receipt
     root = f"repos/{repository}/actions/runs/{source['run_id']}"
     run = api.get(root)
     if (run["head_sha"] != source["sha"] or run["run_attempt"] != source["run_attempt"] or

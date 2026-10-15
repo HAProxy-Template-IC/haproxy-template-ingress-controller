@@ -11,9 +11,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.ci.github import GitHub
 from scripts.ci.github_evidence import (
-    VERIFY, check_evidence, check_run, load_evidence, publication_changes, require_unchanged_run, unpack_receipt,
+    VERIFY, check_evidence, check_run, load_evidence, publication_changes, require_unchanged_run,
 )
-from scripts.ci.github_reuse import check_reused_evidence
 
 
 def main():
@@ -36,12 +35,8 @@ def main():
     tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
     manifest = Path(".github/ci-verification.json").read_bytes()
     arguments = dict(repository=repository, sha=sha, tree=tree, manifest=manifest)
-    if unpack_receipt(artifact, content).get("version") == 3:
-        base_sha = subprocess.check_output(["git", "rev-parse", "HEAD^1"], text=True).strip()
-        receipt = check_reused_evidence(client, run, jobs, artifact, content, base_sha=base_sha, **arguments)
-    else:
-        receipt = check_evidence(run, jobs, artifact, content, **arguments,
-                                 allow_prose=args.allow_prose, comparison=publication_changes)
+    receipt = check_evidence(run, jobs, artifact, content, **arguments,
+                             allow_prose=args.allow_prose, comparison=publication_changes)
     require_unchanged_run(client, repository, run)
     output = Path(".publication/verified-source.json")
     output.parent.mkdir(exist_ok=True)

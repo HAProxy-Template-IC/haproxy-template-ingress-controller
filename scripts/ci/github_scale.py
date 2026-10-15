@@ -30,7 +30,7 @@ def main():
     history = successful_job_metrics(
         api, repository, run_id,
         workflow=str(run["workflow_id"]), branch="main",
-        job_name=os.environ.get("SCALE_JOB_NAME", TREND.JOB_NAME),
+        job_name=os.environ["SCALE_JOB_NAME"],
         artifact_name="nightly-scale-metrics", metrics_name=TREND.METRICS_FILE,
         max_runs=TREND.MAX_RUNS, max_workflows=TREND.MAX_PIPELINES,
         events=("push", "workflow_dispatch"))

@@ -68,8 +68,8 @@ both images and the native amd64 and arm64 SPOA smoke tests.
 
 ## Release process
 
-Releases go through a pull request (PR) and the merge queue. After the merged
-commit passes canonical CI, the tagging workflow creates its missing release
+Releases go through a pull request (PR). After the merged commit passes canonical
+CI, the tagging workflow creates its missing release
 tag and dispatches publication.
 
 <a id="step-2-cut-a-release-branch"></a>
@@ -161,21 +161,21 @@ gh pr create --repo "$haptic_repo" --base main \
   --body "Release haptic v$release_version"
 ```
 
-Finish code review and required PR checks, then enter the merge queue with the
-reviewed commit:
+Finish code review, then merge the reviewed commit once the required PR checks
+pass:
 
 ```bash
 gh pr merge "release/v$release_version" --repo "$haptic_repo" \
-  --auto --match-head-commit "$(git rev-parse HEAD)"
+  --squash --auto --match-head-commit "$(git rev-parse HEAD)"
 ```
 
-The queue tests the combined tree before merging. Don't use `--admin` to bypass it.
+Don't use `--admin` to bypass the required checks.
 
 ### Automatic tag creation
 
 After the PR is merged, CI automatically:
 
-1. Runs full canonical CI; verified merge-queue evidence can replace repeated tests only after post-merge reuse is enabled
+1. Runs full canonical CI on the merged commit
 2. Verifies `VERSION`, `Chart.yaml` `version`, and `appVersion` agree
 3. Creates the annotated `v<version>` tag on the verified commit
 4. Dispatches `release.yml` with that tag and the canonical CI run ID
@@ -238,7 +238,7 @@ The fix lands on `main` first, or in parallel; the port is a separate PR.
 ### Step 1: Create the maintenance branch
 
 Branch from the last tag of the release line. Apply the same review, required CI,
-merge queue, and force-push protections as `main` before accepting PRs.
+and force-push protections as `main` before accepting PRs.
 
 ```bash
 read -r -p 'Maintenance line (major.minor): ' maintenance_line
@@ -297,7 +297,7 @@ gh pr create --repo "$haptic_repo" --base "maint/$maintenance_line" \
 
 ### Step 4: Merge and let CI tag
 
-Complete review and use the same merge-queue command as
+Complete review and use the same merge command as
 [Step 6](#step-6-open-and-merge-the-pr). Maintenance PRs run the same full matrix
 as `main`, including every supported HAProxy version and the conformance suites.
 Canonical post-merge CI authorizes `Tag verified releases`, with the same

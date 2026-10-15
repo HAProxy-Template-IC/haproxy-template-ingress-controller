@@ -22,7 +22,7 @@
 #   1. Review the commit — especially the promoted changelog section and the
 #      hand-curated artifacthub.io/changes annotation in Chart.yaml
 #   2. Push to a release branch and open a pull request
-#   3. Merge the pull request through the merge queue
+#   3. Merge the pull request once its required checks pass
 #   4. CI creates the v<version> tag and the release pipeline publishes
 #      binaries, container images, the Helm chart, and versioned docs
 
@@ -178,7 +178,7 @@ echo "     - update the hand-curated artifacthub.io/changes annotation in"
 echo "       charts/haptic/Chart.yaml (summary bullets for the new release)"
 echo "  2. Create release branch: git checkout -b release/v$VERSION"
 echo "  3. Push and open a pull request: git push -u origin release/v$VERSION"
-echo "  4. Merge the pull request through the merge queue"
+echo "  4. Merge the pull request once its required checks pass"
 echo ""
 echo "After merge, CI will automatically:"
 echo "  - Create tag v$VERSION (after the full post-merge pipeline passes)"

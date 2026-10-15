@@ -1,6 +1,6 @@
 # GitHub verification scheduling
 
-Every pull request, merge-queue group, and push to `main` or `maint/*` runs the
+Every pull request and push to `main` or `maint/*` runs the
 full matrix in `.github/workflows/ci-speed-proof.yml`; prose-only changes run
 eight common checks. No workflow runs on a schedule. Only the upstream Gateway
 API canary may fail; a missing, skipped, or cancelled job fails the verification

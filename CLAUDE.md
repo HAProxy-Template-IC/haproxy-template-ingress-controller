@@ -311,7 +311,7 @@ make check-all
 
 Follow [CI and merge verification](docs/agents/ci.md) before pushing, starting or
 retrying CI, or merging. Batch local fixes before pushing; every pull request runs
-the complete matrix. Merges go through the merge queue, never around it.
+the complete matrix. Merge only once the required `verified` check passes.
 
 ### GitHub CLI (gh) Commands
 
@@ -1086,7 +1086,7 @@ To prepare a release:
 
 1. **Curate `CHANGELOG.md` [Unreleased]** - Rewrite the accumulated entries into user-facing release notes (merge related entries, drop items that never shipped in a release); also update the hand-curated `artifacthub.io/changes` annotation in `charts/haptic/Chart.yaml`
 2. **Run `./scripts/release.sh <version>`** - Promotes `[Unreleased]` to the version section and updates every version-bearing file (VERSION, Chart.yaml, install examples) in one commit; the docs-site changelog page is generated from `CHANGELOG.md` at mkdocs build time and needs no release-time sync
-3. **Merge the release PR to main** - after the merge-queue and post-merge CI runs pass, `release-tag.yml` creates the `v<version>` tag, and the release workflow publishes binaries, images, the chart, and versioned docs
+3. **Merge the release PR to main** - after the pull request and post-merge CI runs pass, `release-tag.yml` creates the `v<version>` tag, and the release workflow publishes binaries, images, the chart, and versioned docs
 
 See `docs/site/docs/development/releasing.md` for the full process.
 
