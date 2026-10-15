@@ -101,7 +101,7 @@ class SnapshotPublicationTests(unittest.TestCase):
         self.assertEqual(workflow["on"]["workflow_run"], {"workflows": ["CI"], "types": ["completed"]})
         self.assertIn("workflow_dispatch", workflow["on"])
         gate = jobs["source"]["if"]
-        for condition in ("conclusion == 'success'", "event == 'push'", "head_branch == 'main'"):
+        for condition in ("head_repository.full_name == github.repository", "conclusion == 'success'", "event == 'push'", "head_branch == 'main'"):
             self.assertIn(condition, gate)
         self.assertEqual(jobs["images"]["if"], "needs.source.outputs.publish == 'true'")
         self.assertIn("profile == 'full'", jobs["source"]["outputs"]["publish"])
