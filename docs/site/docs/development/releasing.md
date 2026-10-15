@@ -44,27 +44,19 @@ haptic_repo=haproxy-haptic/HAPTIC
 
 ## Publish a main snapshot
 
-Ordinary `main` pipelines build pipeline-scoped test images but don't publish the multi-architecture `main-<sha>` controller, SPOA-hub, and chart snapshot.
+Every `main` commit whose canonical `CI` push run succeeds publishes a multi-architecture snapshot: controller images `main-<sha>-haproxy<series>`, the SPOA hub `main-<sha>`, Varnish `main-<sha>`, and chart `0.0.0-main.g<sha>`. The workflow checks every required job and the retained verification receipt, then publishes the exact verified commit. The controller and SPOA images build in parallel; the chart waits for both images and the native amd64 and arm64 SPOA smoke tests. A docs-only commit passes prose CI, which builds no images, so it publishes no snapshot, and a manual dispatch for such a run fails.
 
-1. Find the successful canonical `CI` run for the `main` commit you want to publish:
+After each publication, snapshots older than 180 days are deleted. A package version that also carries a release tag is never deleted.
 
-   ```bash
-   gh run list --repo "$haptic_repo" --workflow ci.yml --branch main \
-     --status success --json databaseId,headSha,event,url
-   ```
+To publish a snapshot for an earlier successful run again:
 
-2. Dispatch the snapshot workflow with that run ID:
-
-   ```bash
-   read -r -p 'Successful main CI run ID: ' verification_run
-   gh workflow run snapshot.yml --repo "$haptic_repo" --ref main \
-     -f verification_run="$verification_run"
-   ```
-
-The workflow checks every required job and the retained verification receipt,
-then publishes the exact verified commit. A prose-only run can't authorize a
-snapshot. The controller and SPOA images build in parallel; the chart waits for
-both images and the native amd64 and arm64 SPOA smoke tests.
+```bash
+gh run list --repo "$haptic_repo" --workflow ci.yml --branch main \
+  --status success --json databaseId,headSha,event,url
+read -r -p 'Successful main CI run ID: ' verification_run
+gh workflow run snapshot.yml --repo "$haptic_repo" --ref main \
+  -f verification_run="$verification_run"
+```
 
 ## Release process
 
