@@ -21,5 +21,5 @@ node --test docs/site/tests/playground-embed.mjs
 
 The browser suite uses the shared embed script and styles with a local frame
 fixture and the real playground shell. It checks viewport layout, keyboard navigation, edit preservation,
-solution comparison, input switching, load failures, and cleanup during page navigation. It
+solution comparison, input switching, load failures, output escaping, and cleanup during page navigation. It
 doesn't test template rendering; use a built playground bundle to check that.

@@ -766,6 +766,7 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     import { makeEditors, setSchemaBundle, haproxyTokens } from './editor.js';
     import { createMigrationAssetLoader } from './migration-assets.mjs';
     import { configMapSectionHTML, inlineMarkdownHTML } from './migration-report.mjs';
+    import { escapeHTML as esc } from './html.mjs';
     import { buildTryoutScript } from './tryout.js';
 
     const $ = (id) => document.getElementById(id);
@@ -888,7 +889,6 @@ cd playground-local &amp;&amp; python3 -m http.server 8080</pre>
     }
 
     /* ---------- syntax highlighting for the read-only output pane ---------- */
-    const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
     // hlHaproxy builds the output HTML from the SAME tokenizer the template editor
     // uses (editor.js haproxyTokens), so left and right highlight identically.
     function hlHaproxy(line) {

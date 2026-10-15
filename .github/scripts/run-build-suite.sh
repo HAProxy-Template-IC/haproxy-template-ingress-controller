@@ -48,7 +48,7 @@ case "$PILOT_SUITE" in
     wasm)
         scripts/build-playground.sh "$PWD/public/playground/dev" dev
         base=public/playground/dev
-        for file in index.html editor.js migration-assets.mjs migration-report.mjs playground.worker.js wasm_exec.js \
+        for file in index.html editor.js migration-assets.mjs migration-report.mjs html.mjs playground.worker.js wasm_exec.js \
             playground.wasm playground.wasm.br playground.wasm.gz schemas.json migration/presets.json vendor/codemirror.js; do
             test -s "$base/$file"
         done
