@@ -9,7 +9,7 @@ make test-agent-skill-package
 The search check builds a Material site with generated ADRs and verifies that
 Development pages remain readable without appearing in the user search index.
 
-Run the embedded-playground browser regressions:
+The embedded-playground browser regressions run in `make test-github-pages-browser` before every website publication. Run them locally:
 
 ```bash
 npm ci --prefix scripts/visual-qa
@@ -21,5 +21,5 @@ node --test docs/site/tests/playground-embed.mjs
 
 The browser suite uses the shared embed script and styles with a local frame
 fixture and the real playground shell. It checks viewport layout, keyboard navigation, edit preservation,
-solution comparison, input switching, load failures, and cleanup during page navigation. It
+solution comparison, input switching, load failures, output escaping, and cleanup during page navigation. It
 doesn't test template rendering; use a built playground bundle to check that.

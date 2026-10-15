@@ -35,12 +35,12 @@ document.addEventListener('keydown', event => {
 });
 </script></body></html>`;
 
-let server, browser, base, failFetch = false, frameLoads = 0, realShell = false;
+let server, browser, base, failFetch = false, frameLoads = 0, realShell = false, workerScript = 'self.onmessage = () => {};';
 before(async () => {
   const js = await readFile(new URL('../../shared/playground-embed.js', import.meta.url));
   const css = await readFile(new URL('../../shared/playground-embed.css', import.meta.url));
   const shellFiles = new Map();
-  for (const name of ['index.html', 'editor.js', 'migration-assets.mjs', 'migration-report.mjs', 'tryout.js', 'vendor/codemirror.js', 'highlight/config-highlight.bundle.js']) {
+  for (const name of ['index.html', 'editor.js', 'migration-assets.mjs', 'migration-report.mjs', 'html.mjs', 'tryout.js', 'starter.config.yaml', 'starter.resources.yaml', 'vendor/codemirror.js', 'highlight/config-highlight.bundle.js']) {
     shellFiles.set('/playground/dev/' + name, await readFile(new URL('../../../cmd/playground/web/' + name, import.meta.url)));
   }
   server = createServer((req, res) => {
@@ -50,7 +50,8 @@ before(async () => {
     else if (path.includes('/presets/')) { res.statusCode = failFetch ? 503 : 200; res.end('sample config'); }
     else if (path === '/playground/dev/') { frameLoads++; res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(realShell ? shellFiles.get('/playground/dev/index.html') : frame); }
     else if (shellFiles.has(path)) { res.setHeader('Content-Type', 'text/javascript'); res.end(shellFiles.get(path)); }
-    else if (path.endsWith('/playground.worker.js')) { res.setHeader('Content-Type', 'text/javascript'); res.end('self.onmessage = () => {};'); }
+    else if (path.endsWith('/schemas.json')) { res.setHeader('Content-Type', 'application/json'); res.end('{}'); }
+    else if (path.endsWith('/playground.worker.js')) { res.setHeader('Content-Type', 'text/javascript'); res.end(workerScript); }
     else if (path === '/resources') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(fixture.replace('data-scenario="ingress"', 'data-scenario="ingress" data-input="resources"')); }
     else if (path === '/') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end(fixture); }
     else { res.statusCode = 404; res.end(); }
@@ -211,4 +212,36 @@ test('resource examples show one input pane and switch to templates', async () =
     await shell.getByRole('button', { name:'Templates', exact:true }).click();
     assert.equal(await templates.isVisible(), true);
   } finally { realShell = false; await page.close(); }
+});
+
+test('rendered names stay inert in output attributes', async () => {
+  const hostile = 'x" data-injected="1"><img src=x onerror="window.injected=1">';
+  const res = {
+    haproxyCfg: 'global',
+    provenance: { 'haproxy.cfg': [[{ n:hostile, l:1 }]] },
+    bucketReport: [{ kind:hostile, namespace:hostile, name:hostile, buckets:[hostile] }],
+    migration: { totalIngresses:1, checkedAnnotations:1, counts:{ different:1 }, sources:[{ source:hostile,
+      ingresses:[{ namespace:hostile, name:hostile, class:hostile, findings:[{ annotation:hostile, status:'different' }] }] }] },
+  };
+  workerScript = `self.postMessage({ type:'ready' });
+self.onmessage = (e) => self.postMessage({ type:'result', seq:e.data.seq, res:${JSON.stringify(res)} });`;
+  const page = await browser.newPage({ viewport:{ width:1440, height:900 } });
+  try {
+    realShell = true;
+    await page.addInitScript(() => localStorage.setItem('haptic-pg-help-seen', '1'));
+    await page.goto(base + '/playground/dev/');
+    const assertInert = async (selector, attrs) => {
+      const el = page.locator(selector).first();
+      await el.waitFor({ state:'attached' });
+      for (const [attr, want] of Object.entries(attrs)) assert.equal(await el.getAttribute(attr), want, `${selector} ${attr}`);
+      assert.equal(await page.locator('[data-injected], img[onerror]').count(), 0, selector);
+    };
+    await page.locator('.ln[data-ln="0"]').click();
+    await assertInert('.prov-crumb', { title:`jump to ${hostile} (line 1)` });
+    await page.locator('#tab-resources').click();
+    await assertInert('.insp-o.jump', { 'data-kind':hostile, 'data-ns':hostile, 'data-rname':hostile, 'data-bucket':hostile });
+    await page.locator('#tab-migration').click();
+    await assertInert('.mig-row.jump', { 'data-anno':hostile, 'data-ns':hostile, 'data-name':hostile });
+    assert.equal(await page.evaluate(() => window.injected), undefined);
+  } finally { realShell = false; workerScript = 'self.onmessage = () => {};'; await page.close(); }
 });

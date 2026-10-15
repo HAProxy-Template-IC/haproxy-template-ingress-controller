@@ -1,6 +1,6 @@
-const DOCS_BASE = 'https://haproxy-haptic.org/docs/';
+import { escapeHTML } from './html.mjs';
 
-const escapeHTML = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const DOCS_BASE = 'https://haproxy-haptic.org/docs/';
 
 // Coverage links are docs-root-relative Markdown paths (libraries/base.md#x).
 function docsURL(href) {
