@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 )
 
 // TestDefaultsConsistency_DebounceImmediateShared pins the equality of the

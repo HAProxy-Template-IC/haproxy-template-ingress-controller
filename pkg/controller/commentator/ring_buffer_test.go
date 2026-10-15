@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	ctlevents "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	ctlevents "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
 )
 
 // longWindow is a time window large enough to cover every event added in

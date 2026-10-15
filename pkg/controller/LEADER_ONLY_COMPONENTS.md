@@ -80,7 +80,7 @@ All-replica components that maintain state (config, validation results, endpoint
 **Implementation pattern:**
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/leadership"
 
 type Component struct {
     // ... existing fields ...

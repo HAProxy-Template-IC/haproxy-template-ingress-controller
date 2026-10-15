@@ -40,8 +40,8 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	pb "sigs.k8s.io/gateway-api-conformance-images/echo-basic/grpcechoserver"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/grpcclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/grpcclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 func TestGatewayRoutePolicyAuthentication(t *testing.T) {

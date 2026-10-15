@@ -40,8 +40,8 @@ Use these instead of inline `time.Second / 2` literals — when CI runners get s
 import (
     "testing"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
 )
 
 func TestMyComponent_Foo(t *testing.T) {

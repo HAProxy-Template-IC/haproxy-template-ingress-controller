@@ -22,12 +22,12 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	clientsetscheme "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/scheme"
+	"github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	clientsetscheme "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned/scheme"
 
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"

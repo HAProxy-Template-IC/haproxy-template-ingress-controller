@@ -24,9 +24,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores/storetest"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores/storetest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 type derivedTestMetadata struct {

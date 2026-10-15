@@ -14,8 +14,8 @@ The renderer is a library, not an event-driven component. See `docs/adr/0001-ren
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/renderer"
 )
 
 svc := renderer.NewRenderService(&renderer.RenderServiceConfig{

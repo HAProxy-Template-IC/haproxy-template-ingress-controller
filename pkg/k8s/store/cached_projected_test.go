@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/fake"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
 )
 
 // newProjectedTestIndexer builds a real indexer so the live-GET → Process path

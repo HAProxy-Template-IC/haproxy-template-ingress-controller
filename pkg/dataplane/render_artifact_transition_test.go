@@ -17,9 +17,9 @@ package dataplane
 import (
 	"testing"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
 )
 
 func TestBuildAuxiliaryFileTransitionMatchesFullSnapshot(t *testing.T) {

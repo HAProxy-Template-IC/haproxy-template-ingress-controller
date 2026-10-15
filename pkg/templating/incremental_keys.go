@@ -19,7 +19,7 @@ import (
 	"reflect"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 func incrementalKeyExtractor(name string, key any) func(reflect.Value) (any, error) {

@@ -17,7 +17,7 @@ package templating
 import (
 	"reflect"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/typegen"
 )
 
 // Test helpers that build the typed `resources` Scriggo declaration and the

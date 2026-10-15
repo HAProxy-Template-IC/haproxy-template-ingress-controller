@@ -28,14 +28,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/conversion"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/typebootstrap"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 var (

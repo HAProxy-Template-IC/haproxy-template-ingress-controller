@@ -18,7 +18,7 @@ import (
 	"hash/maphash"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
 )
 
 const rootShardCount = 64

@@ -19,10 +19,10 @@ import (
 	"reflect"
 	"testing"
 
+	k8sstore "github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
 )
 
 type snapshotProjectionEmbedded struct {

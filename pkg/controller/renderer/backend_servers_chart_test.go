@@ -30,12 +30,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/helpers"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/typebootstrap"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	k8sstore "github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 const backendServersExpected = `[{"address":"10.0.0.1","comment":"Pod: pod-a","disabled":true,"guid":"srv:be-main:svc-pod-a","name":"svc-pod-a","port":8080,"weight":25},{"address":"10.0.0.2","comment":"Pod: pod-b","guid":"srv:be-main:svc-pod-b","name":"svc-pod-b","port":8080,"weight":25}]`

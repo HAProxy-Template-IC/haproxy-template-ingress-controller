@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	purehttpstore "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 // getCachedContent encodes the validation-vs-production content

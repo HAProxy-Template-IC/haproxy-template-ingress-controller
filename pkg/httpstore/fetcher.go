@@ -135,7 +135,7 @@ func (s *HTTPStore) doFetch(
 	}
 
 	// Add user agent
-	req.Header.Set("User-Agent", "gitlab.com/haproxy-haptic/haptic/1.0")
+	req.Header.Set("User-Agent", "github.com/haproxy-haptic/HAPTIC/1.0")
 
 	// Perform request
 	resp, err := s.httpClient.Do(req)

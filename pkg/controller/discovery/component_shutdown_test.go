@@ -19,10 +19,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
 )
 
 // Discovery is an all-replica component recreated every controller iteration; a

@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 const metadataObjectKey = "metadata"

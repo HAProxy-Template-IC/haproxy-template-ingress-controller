@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 const certManagerNamespace = "cert-manager"

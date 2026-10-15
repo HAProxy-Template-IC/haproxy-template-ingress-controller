@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/leadership"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timers"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/leadership"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/timers"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validator"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 const (

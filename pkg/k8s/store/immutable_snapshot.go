@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/typegen"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 // ImmutableSnapshotProjection exposes only detached projections of a built-in snapshot read.

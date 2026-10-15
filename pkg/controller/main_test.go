@@ -18,7 +18,7 @@ import (
 	"os"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/dataplanetest"
 )
 
 func TestMain(m *testing.M) {

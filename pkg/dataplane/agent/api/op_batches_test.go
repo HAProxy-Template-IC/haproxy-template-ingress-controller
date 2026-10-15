@@ -19,7 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 func TestManifestOperationBudgets(t *testing.T) {

@@ -23,11 +23,11 @@ import (
 	"strings"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer/internal/resultauthority"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/renderer/internal/resultauthority"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 type incrementalContribution struct {

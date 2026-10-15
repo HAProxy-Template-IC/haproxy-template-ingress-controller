@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/validators"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/validators"
 )
 
 // syntaxParser is a package-level singleton parser for syntax validation.

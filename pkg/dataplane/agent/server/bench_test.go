@@ -21,8 +21,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // BenchmarkMapOnlyApply measures the agent's overhead for the class that has

@@ -24,7 +24,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	purehttpstore "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 type transactionState uint8

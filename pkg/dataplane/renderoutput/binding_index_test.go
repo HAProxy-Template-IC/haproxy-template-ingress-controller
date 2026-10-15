@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
 )
 
 func TestOutputBindingTreePathCopiesInsertionsAndDeletions(t *testing.T) {

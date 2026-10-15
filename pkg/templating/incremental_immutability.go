@@ -23,9 +23,9 @@ import (
 	"slices"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/scriggo"
-	"gitlab.com/haproxy-haptic/scriggo/builtin"
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo"
+	"github.com/haproxy-haptic/scriggo/builtin"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 type immutableStorageContextKey struct{}

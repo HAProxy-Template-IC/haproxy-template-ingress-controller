@@ -27,13 +27,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // scriptedChecker answers each config with the verdict the test scripted for

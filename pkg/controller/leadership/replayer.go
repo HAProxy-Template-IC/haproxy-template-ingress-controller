@@ -19,7 +19,7 @@ package leadership
 import (
 	"sync"
 
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // StateReplayer caches the latest event of type T and re-publishes it

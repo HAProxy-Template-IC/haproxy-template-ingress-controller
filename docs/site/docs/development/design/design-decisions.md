@@ -19,7 +19,7 @@ for auxiliary-file validation.
 
 ## Template engine selection
 
-**Decision**: Use Scriggo (consumed via the `gitlab.com/haproxy-haptic/scriggo`
+**Decision**: Use Scriggo (consumed via the `github.com/haproxy-haptic/scriggo`
 fork) as the template engine.
 
 Scriggo provides Go-like control flow, macros, and template inheritance in a

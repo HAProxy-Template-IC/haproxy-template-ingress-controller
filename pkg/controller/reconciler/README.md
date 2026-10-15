@@ -11,7 +11,7 @@ Entry point to the reconciliation pipeline. Two components:
 import (
     "context"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/reconciler"
 )
 
 // No configuration — the reconciler fires immediately on every event.

@@ -23,8 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // panickyProcessor records received events and optionally panics on the first

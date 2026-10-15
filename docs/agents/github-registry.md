@@ -14,7 +14,7 @@ Releases up to 0.5.0 were copied from GitLab's registry by digest, with their
 platform manifests, layers, signatures, and SBOMs (GitHub run 38498045175). They
 keep their original GitLab signing identities; later releases carry the GitHub
 release workflow's identity. The SPOA hub base image still comes from
-`registry.gitlab.com/haproxy-haptic/haproxy-spoa-hub`, a separate project.
+`ghcr.io/haproxy-haptic/haproxy-spoa-hub`, a separate project.
 
 ## CI toolchains
 

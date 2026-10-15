@@ -21,8 +21,8 @@ import (
 	"slices"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/typegen"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // perResourceStoreTypeCache memoises BuildPerResourceStoreType by its sole

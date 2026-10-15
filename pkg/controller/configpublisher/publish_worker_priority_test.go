@@ -20,9 +20,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
-	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
-	k8spublisher "gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/throttle"
+	crdclientfake "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned/fake"
+	k8spublisher "github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )

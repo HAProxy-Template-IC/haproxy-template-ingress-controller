@@ -14,7 +14,7 @@ It runs on **every replica** (subscribes in the constructor like other all-repli
 import (
     "k8s.io/client-go/dynamic"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/statusapplier"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/statusapplier"
 )
 
 applier := statusapplier.New(&statusapplier.Config{

@@ -26,9 +26,9 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
-	"gitlab.com/haproxy-haptic/haptic/tests/tunnel"
+	"github.com/haproxy-haptic/HAPTIC/tests/kubeexec"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/tunnel"
 )
 
 // ServiceForward owns a supervised loopback tunnel. Ports includes every mapping;

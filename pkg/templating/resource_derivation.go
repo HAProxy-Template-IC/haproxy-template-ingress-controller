@@ -17,7 +17,7 @@ package templating
 import (
 	"fmt"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 // ResourceDeriverContextName is the render-context key for ResourceDeriver.

@@ -24,7 +24,7 @@ import (
 	"strings"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // ErrDerivedResourceStale means a transformation no longer matches its exact source value.

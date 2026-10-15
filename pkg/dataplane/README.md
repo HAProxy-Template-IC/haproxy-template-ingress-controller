@@ -4,7 +4,7 @@ Pure libraries for the path between a render and a running HAProxy: the wire
 contract with the HAPTIC agent, the plan a render declares about itself, the
 rules that decide what one pod has to do, and the `haproxy -c` runner.
 
-Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative
+Module path: `github.com/haproxy-haptic/HAPTIC`. Source is authoritative
 (`go doc ./pkg/dataplane/...`); this README is a short map.
 
 ## What the packages do

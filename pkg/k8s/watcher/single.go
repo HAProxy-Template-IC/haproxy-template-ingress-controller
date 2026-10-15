@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

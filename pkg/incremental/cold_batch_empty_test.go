@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
 )
 
 // An empty batch succeeds and does NOT run the callback. A caller that only

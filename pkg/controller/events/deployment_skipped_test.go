@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func TestNewDeploymentSkippedEvent_StoresAllFields(t *testing.T) {

@@ -49,17 +49,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/conversion"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/dataplanetest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/deployplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // planMismatches returns one line per disagreement between the plan and the

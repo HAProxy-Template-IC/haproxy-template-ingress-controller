@@ -24,12 +24,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/planblob"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/conversion"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/deployplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/planblob"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 const (

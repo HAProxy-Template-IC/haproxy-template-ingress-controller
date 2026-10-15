@@ -20,7 +20,7 @@ import (
 	"maps"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 type storeFence struct {

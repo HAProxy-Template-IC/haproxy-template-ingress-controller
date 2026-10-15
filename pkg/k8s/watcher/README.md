@@ -17,9 +17,9 @@ Both types take their config via the structs in `pkg/k8s/types` so they can be w
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/watcher"
 )
 
 c, _ := client.New(client.Config{})

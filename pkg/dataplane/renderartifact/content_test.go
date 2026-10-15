@@ -21,9 +21,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
 )
 
 func TestContentRepresentations(t *testing.T) {

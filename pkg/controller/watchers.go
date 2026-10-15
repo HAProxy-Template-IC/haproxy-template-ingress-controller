@@ -21,14 +21,14 @@ import (
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/indextracker"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/indextracker"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/resourcewatcher"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/watcher"
 )
 
 const metadataNameIndex = "metadata.name"

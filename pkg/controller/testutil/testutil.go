@@ -17,7 +17,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // Timing constants to replace magic numbers in tests.

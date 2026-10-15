@@ -16,7 +16,7 @@ Leadership handover replays the real validation result, including its source gen
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/configchange"
 
 configChangeCh := make(chan *configchange.ReloadRequest, 1)
 

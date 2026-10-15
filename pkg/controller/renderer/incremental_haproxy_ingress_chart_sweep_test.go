@@ -29,9 +29,9 @@ import (
 	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 const haproxyIngressSweepFailure = `{%- if tostring(extraContext | dig("failAfterAuth") | fallback(false)) == "true" -%}{{ fail("forced HAProxy Ingress root failure") }}{%- end -%}`

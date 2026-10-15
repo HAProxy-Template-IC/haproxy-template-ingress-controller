@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
 )
 
 // multiVersionMapper serves several versions of one kind, the way a cluster

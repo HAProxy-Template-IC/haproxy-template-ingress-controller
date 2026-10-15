@@ -28,11 +28,11 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/logging"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 const (

@@ -8,10 +8,10 @@ import (
 	"slices"
 	"time"
 
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // JSONPathValidator validates JSONPath expressions in configuration.

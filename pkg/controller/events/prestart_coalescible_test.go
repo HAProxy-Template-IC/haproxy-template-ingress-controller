@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 )
 
 func TestResourceIndexUpdatedEvent_PreStartCoalesceKeyIsPerKind(t *testing.T) {

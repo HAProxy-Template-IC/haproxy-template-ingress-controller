@@ -24,12 +24,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 )
 
 // createTestComponent creates a new Component for testing. TestMain installs a

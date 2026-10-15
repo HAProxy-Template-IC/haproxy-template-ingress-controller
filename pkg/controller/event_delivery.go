@@ -20,8 +20,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 type criticalEventDeliveryError struct {

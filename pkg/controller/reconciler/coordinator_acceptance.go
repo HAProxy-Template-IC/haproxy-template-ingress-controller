@@ -23,11 +23,11 @@ import (
 	"time"
 	"weak"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pipeline"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 // HTTPContentAcceptance is the HTTP store's reversible acceptance (ADR-0030).

@@ -23,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/typebootstrap"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // configWithValidationTest builds a minimal valid config carrying a single

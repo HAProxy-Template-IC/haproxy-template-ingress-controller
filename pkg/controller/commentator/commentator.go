@@ -4,9 +4,9 @@ import (
 	"context"
 	"log/slog"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/buffers"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 const (

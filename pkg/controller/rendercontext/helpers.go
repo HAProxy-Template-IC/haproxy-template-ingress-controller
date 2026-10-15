@@ -15,10 +15,10 @@
 package rendercontext
 
 import (
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // SeparateHAProxyPodStore separates the haproxy-pods store from resource stores.

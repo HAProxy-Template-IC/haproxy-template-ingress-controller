@@ -22,8 +22,8 @@ before invoking the same check.
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
-    "gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/validation"
+    "github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 )
 
 svc := validation.NewValidationService(&validation.ValidationServiceConfig{

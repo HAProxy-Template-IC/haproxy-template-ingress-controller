@@ -15,7 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/validators"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/validators"
 )
 
 func TestGetValidatorForVersion(t *testing.T) {

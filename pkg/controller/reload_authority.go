@@ -17,7 +17,7 @@ package controller
 import (
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/configchange"
 )
 
 type iterationReloadAuthority struct {

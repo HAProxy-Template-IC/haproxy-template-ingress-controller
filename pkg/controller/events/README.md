@@ -37,8 +37,8 @@ One file per category. The full list as of writing, with representative types:
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-    busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+    busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 bus.Publish(events.NewConfigParsedEvent(cfg, templateConfig, version, secretVersion))

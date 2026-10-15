@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/scriggo"
+	"github.com/haproxy-haptic/scriggo"
 )
 
 var _ PostProcessBatcher = (*ScriggoEngine)(nil)

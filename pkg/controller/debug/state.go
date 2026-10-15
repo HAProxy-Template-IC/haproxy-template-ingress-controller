@@ -28,8 +28,8 @@ package debug
 import (
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 )
 
 // StateProvider provides access to controller internal state.

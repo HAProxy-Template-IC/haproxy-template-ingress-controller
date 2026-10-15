@@ -27,10 +27,10 @@ import (
 	"strconv"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/logging"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // Verify StoreWrapper implements templating.ResourceStore at compile time.

@@ -18,7 +18,7 @@ The component does not subscribe to any events. It does **not** run the chart's 
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/dryrunvalidator"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/dryrunvalidator"
 )
 
 component, err := dryrunvalidator.New(&dryrunvalidator.ComponentConfig{

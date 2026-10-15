@@ -8,8 +8,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic/fake"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 var (

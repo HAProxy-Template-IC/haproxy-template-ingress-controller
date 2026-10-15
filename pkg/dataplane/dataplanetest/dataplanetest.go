@@ -37,7 +37,7 @@ import (
 	"context"
 	"errors"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 )
 
 // DefaultFakeVersion is the HAProxy version the fake reports by default.

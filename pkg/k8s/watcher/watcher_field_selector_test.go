@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 )
 
 // matchesFieldSelector is the gate that decides whether a watched

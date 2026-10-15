@@ -13,8 +13,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	api "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	api "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 var admissionWarning = regexp.MustCompile(`(?m)^Warning:`)

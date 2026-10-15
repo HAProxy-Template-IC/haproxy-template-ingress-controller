@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 )
 
 var mapConverterPrefixes = [...]string{

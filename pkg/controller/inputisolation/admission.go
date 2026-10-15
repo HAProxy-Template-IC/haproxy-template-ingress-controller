@@ -17,8 +17,8 @@ package inputisolation
 import (
 	"context"
 
-	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	k8sstore "github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 type rejectedIdentity struct {

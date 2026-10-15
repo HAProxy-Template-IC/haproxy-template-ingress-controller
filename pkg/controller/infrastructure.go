@@ -22,11 +22,11 @@ import (
 	"strings"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/reconciler"
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
-	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/debug"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/reconciler"
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/lifecycle"
 )
 
 type eventSourceDelegate struct {

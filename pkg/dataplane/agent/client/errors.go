@@ -22,7 +22,7 @@ import (
 	"strings"
 	"syscall"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 // maxErrorBodyBytes bounds what an error carries into a log line or an Event.

@@ -20,9 +20,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 func TestDeployerStandbyDoesNotBufferEventsAcrossLeadershipTerms(t *testing.T) {

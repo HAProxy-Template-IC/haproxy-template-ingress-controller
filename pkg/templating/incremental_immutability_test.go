@@ -23,7 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/scriggo/builtin"
+	"github.com/haproxy-haptic/scriggo/builtin"
 )
 
 func TestImmutableCertificateSliceIdentityBindsExactHeader(t *testing.T) {

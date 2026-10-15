@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // with all four validators (basic, template, jsonpath, validationtests) running concurrently.

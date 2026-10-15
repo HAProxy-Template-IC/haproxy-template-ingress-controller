@@ -16,7 +16,7 @@ Two entry points:
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/conversion"
 
 cfg, crd, err := conversion.ParseCRD(unstructuredResource)
 if err != nil {

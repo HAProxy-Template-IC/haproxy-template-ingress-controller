@@ -22,13 +22,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/agenttest"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/agenttest"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 )
 
 // admissionFixture wires a component against a pod store holding one pod whose

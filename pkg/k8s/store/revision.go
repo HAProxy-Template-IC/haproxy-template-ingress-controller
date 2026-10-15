@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 const defaultRevisionJournalCapacity = 4096

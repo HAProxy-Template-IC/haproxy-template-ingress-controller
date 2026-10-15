@@ -22,7 +22,7 @@ import (
 	"slices"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
 )
 
 type incrementalCarrierPlan struct {

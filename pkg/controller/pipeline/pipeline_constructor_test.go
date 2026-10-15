@@ -13,17 +13,17 @@ import (
 	"log/slog"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/renderer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validation"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // pipeline.New has two intentional panics: nil Renderer and nil Validator.

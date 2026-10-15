@@ -27,10 +27,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/typegen"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/typebootstrap"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/typegen"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // wrapSliceForTest converts []map[string]any items into a typed []*T

@@ -12,9 +12,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	k8sstore "github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 type auditResourceMetadata struct {

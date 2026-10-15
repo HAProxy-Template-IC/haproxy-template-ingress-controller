@@ -21,8 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/typebootstrap"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 // TestBuildAdditionalDeclarations_WithResult covers the happy path

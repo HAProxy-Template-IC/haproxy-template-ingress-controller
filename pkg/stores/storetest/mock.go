@@ -1,7 +1,7 @@
 // Package storetest provides shared mock implementations of stores.Store for testing.
 package storetest
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/stores"
+import "github.com/haproxy-haptic/HAPTIC/pkg/stores"
 
 // MockStore is a configurable mock implementation of stores.Store for testing.
 // Configure behavior by setting fields before use:

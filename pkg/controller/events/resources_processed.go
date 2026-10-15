@@ -15,8 +15,8 @@
 package events
 
 import (
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // ResourcesProcessedEvent acknowledges handling an occurrence, not successful application.

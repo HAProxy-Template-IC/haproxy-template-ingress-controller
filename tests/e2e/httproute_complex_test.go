@@ -23,7 +23,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 // TestHTTPRoutePrecedence covers test_httproute_precedence: an HTTPRoute

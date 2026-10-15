@@ -23,8 +23,8 @@ import (
 	"slices"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/scriggo"
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 // IncrementalBindingPlannerExecutor evaluates a configured dynamic binding planner.

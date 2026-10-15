@@ -8,8 +8,8 @@ Like its sibling [`configloader`](../configloader/), it's built on the `pkg/cont
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/credentialsloader"
-    "gitlab.com/haproxy-haptic/haptic/pkg/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/credentialsloader"
+    "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 loader := credentialsloader.NewCredentialsLoaderComponent(bus, logger)

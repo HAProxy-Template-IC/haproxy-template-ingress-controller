@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kubeexec"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 var pendingErrors = []*regexp.Regexp{

@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/orderedset"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental/internal/orderedset"
 )
 
 func TestReverseSetEditsRejectDuplicateTransitionsAndCancelExactly(t *testing.T) {

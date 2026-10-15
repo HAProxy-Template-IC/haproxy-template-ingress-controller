@@ -26,9 +26,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/haproxytest"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/server"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/haproxytest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/server"
 )
 
 func drainOverSocket(t *testing.T, socket string) server.DrainResult {

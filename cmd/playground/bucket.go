@@ -26,9 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
 )
 
 // parseResources turns pasted example resources into the fixtures shape

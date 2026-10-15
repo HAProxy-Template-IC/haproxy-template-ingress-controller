@@ -19,7 +19,7 @@ package e2e
 import (
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 // TestIngressAppRoot covers haproxy-ingress.github.io/app-root and the

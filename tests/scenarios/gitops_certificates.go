@@ -14,7 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
+	"github.com/haproxy-haptic/HAPTIC/tests/fixtures"
 )
 
 func (g *gitops) externalCertificates(ctx context.Context) error {

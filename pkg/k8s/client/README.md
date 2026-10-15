@@ -9,7 +9,7 @@ Watchers and resource loaders need both a typed `kubernetes.Interface` (for buil
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
+import "github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
 
 // In-cluster (the production path)
 c, err := client.New(client.Config{})

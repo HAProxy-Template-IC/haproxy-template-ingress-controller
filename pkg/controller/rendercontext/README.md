@@ -11,7 +11,7 @@ The builder also produces a `*FileRegistry` (templates can register dynamically 
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 
 builder := rendercontext.NewBuilder(
     ctx,

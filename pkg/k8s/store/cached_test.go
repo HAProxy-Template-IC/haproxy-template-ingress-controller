@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

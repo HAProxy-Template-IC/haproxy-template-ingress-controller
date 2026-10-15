@@ -23,7 +23,7 @@ import (
 	"strings"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 // renderContextKey is the context key for storing the render context (globals).

@@ -14,9 +14,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/traffic"
-	"gitlab.com/haproxy-haptic/haptic/tests/tunnel"
+	"github.com/haproxy-haptic/HAPTIC/tests/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/traffic"
+	"github.com/haproxy-haptic/HAPTIC/tests/tunnel"
 )
 
 func (s *Session) UpgradeTraffic(ctx context.Context, phase string) error {

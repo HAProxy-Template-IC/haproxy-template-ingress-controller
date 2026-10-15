@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func TestNginxRewriteTargetCaptureReplacementPreservesRegexpBytes(t *testing.T) {

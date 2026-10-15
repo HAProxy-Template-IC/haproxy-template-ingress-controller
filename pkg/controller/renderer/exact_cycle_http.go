@@ -20,9 +20,9 @@ import (
 	"slices"
 	"strings"
 
-	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
+	controllerhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
 )
 
 type exactCycleHTTPObservations struct {

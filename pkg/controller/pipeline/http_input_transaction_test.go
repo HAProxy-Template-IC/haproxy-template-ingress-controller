@@ -27,15 +27,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/dataplanetest"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	controllerhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/renderer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validation"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/dataplanetest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func TestInitialHTTPInputCommitsOnlyAfterFullPipelineValidation(t *testing.T) {

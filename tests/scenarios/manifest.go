@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 const maxManifestBytes = 32 << 20

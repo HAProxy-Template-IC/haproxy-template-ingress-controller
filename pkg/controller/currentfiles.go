@@ -20,10 +20,10 @@ import (
 	"maps"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderoutput"
 )
 
 // currentFilesAuthority owns the accepted auxiliary output for one leader term.

@@ -34,7 +34,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 func fixtureCommand(t *testing.T, mode string) *Command {

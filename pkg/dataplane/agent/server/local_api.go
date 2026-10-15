@@ -24,7 +24,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 func (s *Server) serveAdmin(ctx context.Context) error {

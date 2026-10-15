@@ -16,8 +16,8 @@ This package provides two presets covering every controller subscription:
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
-    busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/buffers"
+    busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 eventChan := bus.Subscribe("my-component", buffers.Critical)

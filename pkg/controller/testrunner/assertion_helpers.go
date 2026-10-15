@@ -19,8 +19,8 @@ import (
 	"path"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 )
 
 // targetPrefixes are the target forms that name one artefact of the render. A

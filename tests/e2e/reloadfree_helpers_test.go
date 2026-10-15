@@ -29,8 +29,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/e2e-framework/klient"
 
-	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	hapticclient "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // reloadFreeRespHeader is the response header the reload-free suites set on

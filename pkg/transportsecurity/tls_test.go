@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity/tlstest"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity/tlstest"
 )
 
 func securedServer(t *testing.T, source *Source) *httptest.Server {

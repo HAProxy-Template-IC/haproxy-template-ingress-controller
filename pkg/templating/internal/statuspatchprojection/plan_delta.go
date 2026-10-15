@@ -20,7 +20,7 @@ import (
 	"slices"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/persistenttree"
+	"github.com/haproxy-haptic/HAPTIC/pkg/persistenttree"
 )
 
 // PlanPatch locates an immutable patch in the plan's full replay order.

@@ -17,7 +17,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity/tlstest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity/tlstest"
 )
 
 func TestExplicitEndpointPreservesSNIAndVerifiesCertificate(t *testing.T) {

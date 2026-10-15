@@ -21,12 +21,12 @@ import (
 	"slices"
 	"time"
 
-	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	controllerhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // errExactCycleUnavailable reports that exact-cycle state cannot be captured

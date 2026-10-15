@@ -21,7 +21,7 @@ import (
 	"maps"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // Output formats the commands that print one answer accept.

@@ -4,7 +4,7 @@ A focused HTTPS server for [Kubernetes validating admission webhooks](https://ku
 
 The package intentionally does *not* handle certificate *provisioning* — issuance, the Secret, the CA bundle, or `ValidatingWebhookConfiguration` management — those are the controller's and Helm chart's concern (the chart provisions the Secret plus `validatingwebhookconfiguration.yaml`). It *does* serve and hot-reload the mounted cert files it's pointed at: when `ServerConfig.CertDir` is set, the server re-reads `tls.crt`/`tls.key` from that directory on content change, so a cert-manager renewal is picked up without a restart. Keeping this library narrow means it can be reused by any controller that already has a cert pipeline.
 
-Module path: `gitlab.com/haproxy-haptic/haptic`. Source is authoritative (`go doc ./pkg/webhook`); this README is a short map.
+Module path: `github.com/haproxy-haptic/HAPTIC`. Source is authoritative (`go doc ./pkg/webhook`); this README is a short map.
 
 ## Minimal Example
 
@@ -13,7 +13,7 @@ import (
     "context"
     "log"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
+    "github.com/haproxy-haptic/HAPTIC/pkg/webhook"
 )
 
 func main() {

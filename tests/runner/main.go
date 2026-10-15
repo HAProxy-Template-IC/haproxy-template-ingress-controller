@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
-	"gitlab.com/haproxy-haptic/haptic/tests/scenarios"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/scenarios"
 )
 
 const defaultRelease = "haptic"

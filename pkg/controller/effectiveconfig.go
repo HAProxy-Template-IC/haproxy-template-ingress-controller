@@ -14,18 +14,18 @@ import (
 	"log/slog"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/configchange"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/crdwatch"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/configchange"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/crdwatch"
 
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
 )
 
 // effectiveResolutionTimeout bounds one resolution's schema probes (the

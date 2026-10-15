@@ -19,8 +19,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/deployplan"
 )
 
 // An agent reports the plan it holds, which is not always the one the apply

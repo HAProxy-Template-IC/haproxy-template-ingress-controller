@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 // DockerTimeout bounds one docker invocation, including a build.

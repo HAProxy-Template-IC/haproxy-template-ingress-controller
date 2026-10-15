@@ -26,7 +26,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/e2ecluster"
 )
 
 const stagedControllerManifestEnv = "HAPTIC_E2E_STAGED_CONTROLLER_MANIFEST"

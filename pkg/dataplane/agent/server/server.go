@@ -34,10 +34,10 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/cli"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/files"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/cli"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/files"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity"
 )
 
 // Timeouts of the HTTP endpoint. The read timeout has to cover a full config

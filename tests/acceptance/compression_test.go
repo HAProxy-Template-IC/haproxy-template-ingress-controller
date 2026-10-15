@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 	"sigs.k8s.io/e2e-framework/pkg/types"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
+	"github.com/haproxy-haptic/HAPTIC/pkg/compression"
 )
 
 // haproxyCfgGVR returns the GroupVersionResource for HAProxyCfg.

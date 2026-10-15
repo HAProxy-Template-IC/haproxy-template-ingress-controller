@@ -33,9 +33,9 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
-	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	hapticclient "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // The input gate rejects corrupt certificates before agents receive them.

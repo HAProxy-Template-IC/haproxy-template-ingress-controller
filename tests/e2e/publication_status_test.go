@@ -26,10 +26,10 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
-	v1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	v1alpha1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
+	hapticclient "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 )
 
 func TestPublicationStatusConcurrentWriters(t *testing.T) {

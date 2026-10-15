@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"os"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/schemafetcher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
 )
 
 type entry struct {

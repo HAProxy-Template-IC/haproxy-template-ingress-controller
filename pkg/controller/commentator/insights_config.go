@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validator"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validator"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // configInsight handles ConfigParsed, ConfigValidationRequest, ConfigValidationResponse,

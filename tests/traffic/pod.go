@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
-	"gitlab.com/haproxy-haptic/haptic/tests/tunnel"
+	"github.com/haproxy-haptic/HAPTIC/tests/kubeexec"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/tunnel"
 )
 
 type PodProbe struct {

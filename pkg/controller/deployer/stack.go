@@ -17,11 +17,11 @@ package deployer
 import (
 	"log/slog"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity"
 )
 
 // AckedPlanSink receives the plan the fleet confirmed it is running. The

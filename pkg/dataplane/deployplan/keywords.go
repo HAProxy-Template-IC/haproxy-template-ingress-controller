@@ -19,8 +19,8 @@ import (
 	"slices"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // Keywords the composer reasons about by name.

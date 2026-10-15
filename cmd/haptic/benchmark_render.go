@@ -21,16 +21,16 @@ import (
 	"reflect"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/helpers"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testrunner"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/typebootstrap"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/helpers"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/renderer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testrunner"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/typebootstrap"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // compileTemplatesForBenchmark compiles templates with optional profiling. It

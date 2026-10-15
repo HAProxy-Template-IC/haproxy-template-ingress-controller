@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
 )
 
 func TestExactValueHandleMutationCannotReachCache(t *testing.T) {

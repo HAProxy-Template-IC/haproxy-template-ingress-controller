@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 )
 
 // coldRenderGate admits one reconcile render at a time until the service has

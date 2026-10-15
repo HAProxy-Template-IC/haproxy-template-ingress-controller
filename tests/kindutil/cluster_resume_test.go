@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 func TestResumeRequiresMatchingDurableAndContainerOwnership(t *testing.T) {

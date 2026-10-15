@@ -34,7 +34,9 @@ def option(name, default=None):
     return args[args.index(name) + 1] if name in args else default
 
 if command == "curl":
-    plugin, version, name = urllib.parse.urlsplit(args[-1]).path.split("/")[-3:]
+    _, owner, repository, releases, download, version, name = urllib.parse.urlsplit(args[-1]).path.split("/")
+    assert (owner, releases, download) == ("haproxy-haptic", "releases", "download")
+    plugin = repository.removeprefix("haproxy-spoa-hub-plugin-")
     if mode == "transport-failure" or (mode == "transport-after-manifest" and name != "SHA256SUMS"):
         sys.exit(7)
     headers = option("--dump-header")
@@ -62,14 +64,20 @@ if command == "curl":
             for filename in filenames)
         content = content.encode()
     elif name.endswith(".cosign.bundle"):
-        identity = f"https://gitlab.com/haproxy-haptic/haproxy-spoa-hub-plugin-{plugin}//.gitlab-ci.yml@refs/tags/{version}"
+        if mode == "github-signed":
+            identity = (f"https://github.com/haproxy-haptic/haproxy-spoa-hub-plugin-{plugin}"
+                        f"/.github/workflows/release.yml@refs/tags/{version}")
+            issuer = "https://token.actions.githubusercontent.com"
+        else:
+            identity = f"https://gitlab.com/haproxy-haptic/haproxy-spoa-hub-plugin-{plugin}//.gitlab-ci.yml@refs/tags/{version}"
+            issuer = "https://gitlab.com"
         if mode == "wrong-tag":
             identity = identity.rsplit("/", 1)[0] + "/v999.0.0"
         elif mode == "wrong-project":
             identity = identity.replace("/haproxy-haptic/", "/untrusted-project/")
         content = json.dumps({"identity": identity,
                               "issuer": "https://untrusted.test" if mode == "wrong-issuer"
-                              else "https://gitlab.com"}).encode()
+                              else issuer}).encode()
     else:
         content = b"corrupted" if mode == "checksum-mismatch" else payload(name)
     pathlib.Path(option("--output")).write_bytes(content)
@@ -87,6 +95,22 @@ elif command == "cosign":
 else:
     sys.exit("unexpected command")
 '''
+
+
+def release_of(url):
+    *_, repository, _, _, version, _ = url.split("/")
+    return repository.removeprefix("haproxy-spoa-hub-plugin-"), version
+
+
+def github_identity(plugin, version):
+    return (f"https://github.com/haproxy-haptic/haproxy-spoa-hub-plugin-{plugin}"
+            f"/.github/workflows/release.yml@refs/tags/{version}",
+            "https://token.actions.githubusercontent.com")
+
+
+def gitlab_identity(plugin, version):
+    return (f"https://gitlab.com/haproxy-haptic/haproxy-spoa-hub-plugin-{plugin}"
+            f"//.gitlab-ci.yml@refs/tags/{version}", "https://gitlab.com")
 
 
 class SPOAPluginPreparationTests(unittest.TestCase):
@@ -118,29 +142,30 @@ class SPOAPluginPreparationTests(unittest.TestCase):
                       for path in (repo / "plugins").glob("*/*.so")}
             return result, calls, staged, versions
 
-    def test_verifies_every_chart_pinned_plugin_with_exact_tag_identity(self):
-        result, calls, staged, versions = self.run_preparation("valid")
+    def assert_exact_identities(self, mode, expected_identities):
+        result, calls, staged, versions = self.run_preparation(mode)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("verified 24 plugin .so files", result.stdout)
         self.assertEqual(set(staged), {f"plugins/{arch}/{name}.so"
                                        for arch in ARCHES for name in LIBRARIES.values()})
         verifications = [call["args"] for call in calls if call["command"] == "cosign"]
         downloads = [call["args"] for call in calls if call["command"] == "curl"]
-        self.assertEqual(len(verifications), len(ARCHES) * len(LIBRARIES))
-        for arguments in verifications:
+        self.assertEqual(len(verifications), len(ARCHES) * len(LIBRARIES) * len(expected_identities))
+        for index, arguments in enumerate(verifications):
             with self.subTest(target=arguments[1]):
-                self.assertIn("--certificate-identity", arguments)
                 self.assertNotIn("--certificate-identity-regexp", arguments)
                 bundle = arguments[arguments.index("--bundle") + 1]
                 download = next(args for args in downloads if args[args.index("--output") + 1] == bundle)
-                plugin, version, _ = download[-1].split("/")[-3:]
-                expected = (f"https://gitlab.com/haproxy-haptic/haproxy-spoa-hub-plugin-{plugin}"
-                            f"//.gitlab-ci.yml@refs/tags/{version}")
-                self.assertEqual(arguments[arguments.index("--certificate-identity") + 1], expected)
-                self.assertEqual(arguments[arguments.index("--certificate-oidc-issuer") + 1],
-                                 "https://gitlab.com")
+                plugin, version = release_of(download[-1])
+                identity, issuer = expected_identities[index % len(expected_identities)](plugin, version)
+                self.assertEqual(arguments[arguments.index("--certificate-identity") + 1], identity)
+                self.assertEqual(arguments[arguments.index("--certificate-oidc-issuer") + 1], issuer)
+        return downloads, versions
+
+    def test_verifies_pre_move_releases_with_their_exact_gitlab_identity(self):
+        downloads, versions = self.assert_exact_identities("valid", (github_identity, gitlab_identity))
         for arguments in downloads:
-            plugin, version, _ = arguments[-1].split("/")[-3:]
+            plugin, version = release_of(arguments[-1])
             pin = "SPOA_PLUGIN_" + plugin.upper().replace("-", "_") + "_VERSION"
             self.assertEqual(version, versions[pin])
             self.assertEqual(arguments[arguments.index("--retry") + 1], "8")
@@ -148,13 +173,16 @@ class SPOAPluginPreparationTests(unittest.TestCase):
             self.assertEqual(arguments[arguments.index("--retry-max-time") + 1], "120")
             self.assertIn("--retry-all-errors", arguments)
 
+    def test_verifies_github_releases_with_their_exact_github_identity(self):
+        self.assert_exact_identities("github-signed", (github_identity,))
+
     def test_rejects_untrusted_or_wrong_version_signature(self):
         for mode in ("wrong-tag", "wrong-project", "wrong-issuer", "invalid-signature"):
             with self.subTest(mode=mode):
                 result, calls, _, _ = self.run_preparation(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn("signature verification rejected", result.stderr)
-                self.assertEqual(sum(call["command"] == "cosign" for call in calls), 1)
+                self.assertEqual(sum(call["command"] == "cosign" for call in calls), 2)
                 self.assertNotIn("OK: verified", result.stdout)
 
     def test_rejects_invalid_checksum_and_missing_architecture(self):

@@ -17,8 +17,8 @@ package commentator
 import (
 	"fmt"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // leaderInsight handles LeaderElectionStarted, BecameLeader, LostLeadership,

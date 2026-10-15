@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // tableLayout holds the calculated column widths for benchmark table output.

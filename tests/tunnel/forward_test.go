@@ -12,8 +12,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/kubeexec"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 func TestForwardOnlyAcceptsCompleteLoopbackMappings(t *testing.T) {

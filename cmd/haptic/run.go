@@ -31,11 +31,11 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/klog/v2"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller"
-	controllerwebhook "gitlab.com/haproxy-haptic/haptic/pkg/controller/webhook"
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller"
+	controllerwebhook "github.com/haproxy-haptic/HAPTIC/pkg/controller/webhook"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/logging"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity"
 )
 
 var (

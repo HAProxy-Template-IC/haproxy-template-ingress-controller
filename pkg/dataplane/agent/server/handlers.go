@@ -20,8 +20,8 @@ import (
 	"net/http"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/cli"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/cli"
 )
 
 // handleState answers the controller's view of this pod. With verify=1 the

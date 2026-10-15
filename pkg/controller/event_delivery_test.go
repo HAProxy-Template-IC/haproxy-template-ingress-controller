@@ -30,8 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
-	controllermetrics "gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	controllermetrics "github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 type deliveryTestEvent struct {

@@ -25,7 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/klient"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 // TestIngressCombined covers test_ingress_combined: an Ingress that

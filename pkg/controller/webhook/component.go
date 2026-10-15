@@ -26,8 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
-	"gitlab.com/haproxy-haptic/haptic/pkg/webhook"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/timeouts"
+	"github.com/haproxy-haptic/HAPTIC/pkg/webhook"
 )
 
 const (

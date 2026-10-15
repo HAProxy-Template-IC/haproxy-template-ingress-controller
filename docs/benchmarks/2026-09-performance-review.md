@@ -170,7 +170,7 @@ pair doesn't establish the cause or repeatability of those differences.
 
 | Source | Baseline | Candidate |
 | --- | --- | --- |
-| Product commit | [`80a69872b`](https://gitlab.com/haproxy-haptic/haptic/-/commit/80a69872b36c1497a69afe84f39f9b6fbe305609) | [`858e6d058`](https://gitlab.com/haproxy-haptic/haptic/-/commit/858e6d05833aa5956105d08acad365b9166ef728) |
+| Product commit | [`80a69872b`](https://github.com/haproxy-haptic/HAPTIC/commit/80a69872b36c1497a69afe84f39f9b6fbe305609) | [`858e6d058`](https://github.com/haproxy-haptic/HAPTIC/commit/858e6d05833aa5956105d08acad365b9166ef728) |
 | Diagnostic commit | `8235b2ac7` | `7517f2228` |
 
 The diagnostic commits change only three harness and CI files, which are
@@ -447,7 +447,7 @@ These resource observations include startup and cleanup, not just the five
 minutes of churn.
 
 Run the regression workloads with the repository's
-[end-to-end test instructions](https://gitlab.com/haproxy-haptic/haptic/-/blob/main/tests/e2e/CLAUDE.md).
+[end-to-end test instructions](https://github.com/haproxy-haptic/HAPTIC/blob/main/tests/e2e/CLAUDE.md).
 Select `TestScale` with `HAPTIC_E2E_SCALE=1`, or `TestGatewayChurn` with
 `HAPTIC_E2E_CHURN=1`. Keep their default workload sizes and budgets when comparing
 regression results.

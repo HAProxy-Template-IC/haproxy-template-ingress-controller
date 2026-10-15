@@ -19,7 +19,7 @@ import (
 	"slices"
 	"time"
 
-	"gitlab.com/haproxy-haptic/scriggo"
+	"github.com/haproxy-haptic/scriggo"
 )
 
 // aggregateScriggoProfile converts Scriggo profile data into aggregated

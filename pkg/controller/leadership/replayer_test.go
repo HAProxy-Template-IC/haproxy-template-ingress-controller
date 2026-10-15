@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // testEvent is a minimal Event implementation for testing.

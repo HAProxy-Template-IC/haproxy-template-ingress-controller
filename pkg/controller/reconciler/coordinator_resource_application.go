@@ -19,9 +19,9 @@ import (
 	"errors"
 	"fmt"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 func waitForResourceApplication(ctx context.Context, processed <-chan busevents.Event, occurrence *rendercycle.Occurrence) error {

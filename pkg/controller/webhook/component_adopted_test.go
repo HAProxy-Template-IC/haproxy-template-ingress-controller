@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	pkgwebhook "gitlab.com/haproxy-haptic/haptic/pkg/webhook"
+	pkgwebhook "github.com/haproxy-haptic/HAPTIC/pkg/webhook"
 )
 
 // TestAdoptedServer_SurvivesIterationTeardown keeps admission reachable while

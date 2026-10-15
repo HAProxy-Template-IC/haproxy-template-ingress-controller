@@ -34,8 +34,8 @@ import (
 	"k8s.io/client-go/transport/spdy"
 	"k8s.io/streaming/pkg/httpstream"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // The pod's file tree, as the chart lays it out: one volume at BaseDir, a

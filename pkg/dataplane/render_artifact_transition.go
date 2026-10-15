@@ -14,7 +14,7 @@
 
 package dataplane
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
+import "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
 
 // BuildAuxiliaryFileTransition seals files and their exact transition from previous.
 func BuildAuxiliaryFileTransition(

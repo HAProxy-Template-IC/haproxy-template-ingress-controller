@@ -19,8 +19,8 @@ import (
 	"errors"
 	"fmt"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/compression"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/compression"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 type checkpoint struct {

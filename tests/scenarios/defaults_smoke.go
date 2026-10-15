@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
-	"gitlab.com/haproxy-haptic/haptic/tests/tunnel"
+	"github.com/haproxy-haptic/HAPTIC/tests/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/tunnel"
 )
 
 var applyFailure = regexp.MustCompile(`level=ERROR.*(Failed to apply rendered resource|Failed to resolve GVR for rendered resource)`)

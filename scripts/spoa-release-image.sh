@@ -27,7 +27,7 @@ fi
 
 # shellcheck source=../versions-spoa.env
 source versions-spoa.env
-hub_image="registry.gitlab.com/haproxy-haptic/haproxy-spoa-hub:${SPOA_HUB_VERSION#v}"
+hub_image="ghcr.io/haproxy-haptic/haproxy-spoa-hub:${SPOA_HUB_VERSION#v}"
 hub_digest="$(docker buildx imagetools inspect "$hub_image" --format '{{json .Manifest.Digest}}' | jq -er '.')"
 [[ "$hub_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Upstream SPOA image has no valid digest'
 for arch in amd64 arm64 armv7; do

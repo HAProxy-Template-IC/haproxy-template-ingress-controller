@@ -1,4 +1,4 @@
-module gitlab.com/haproxy-haptic/haptic/tools/linters/eventimmutability
+module github.com/haproxy-haptic/HAPTIC/tools/linters/eventimmutability
 
 go 1.27.2
 

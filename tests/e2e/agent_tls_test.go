@@ -38,12 +38,12 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity/tlstest"
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	agentclient "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity/tlstest"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 type agentTLSRotation struct {

@@ -41,10 +41,10 @@ import (
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 
-	v1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/podclient"
+	v1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	hapticclient "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/podclient"
 )
 
 const retainedReadyBound = 2 * time.Minute

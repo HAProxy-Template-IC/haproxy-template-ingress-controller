@@ -20,12 +20,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderoutput"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 type deploymentEventCycle struct {

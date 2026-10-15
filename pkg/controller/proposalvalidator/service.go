@@ -23,11 +23,11 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/validation"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pipeline"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validation"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 const renderPhase = "render"

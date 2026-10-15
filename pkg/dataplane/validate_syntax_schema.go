@@ -17,7 +17,7 @@
 package dataplane
 
 import (
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser"
 )
 
 // The phases only this check can fail in.

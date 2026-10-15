@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
 )
 
 // RegisterVariables registers all controller debug variables with the registry.

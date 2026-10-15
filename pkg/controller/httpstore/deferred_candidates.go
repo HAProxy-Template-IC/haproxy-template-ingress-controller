@@ -21,7 +21,7 @@ import (
 	"runtime"
 	"sync"
 
-	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	purehttpstore "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 // ErrCandidatePending discards a render until its HTTP candidates have been fetched.

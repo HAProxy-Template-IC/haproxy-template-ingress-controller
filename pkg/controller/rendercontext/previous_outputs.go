@@ -14,7 +14,7 @@
 
 package rendercontext
 
-import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+import "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 
 // CurrentConfigSource binds a lazily materialized currentConfig to an exact root.
 type CurrentConfigSource interface {

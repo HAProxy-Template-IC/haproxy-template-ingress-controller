@@ -2,7 +2,7 @@
 
 Pure Kubernetes integration library. Two watchers, two stores, a JSONPath indexer, and a thin client-go wrapper. No EventBus dependency — the controller wraps this package in event adapters (`pkg/controller/resourcewatcher`) when it wants event-driven behaviour.
 
-Module path: `gitlab.com/haproxy-haptic/haptic`. The authoritative interface is the source (`go doc ./pkg/k8s/...`); this README is a short orientation.
+Module path: `github.com/haproxy-haptic/HAPTIC`. The authoritative interface is the source (`go doc ./pkg/k8s/...`); this README is a short orientation.
 
 ## Sub-Package Map
 
@@ -22,9 +22,9 @@ Module path: `gitlab.com/haproxy-haptic/haptic`. The authoritative interface is 
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
-    "gitlab.com/haproxy-haptic/haptic/pkg/k8s/watcher"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
+    "github.com/haproxy-haptic/HAPTIC/pkg/k8s/watcher"
 
     "k8s.io/apimachinery/pkg/runtime/schema"
 )

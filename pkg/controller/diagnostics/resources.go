@@ -24,10 +24,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	hapticv1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/conversion"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
+	hapticv1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/conversion"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
 )
 
 var (

@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/scriggo/builtin"
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/builtin"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 func incrementalStop(env native.Env, name string, err error) {

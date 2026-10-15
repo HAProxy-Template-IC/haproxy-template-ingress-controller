@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 )
 
 // BasicValidator validates basic structural configuration requirements.

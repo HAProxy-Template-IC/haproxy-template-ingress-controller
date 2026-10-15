@@ -2,7 +2,7 @@
 
 Pure template rendering library. Wraps a fork of [Scriggo](https://scriggo.com/) with a pre-compile-then-render lifecycle, HAProxy-specific filters and context helpers, and structured errors. Zero dependencies on other `pkg/` packages — this is a reusable library.
 
-Module path: `gitlab.com/haproxy-haptic/haptic`. The source is authoritative (`go doc ./pkg/templating`); this README is a short orientation. `docs/site/docs/templating.md` covers the template *author's* side (syntax, filters, custom variables) — this page is for Go callers.
+Module path: `github.com/haproxy-haptic/HAPTIC`. The source is authoritative (`go doc ./pkg/templating`); this README is a short orientation. `docs/site/docs/templating.md` covers the template *author's* side (syntax, filters, custom variables) — this page is for Go callers.
 
 ## Minimal Usage
 
@@ -11,7 +11,7 @@ import (
     "context"
     "log"
 
-    "gitlab.com/haproxy-haptic/haptic/pkg/templating"
+    "github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 templates := map[string]string{
@@ -164,7 +164,7 @@ This is also why there is no `renderResource()` template function. Earlier versi
 
 ## Scriggo Fork
 
-The engine depends on a forked Scriggo (`gitlab.com/haproxy-haptic/scriggo`) consumed as a normal `require` in `go.mod` — there is no `replace` directive. The pinned pseudo-version drifts as Renovate updates the dep; check `grep gitlab.com/haproxy-haptic/scriggo go.mod` for the live value rather than copying one out of this README. The fork adds:
+The engine depends on a forked Scriggo (`github.com/haproxy-haptic/scriggo`) consumed as a normal `require` in `go.mod` — there is no `replace` directive. The pinned pseudo-version drifts as Renovate updates the dep; check `grep github.com/haproxy-haptic/scriggo go.mod` for the live value rather than copying one out of this README. The fork adds:
 
 - A native `{% include "..." %}` statement for compile-time includes.
 - A `callNative` fast path that eliminates `reflect.Value.Call` for the haptic function signatures — the hot render loop is effectively zero-allocation after warm-up.

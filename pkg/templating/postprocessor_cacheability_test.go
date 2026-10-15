@@ -18,11 +18,11 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/haproxy-haptic/scriggo"
+	"github.com/haproxy-haptic/scriggo/builtin"
+	"github.com/haproxy-haptic/scriggo/native"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/scriggo"
-	"gitlab.com/haproxy-haptic/scriggo/builtin"
-	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
 // overriddenRegexpBuiltin behaves like builtin.RegExp but is a distinct

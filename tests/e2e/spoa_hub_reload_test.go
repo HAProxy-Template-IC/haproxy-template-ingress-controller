@@ -19,7 +19,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // TestSPOAHubReloadOnConfigPush exercises the end-to-end runtime config

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 var haproxyWarning = regexp.MustCompile(`(?m)^\s*\[WARNING\]|Warnings were found\.`)

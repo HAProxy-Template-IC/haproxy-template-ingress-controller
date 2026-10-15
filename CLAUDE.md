@@ -503,20 +503,20 @@ When adding new components, explicitly document if they are "pure" or "utility" 
 
 ```go
 // Core packages (minimal dependencies)
-import "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-import "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
+import "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+import "github.com/haproxy-haptic/HAPTIC/pkg/core/logging"
 
 // Infrastructure (no domain knowledge)
-import "gitlab.com/haproxy-haptic/haptic/pkg/events"
+import "github.com/haproxy-haptic/HAPTIC/pkg/events"
 
 // Domain packages (depends on core + infrastructure)
-import "gitlab.com/haproxy-haptic/haptic/pkg/templating"
-import "gitlab.com/haproxy-haptic/haptic/pkg/k8s"
-import "gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
+import "github.com/haproxy-haptic/HAPTIC/pkg/templating"
+import "github.com/haproxy-haptic/HAPTIC/pkg/k8s"
+import "github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 
 // Coordination (depends on everything)
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller"
-import "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"  // Event type catalog
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller"
+import "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"  // Event type catalog
 ```
 
 ### Dependency Rules

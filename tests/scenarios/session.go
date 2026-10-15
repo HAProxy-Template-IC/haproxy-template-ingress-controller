@@ -16,10 +16,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
-	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kubeexec"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 type Session struct {

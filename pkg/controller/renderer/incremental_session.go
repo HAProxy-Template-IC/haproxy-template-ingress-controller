@@ -30,13 +30,13 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 
-	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/renderer/internal/queryidentity"
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	controllerhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/renderer/internal/queryidentity"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 var (

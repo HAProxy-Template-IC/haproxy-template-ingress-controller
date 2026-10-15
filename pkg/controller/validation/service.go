@@ -24,10 +24,10 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderoutput"
 )
 
 // Default directory paths for HAProxy validation.

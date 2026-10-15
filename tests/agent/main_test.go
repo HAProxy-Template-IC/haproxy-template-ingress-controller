@@ -26,7 +26,7 @@ import (
 	"os"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
 )
 
 // TestMain drops the image the suite builds; containers and volumes are each

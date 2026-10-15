@@ -25,11 +25,11 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/metrics"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/resourcewatcher"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/resourcewatcher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 // buildStoreProvider preserves the concrete stores and their optional capabilities.

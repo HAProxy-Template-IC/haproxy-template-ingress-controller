@@ -23,7 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
 )
 
 // loggedBackendSource is a BackendSource over a map that logs the names its

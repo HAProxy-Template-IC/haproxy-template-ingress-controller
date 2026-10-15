@@ -26,9 +26,9 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
 )
 
 type incrementalPreparedPlan struct {

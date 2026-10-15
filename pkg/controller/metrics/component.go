@@ -19,12 +19,12 @@ import (
 	"log/slog"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/buffers"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/buffers"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/timeouts"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // ComponentName is the unique identifier for the metrics component.

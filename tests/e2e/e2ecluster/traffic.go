@@ -5,7 +5,7 @@ import (
 	"net"
 	"sync/atomic"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
 )
 
 type TrafficEndpoint struct {

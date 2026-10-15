@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"hash"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
 )
 
 // ComputeContentChecksum generates a SHA256 checksum covering the main HAProxy config

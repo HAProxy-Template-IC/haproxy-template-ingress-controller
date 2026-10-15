@@ -18,9 +18,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 source "${REPO_ROOT}/versions-spoa.env"
 
-GITLAB_HOST="https://gitlab.com"
-GITLAB_API="${GITLAB_HOST}/api/v4"
-ISSUER="${GITLAB_HOST}"
+GITHUB_ISSUER="https://token.actions.githubusercontent.com"
+# Releases cut before the move to GitHub keep their original GitLab CI signatures.
+GITLAB_ISSUER="https://gitlab.com"
 
 # plugin shortname -> upstream version variable
 declare -A PLUGINS=(
@@ -85,9 +85,9 @@ for plugin in "${!PLUGINS[@]}"; do
     version="${PLUGINS[${plugin}]}"
     lib_name="${LIB_NAMES[${plugin}]}"
     project_path="haproxy-haptic/haproxy-spoa-hub-plugin-${plugin}"
-    encoded_path="haproxy-haptic%2Fhaproxy-spoa-hub-plugin-${plugin}"
-    pkg_base="${GITLAB_API}/projects/${encoded_path}/packages/generic/${plugin}/${version}"
-    identity="${GITLAB_HOST}/${project_path}//.gitlab-ci.yml@refs/tags/${version}"
+    pkg_base="https://github.com/${project_path}/releases/download/${version}"
+    github_identity="https://github.com/${project_path}/.github/workflows/release.yml@refs/tags/${version}"
+    gitlab_identity="https://gitlab.com/${project_path}//.gitlab-ci.yml@refs/tags/${version}"
 
     echo "==> ${plugin} ${version}"
 
@@ -126,11 +126,13 @@ for plugin in "${!PLUGINS[@]}"; do
         fi
 
         # Cosign keyless verification anchored to this plugin's project tag.
-        cosign verify-blob "${target_so}" \
-            --bundle "${bundle}" \
-            --certificate-identity "${identity}" \
-            --certificate-oidc-issuer "${ISSUER}" \
-            > /dev/null
+        if ! cosign verify-blob "${target_so}" --bundle "${bundle}" \
+                --certificate-identity "${github_identity}" \
+                --certificate-oidc-issuer "${GITHUB_ISSUER}" > /dev/null 2>&1; then
+            cosign verify-blob "${target_so}" --bundle "${bundle}" \
+                --certificate-identity "${gitlab_identity}" \
+                --certificate-oidc-issuer "${GITLAB_ISSUER}" > /dev/null
+        fi
 
         verified=$((verified + 1))
         echo "  ${arch}: verified ${suffixed}"

@@ -23,8 +23,8 @@ import (
 	"strconv"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/deployplan"
 )
 
 // diffReport is one printed answer: the decision, plus what only the command

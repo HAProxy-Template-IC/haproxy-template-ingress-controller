@@ -22,9 +22,9 @@ import (
 	"math"
 	"reflect"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // RenderDocumentCache retains the last authenticated root for exact structural reuse.

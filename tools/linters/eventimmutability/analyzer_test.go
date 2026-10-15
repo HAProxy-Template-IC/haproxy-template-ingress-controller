@@ -17,7 +17,7 @@ package eventimmutability_test
 import (
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tools/linters/eventimmutability"
+	"github.com/haproxy-haptic/HAPTIC/tools/linters/eventimmutability"
 	"golang.org/x/tools/go/analysis/analysistest"
 )
 

@@ -24,12 +24,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	agentclient "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity/issuance"
+	"github.com/haproxy-haptic/HAPTIC/pkg/transportsecurity/tlstest"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity/issuance"
-	"gitlab.com/haproxy-haptic/haptic/pkg/transportsecurity/tlstest"
 )
 
 func TestLocalAgentStateSocketRejectsMutations(t *testing.T) {

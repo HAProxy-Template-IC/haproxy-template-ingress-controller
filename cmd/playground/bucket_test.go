@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 // bucketTestConfig watches ingresses (class-filtered) and Services under two

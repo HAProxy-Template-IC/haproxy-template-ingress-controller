@@ -22,8 +22,8 @@ Given configured rendering and validation services:
 
 ```go
 import (
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/pipeline"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 )
 
 pl := pipeline.New(&pipeline.PipelineConfig{

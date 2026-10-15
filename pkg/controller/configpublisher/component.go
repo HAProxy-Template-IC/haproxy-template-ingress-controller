@@ -20,16 +20,16 @@ import (
 	"sync"
 	"time"
 
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderartifact"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/throttle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderartifact"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderoutput"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 )
 
 const (

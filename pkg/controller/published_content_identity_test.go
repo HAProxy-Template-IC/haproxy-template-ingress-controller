@@ -13,9 +13,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
 )
 
 func contentReference(kind string, file *publishedAuxFile) publishedAuxRef {

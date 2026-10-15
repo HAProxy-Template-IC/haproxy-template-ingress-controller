@@ -34,9 +34,9 @@ import (
 	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
 
-	hapticclient "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/podclient"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	hapticclient "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/podclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 const kubeconfigFlag = "--kubeconfig"

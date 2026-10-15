@@ -25,9 +25,9 @@ import (
 	"testing"
 	"weak"
 
+	"github.com/haproxy-haptic/scriggo/native"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
 type incrementalResourceBindingTestStore struct {

@@ -22,7 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 )
 
 func TestIncrementalSourceTransactionReleasesSessionAfterNativeClosure(t *testing.T) {

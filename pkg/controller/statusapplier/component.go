@@ -74,13 +74,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/component"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	k8stypes "gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
-	"gitlab.com/haproxy-haptic/haptic/pkg/lifecycle"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	k8stypes "github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/lifecycle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 const (

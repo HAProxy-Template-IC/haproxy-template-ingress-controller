@@ -249,8 +249,8 @@ The event adapter (`pkg/controller/httpstore`) wraps this pure component:
 
 ```go
 import (
-    purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
-    httpstore    "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
+    purehttpstore "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
+    httpstore    "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
 )
 
 // Pure component (this package). maxAge=0 disables eviction.

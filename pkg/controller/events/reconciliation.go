@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercycle"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 // ReconciliationTriggeredEvent is published when a reconciliation cycle should start.

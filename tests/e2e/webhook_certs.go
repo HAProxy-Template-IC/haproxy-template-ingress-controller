@@ -27,7 +27,7 @@ import (
 	"math/big"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/fixtures"
+	"github.com/haproxy-haptic/HAPTIC/tests/fixtures"
 )
 
 // webhookSecretName is the Secret the chart mounts into the controller pod.

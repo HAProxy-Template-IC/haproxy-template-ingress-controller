@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/throttle"
 )
 
 // The worker must not spin while a deployed item waits for the throttle gate.

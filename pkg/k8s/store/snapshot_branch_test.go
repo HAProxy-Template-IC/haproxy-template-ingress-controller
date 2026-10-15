@@ -28,7 +28,7 @@ import (
 	"k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 func TestSnapshotBranchRetainsSelectedRevisionsAndExactJournal(t *testing.T) {

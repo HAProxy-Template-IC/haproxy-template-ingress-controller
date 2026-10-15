@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/scriggo"
+	"github.com/haproxy-haptic/scriggo"
 )
 
 // scriggoTemplateFS implements three filesystem interfaces (fs.FS,

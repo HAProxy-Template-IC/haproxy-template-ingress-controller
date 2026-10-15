@@ -19,9 +19,9 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/haproxy-haptic/scriggo/native"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/haproxy-haptic/scriggo/native"
 )
 
 // fakeEnv is a minimal native.Env whose Context() carries a render-context map,

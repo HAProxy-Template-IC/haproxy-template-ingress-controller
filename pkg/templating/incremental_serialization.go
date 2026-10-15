@@ -22,7 +22,7 @@ import (
 	"reflect"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 	"gopkg.in/yaml.v3"
 )
 

@@ -46,13 +46,13 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/gateway-api/pkg/consts"
 
-	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	devassets "gitlab.com/haproxy-haptic/haptic/scripts/dev-env-assets"
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
-	"gitlab.com/haproxy-haptic/haptic/tests/kubeexec"
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
-	"gitlab.com/haproxy-haptic/haptic/tests/testutil"
+	haproxyv1alpha1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	devassets "github.com/haproxy-haptic/HAPTIC/scripts/dev-env-assets"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/e2ecluster"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kubeexec"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/testutil"
 )
 
 // testEnv is the e2e-framework environment shared by all tests in the suite.

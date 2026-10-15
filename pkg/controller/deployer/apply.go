@@ -24,12 +24,12 @@ import (
 	"strings"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	agentclient "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/deployplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // The agent's 409 reasons (api.Conflict.Reason).

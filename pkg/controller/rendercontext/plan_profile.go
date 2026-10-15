@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // The rule-free parent every profile inherits from. The chart's haproxyConfig

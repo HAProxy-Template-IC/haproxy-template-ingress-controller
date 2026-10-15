@@ -23,12 +23,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stesting "k8s.io/client-go/testing"
 
-	v1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-	crdclientfake "gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	v1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+	crdclientfake "github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned/fake"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 )
 
 func TestFailedRenderStopsQueuedAndActivePublication(t *testing.T) {

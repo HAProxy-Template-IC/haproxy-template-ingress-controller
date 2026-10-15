@@ -20,7 +20,7 @@ import (
 	"strings"
 	"sync"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
 )
 
 var (

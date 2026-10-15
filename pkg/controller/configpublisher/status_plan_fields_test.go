@@ -23,12 +23,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/throttle"
-	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
-	configpublisher "gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	haproxyv1alpha1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/throttle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned/fake"
+	configpublisher "github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 )
 
 // The apply mode and the plan a pod runs are only observable through

@@ -14,7 +14,7 @@
 
 package templating
 
-import "gitlab.com/haproxy-haptic/scriggo/native"
+import "github.com/haproxy-haptic/scriggo/native"
 
 var incrementalDeclarationNames = [...]string{
 	declItem,

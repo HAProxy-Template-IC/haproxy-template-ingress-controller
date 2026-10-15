@@ -21,7 +21,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
 )
 
 type incrementalColdCarrierGraphSchedule struct {

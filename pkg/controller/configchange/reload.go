@@ -15,8 +15,8 @@
 package configchange
 
 import (
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 // ResolvedConfig is the effective configuration and the discovery outcome

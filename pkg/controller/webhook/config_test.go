@@ -19,7 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 func TestExtractWebhookRules(t *testing.T) {

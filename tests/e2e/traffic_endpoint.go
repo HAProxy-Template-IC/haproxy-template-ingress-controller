@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/e2ecluster"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/e2ecluster"
 )
 
 func configureTrafficEndpoint(ctx context.Context, cfg *envconf.Config) (context.Context, error) {

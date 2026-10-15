@@ -17,7 +17,7 @@ package deployer
 import (
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 // A reload follow-up observes an accepted plan; resending it can race the pacer.

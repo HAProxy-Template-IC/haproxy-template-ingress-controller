@@ -17,7 +17,7 @@ package rendercycle
 import (
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderoutput"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderoutput"
 )
 
 func BenchmarkSnapshot3000Effects(b *testing.B) {

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/orderedset"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental/internal/orderedset"
 )
 
 var testScope = orderedset.Scope{Domain: 1, Key: "test"}

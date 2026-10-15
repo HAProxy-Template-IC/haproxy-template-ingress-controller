@@ -5,7 +5,7 @@ Thin wrapper around `log/slog` that the controller's entry points use to build t
 ## API
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/core/logging"
+import "github.com/haproxy-haptic/HAPTIC/pkg/core/logging"
 
 // Dynamic: level stored in a package-global slog.LevelVar that SetLevel()
 // updates at runtime. The controller uses this so the CRD's

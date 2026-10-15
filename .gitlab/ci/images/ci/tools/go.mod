@@ -1,4 +1,4 @@
-module gitlab.com/haproxy-haptic/haptic/ci-tools
+module github.com/haproxy-haptic/HAPTIC/ci-tools
 
 go 1.27.2
 

@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/e2e/httpclient"
+	"github.com/haproxy-haptic/HAPTIC/tests/e2e/httpclient"
 )
 
 // TestHapticSessionAffinity is the haptic-native counterpart of

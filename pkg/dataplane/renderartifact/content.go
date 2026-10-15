@@ -20,7 +20,7 @@ import (
 	"io"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/rendercontent"
+	"github.com/haproxy-haptic/HAPTIC/pkg/rendercontent"
 )
 
 type contentKind uint8

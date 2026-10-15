@@ -21,7 +21,7 @@ import (
 	"slices"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // Keys the Backend record and its nested records accept. A key outside these

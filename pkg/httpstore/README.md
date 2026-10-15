@@ -11,7 +11,7 @@ This is the **pure** half of the design. Periodic refresh timers, validation eve
 ## Quick Start
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+import "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 
 store := httpstore.New(logger, 2*time.Minute) // maxAge for eviction; 0 disables
 

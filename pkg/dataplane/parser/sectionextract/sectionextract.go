@@ -30,7 +30,7 @@ import (
 	"github.com/haproxytech/client-native/v6/configuration"
 	"github.com/haproxytech/client-native/v6/models"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/parser/parserconfig"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/parser/parserconfig"
 )
 
 // logSectionParseError logs a warning when a configuration section fails to parse.

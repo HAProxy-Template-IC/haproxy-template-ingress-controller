@@ -23,7 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
 )
 
 var (

@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 packages = Path('.pilot/unit-packages-all.txt').read_text().splitlines()
-base = 'gitlab.com/haproxy-haptic/haptic/'
+base = 'github.com/haproxy-haptic/HAPTIC/'
 renderer = base + 'pkg/controller/renderer'
 command = base + 'cmd/haptic'
 assert packages and len(packages) == len(set(packages))

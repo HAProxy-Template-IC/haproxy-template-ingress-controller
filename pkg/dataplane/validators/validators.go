@@ -21,7 +21,7 @@ import (
 
 	"github.com/haproxytech/client-native/v6/models"
 
-	genvalidators "gitlab.com/haproxy-haptic/haptic/pkg/generated/validators"
+	genvalidators "github.com/haproxy-haptic/HAPTIC/pkg/generated/validators"
 )
 
 var errValidatorUnavailable = errors.New("validator unavailable")

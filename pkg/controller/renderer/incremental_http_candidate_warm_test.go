@@ -21,12 +21,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/rendercontext"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
-	k8sstore "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	controllerhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	purehttpstore "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
+	k8sstore "github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
 )
 
 // A render that withholds new content stays on the warm graph and renders the

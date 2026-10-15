@@ -22,7 +22,7 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 func newIncrementalStatusPatchPlanFromIndexes(

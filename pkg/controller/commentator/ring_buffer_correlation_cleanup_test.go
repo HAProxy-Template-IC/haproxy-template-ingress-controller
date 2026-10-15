@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	ctlevents "gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
+	ctlevents "github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
 )
 
 // Correlation lookups must track buffer eviction exactly: once an event's slot

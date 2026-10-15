@@ -23,9 +23,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	controllerhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 func TestExactCycleHTTPObservationReplaysOnlyExactAcceptedState(t *testing.T) {

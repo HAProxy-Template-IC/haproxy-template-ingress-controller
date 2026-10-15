@@ -16,7 +16,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
 )
 
 // convertValidationTests is the per-test converter that ConvertSpec

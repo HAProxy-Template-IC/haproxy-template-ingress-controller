@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental/internal/orderedset"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental/internal/orderedset"
 )
 
 func TestPersistentReverseIndexRandomizedDifferential(t *testing.T) {

@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 
-	purehttpstore "gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	purehttpstore "github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 // InputRetrySeed carries immutable HTTP reads across one internal render retry.

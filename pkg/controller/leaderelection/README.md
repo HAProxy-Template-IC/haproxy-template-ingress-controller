@@ -9,9 +9,9 @@ import (
     "context"
     "time"
 
-    busevents "gitlab.com/haproxy-haptic/haptic/pkg/events"
-    "gitlab.com/haproxy-haptic/haptic/pkg/controller/leaderelection"
-    k8sle "gitlab.com/haproxy-haptic/haptic/pkg/k8s/leaderelection"
+    busevents "github.com/haproxy-haptic/HAPTIC/pkg/events"
+    "github.com/haproxy-haptic/HAPTIC/pkg/controller/leaderelection"
+    k8sle "github.com/haproxy-haptic/HAPTIC/pkg/k8s/leaderelection"
 )
 
 cfg := &k8sle.Config{

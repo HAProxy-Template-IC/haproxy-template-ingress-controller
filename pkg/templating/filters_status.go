@@ -21,7 +21,7 @@ import (
 	"math"
 	"time"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 // getStatusPatchCollector retrieves the StatusPatchCollector from the template render context.

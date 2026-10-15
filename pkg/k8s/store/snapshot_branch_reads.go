@@ -22,8 +22,8 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/indexer"
-	"gitlab.com/haproxy-haptic/haptic/pkg/stores"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/indexer"
+	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
 
 func memoryBranchEntries(ctx context.Context, snapshot *memoryReadSnapshot, indexBy []string, previous *SnapshotBranch) (map[string]*branchEntry, error) {

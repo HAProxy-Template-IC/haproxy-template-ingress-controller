@@ -22,9 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/events"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/timeouts"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/configpublisher"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/timeouts"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 )
 
 const haproxyConfigPath = "/etc/haproxy/haproxy.cfg"

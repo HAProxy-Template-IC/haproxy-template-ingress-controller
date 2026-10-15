@@ -22,7 +22,7 @@ import (
 	"strings"
 	"unicode"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )

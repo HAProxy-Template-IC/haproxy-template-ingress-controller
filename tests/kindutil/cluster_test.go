@@ -17,7 +17,7 @@ import (
 	kindconfig "sigs.k8s.io/kind/pkg/apis/config/v1alpha4"
 	"sigs.k8s.io/yaml"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 type clusterRunner struct {

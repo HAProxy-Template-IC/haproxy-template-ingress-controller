@@ -22,10 +22,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	hapticv1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
-	agentclient "gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/client"
+	hapticv1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/debug"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
+	agentclient "github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/client"
 )
 
 func podView(pod *corev1.Pod) Pod {

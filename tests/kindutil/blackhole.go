@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 // SyntheticBackendRanges keeps fixture health checks from reaching the host network.

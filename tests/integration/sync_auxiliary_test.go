@@ -5,7 +5,7 @@ package integration
 import (
 	"testing"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/deployplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/deployplan"
 )
 
 // TestSyncAuxiliary runs table-driven synchronization tests for auxiliary file operations

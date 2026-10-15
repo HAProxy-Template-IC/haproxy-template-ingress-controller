@@ -22,8 +22,8 @@ import (
 
 	iradix "github.com/hashicorp/go-immutable-radix/v2"
 
-	controllerhttpstore "gitlab.com/haproxy-haptic/haptic/pkg/controller/httpstore"
-	"gitlab.com/haproxy-haptic/haptic/pkg/httpstore"
+	controllerhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/httpstore"
 )
 
 // RetireIncrementalCache releases persistent inputs owned by this service.

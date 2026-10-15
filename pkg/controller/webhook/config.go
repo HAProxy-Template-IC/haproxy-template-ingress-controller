@@ -17,7 +17,7 @@ package webhook
 import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 )
 
 // WebhookRule specifies which resources a webhook should intercept.

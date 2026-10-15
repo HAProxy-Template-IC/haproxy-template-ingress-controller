@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/introspection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/introspection"
 )
 
 const (

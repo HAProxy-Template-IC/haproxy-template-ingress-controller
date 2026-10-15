@@ -22,9 +22,9 @@ import (
 	"slices"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/names"
-	"gitlab.com/haproxy-haptic/haptic/pkg/incremental"
-	"gitlab.com/haproxy-haptic/haptic/pkg/templating"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
+	"github.com/haproxy-haptic/HAPTIC/pkg/incremental"
+	"github.com/haproxy-haptic/HAPTIC/pkg/templating"
 )
 
 type incrementalSelectorIdentity struct {

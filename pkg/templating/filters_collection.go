@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 // sortByItems sorts a copy of items by JSONPath criteria. When debug is true,

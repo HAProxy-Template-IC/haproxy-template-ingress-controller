@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/agent/api"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 )
 
 // ErrUnknownOp is what an op kind this agent does not execute wraps. The

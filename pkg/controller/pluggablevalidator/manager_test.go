@@ -23,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pipeline"
-	pv "gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator"
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/pluggablevalidator/testutil"
-	controllertestutil "gitlab.com/haproxy-haptic/haptic/pkg/controller/testutil"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pipeline"
+	pv "github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pluggablevalidator/testutil"
+	controllertestutil "github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
 )
 
 func tomlFile() pv.File {

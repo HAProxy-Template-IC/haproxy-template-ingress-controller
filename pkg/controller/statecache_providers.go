@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/controller/debug"
-	coreconfig "gitlab.com/haproxy-haptic/haptic/pkg/core/config"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane"
-	"gitlab.com/haproxy-haptic/haptic/pkg/k8s/types"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/debug"
+	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/types"
 )
 
 // sizer is implemented by stores that can report their resource count cheaply,

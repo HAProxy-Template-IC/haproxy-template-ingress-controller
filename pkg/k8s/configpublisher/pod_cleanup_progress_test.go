@@ -21,10 +21,10 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
 
-	haproxyv1alpha1 "gitlab.com/haproxy-haptic/haptic/pkg/apis/haproxytemplate/v1alpha1"
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/auxiliaryfiles"
-	"gitlab.com/haproxy-haptic/haptic/pkg/generated/clientset/versioned/fake"
-	listers "gitlab.com/haproxy-haptic/haptic/pkg/generated/listers/haproxytemplate/v1alpha1"
+	haproxyv1alpha1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
+	"github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned/fake"
+	listers "github.com/haproxy-haptic/HAPTIC/pkg/generated/listers/haproxytemplate/v1alpha1"
 )
 
 func cleanupProgressFixture(t *testing.T) (*fake.Clientset, *Publisher, *PublishResult) {

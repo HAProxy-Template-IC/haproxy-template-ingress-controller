@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"slices"
 
-	"gitlab.com/haproxy-haptic/haptic/pkg/dataplane/renderplan"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // planBackendSource is the registry's renderplan.BackendSource: the prepared

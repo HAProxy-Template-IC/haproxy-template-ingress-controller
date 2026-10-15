@@ -24,7 +24,7 @@ The number of keys is fixed at construction time — it comes from the `indexBy`
 ## MemoryStore
 
 ```go
-import "gitlab.com/haproxy-haptic/haptic/pkg/k8s/store"
+import "github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
 
 mem := store.NewMemoryStore(2)          // 2-key composite index (e.g. namespace + name)
 mem.Add(ingress, []string{"default", "my-ingress"})

@@ -17,7 +17,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 var mainTemplateBlock = regexp.MustCompile(`(?m)^haproxyConfig:\n(\s+)template: \|\n`)

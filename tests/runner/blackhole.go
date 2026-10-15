@@ -10,8 +10,8 @@ import (
 	"os"
 	"time"
 
-	"gitlab.com/haproxy-haptic/haptic/tests/kindutil"
-	"gitlab.com/haproxy-haptic/haptic/tests/process"
+	"github.com/haproxy-haptic/HAPTIC/tests/kindutil"
+	"github.com/haproxy-haptic/HAPTIC/tests/process"
 )
 
 func runBlackhole(ctx context.Context, args []string) error {

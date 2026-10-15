@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"runtime"
 
-	"gitlab.com/haproxy-haptic/scriggo/native"
+	"github.com/haproxy-haptic/scriggo/native"
 )
 
 func (e *ScriggoEngine) BindIncrementalSourceTransactionResources(
