@@ -12,7 +12,8 @@ import (
 )
 
 func (s *Session) Diagnostics(ctx context.Context) {
-	for _, namespace := range []string{s.Namespace, certManagerNamespace, argoNamespace, fluxNamespace, gitopsNamespace} {
+	// kube-system carries the kube-apiserver log, the only record of why a webhook call failed in transport (#300).
+	for _, namespace := range []string{s.Namespace, certManagerNamespace, argoNamespace, fluxNamespace, gitopsNamespace, "kube-system"} {
 		s.namespaceDiagnostics(ctx, namespace)
 	}
 	for _, resource := range []string{"haproxytemplateconfigs", "haproxycfgs", "haproxytemplatelibraries", "haproxyvalidationtests"} {
