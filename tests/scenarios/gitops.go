@@ -19,17 +19,16 @@ import (
 )
 
 const (
-	argoVersion              = "v3.5.3"
-	fluxVersion              = "v2.9.5"
-	gitopsCertManagerVersion = "v1.21.2"
-	gitopsRepository         = "http://chart-repository.gitops-test.svc.cluster.local:8080"
-	argoNamespace            = "argocd"
-	fluxNamespace            = "flux-system"
-	gitopsNamespace          = "gitops-test"
-	phaseInstalled           = "installed"
-	phaseUpgraded            = "upgraded"
-	phaseRejected            = "rejected"
-	phaseRecovered           = "recovered"
+	argoVersion      = "v3.5.3"
+	fluxVersion      = "v2.9.5"
+	gitopsRepository = "http://chart-repository.gitops-test.svc.cluster.local:8080"
+	argoNamespace    = "argocd"
+	fluxNamespace    = "flux-system"
+	gitopsNamespace  = "gitops-test"
+	phaseInstalled   = "installed"
+	phaseUpgraded    = "upgraded"
+	phaseRejected    = "rejected"
+	phaseRecovered   = "recovered"
 )
 
 type GitOpsOptions struct{ Provider, Certificates, Image string }
@@ -70,7 +69,7 @@ func (g *gitops) setup(ctx context.Context) error {
 		}
 	}
 	if g.options.Certificates == certManagerNamespace {
-		if err := g.installManifest(ctx, certManagerNamespace, "https://github.com/cert-manager/cert-manager/releases/download/"+gitopsCertManagerVersion+"/cert-manager.yaml", "", nil); err != nil {
+		if err := g.installManifest(ctx, certManagerNamespace, "https://github.com/cert-manager/cert-manager/releases/download/"+CertManagerVersion+"/cert-manager.yaml", "", nil); err != nil {
 			return err
 		}
 		for _, name := range []string{certManagerNamespace, certManagerWebhook, certManagerCAInjector} {

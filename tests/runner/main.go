@@ -129,7 +129,7 @@ func (options *options) addScenarioFlags(flags *flag.FlagSet) error {
 		}
 	}
 	if options.name == defaultsScenario {
-		flags.StringVar(&options.certManager, "cert-manager-version", envDefault("CERT_MANAGER_VERSION", "v1.16.2"), "cert-manager version")
+		flags.StringVar(&options.certManager, "cert-manager-version", envDefault("CERT_MANAGER_VERSION", scenarios.CertManagerVersion), "cert-manager version")
 		seconds, err := time.ParseDuration(envDefault("TIMEOUT", "300") + "s")
 		if err != nil {
 			return fmt.Errorf("TIMEOUT: %w", err)
@@ -138,7 +138,7 @@ func (options *options) addScenarioFlags(flags *flag.FlagSet) error {
 	}
 	if options.name == upgradeScenario || options.name == checkBaselinesScenario {
 		flags.StringVar(&options.baseline, "baseline", os.Getenv("BASELINE_CHART_VERSION"), "released chart version")
-		flags.StringVar(&options.certManager, "cert-manager-version", envDefault("CERT_MANAGER_VERSION", "v1.16.2"), "cert-manager version")
+		flags.StringVar(&options.certManager, "cert-manager-version", envDefault("CERT_MANAGER_VERSION", scenarios.CertManagerVersion), "cert-manager version")
 		flags.BoolVar(&options.listBaselines, "list-baselines", false, "list published upgrade baselines")
 	}
 	return nil

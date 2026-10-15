@@ -17,6 +17,9 @@ import (
 
 const certManagerNamespace = "cert-manager"
 
+// renovate: datasource=github-releases depName=cert-manager/cert-manager
+const CertManagerVersion = "v1.21.2"
+
 type PhaseError struct {
 	Code  int
 	Phase string
