@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Select several validation tests in one run by repeating `haptic validate --test`.
 - Add the `haptic_admission_render_slot_wait_seconds` metric: how long admission dry runs queue for a render slot.
+- `MUTEX_PROFILE_FRACTION` and `BLOCK_PROFILE_RATE` enable the controller's mutex and block profiles on `/debug/pprof`.
 
 ### Changed
 

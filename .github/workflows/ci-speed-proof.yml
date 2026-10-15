@@ -3829,6 +3829,7 @@ jobs:
       HAPTIC_E2E_AGENT_DEBUG: '1'
       TEST_RUN_PATTERN: TestScale
       CI_SUITE: '{"name":"scale","runner":"ubuntu-24.04-arm","kind":"nightly","suite":"scale"}'
+      PILOT_PROFILE_SCALE: '1'
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:

@@ -202,6 +202,10 @@ func runController(cmd *cobra.Command, _ []string) error {
 	klog.SetSlogLogger(logging.WithCancellationLogging(logger, ctx))
 
 	configureMemoryLimit(logger)
+	mutexProfileFraction, blockProfileRate, err := configureContentionProfiling()
+	if err != nil {
+		return err
+	}
 
 	// Log detected resource limits for observability.
 	// GOGC: report the env override if set, otherwise "default" (Go's Green Tea
@@ -224,7 +228,9 @@ func runController(cmd *cobra.Command, _ []string) error {
 		"log_level", logging.GetLevel(),
 		"gomaxprocs", gomaxprocs,
 		"gomemlimit", gomemlimit,
-		"gogc", cmp.Or(os.Getenv("GOGC"), "default"))
+		"gogc", cmp.Or(os.Getenv("GOGC"), "default"),
+		"mutex_profile_fraction", mutexProfileFraction,
+		"block_profile_rate", blockProfileRate)
 
 	// Configure build info for metrics.
 	// HAPROXY_MINOR is set by the haproxytech/haproxy-debian base image and contains

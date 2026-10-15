@@ -793,6 +793,12 @@ func helmInstallChart(ctx context.Context, caBundleB64 string) (context.Context,
 		if err != nil {
 			return ctx, fmt.Errorf("configure scale memory budget: %w", err)
 		}
+		// Lock-wait samples for .github/scripts/profile-scale.py: 1 in 10 mutex contentions, blocking per 1 ms.
+		for _, setting := range [][2]string{{"MUTEX_PROFILE_FRACTION", "10"}, {"BLOCK_PROFILE_RATE", "1000000"}} {
+			if valuesBytes, err = e2ecluster.WithControllerEnv(valuesBytes, setting[0], setting[1]); err != nil {
+				return ctx, fmt.Errorf("configure scale contention profiling: %w", err)
+			}
+		}
 	}
 	// Write the chosen values bytes to a temp file so helm can consume them.
 	valuesFile, err := os.CreateTemp("", "haptic-e2e-values-*.yaml")

@@ -322,6 +322,18 @@ Then, against the kept cluster:
   remove it (`kubectl set env ... GOMEMLIMIT-`) to measure the automemlimit
   default a real install gets.
 
+### Scale profiles
+
+The CI `scale` job runs `.github/scripts/profile-scale.py` alongside the test,
+and the `ci-evidence-scale` artifact keeps `.pilot/scale-profile/window-NNN/`:
+30-second windows from controller start to test end. Each window holds, per
+controller, `cpu.prof`, `heap.prof`, `mutex.prof`, `block.prof`, goroutines and
+metrics, plus `containers-start.json`/`containers-end.json` (`crictl stats` for
+every container on the node). Mutex and block profiles are cumulative; compare
+windows with `go tool pprof -base window-007/<pod>/mutex.prof window-008/<pod>/mutex.prof`.
+Locally, run the script beside `make test-e2e` and `touch .pilot/test-finished`
+afterwards; each run replaces `.pilot/scale-profile`.
+
 ### Architecture Validation
 
 Tests enforce clean architecture via `arch-go.yml`:
