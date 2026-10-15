@@ -186,6 +186,15 @@ func DurationBuckets() []float64 {
 	return []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0}
 }
 
+// AdmissionDurationBuckets returns histogram buckets for admission latency.
+// They resolve the 5–30s range around admission timeouts, which
+// DurationBuckets collapses into its last bucket and +Inf.
+//
+// Buckets: [0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0, 15.0, 30.0].
+func AdmissionDurationBuckets() []float64 {
+	return []float64{0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 7.5, 10.0, 15.0, 30.0}
+}
+
 // DeploymentDurationBuckets returns histogram buckets for HAProxy deployment duration.
 //
 // Deployments involve network calls to the agent and may wait for HAProxy

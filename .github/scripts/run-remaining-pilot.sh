@@ -43,7 +43,9 @@ sudo chown -R "$(id -u):$(id -g)" .pilot debug-logs
 if [[ -n "${PILOT_GO_CACHE_DIR:-}" ]]; then
     sudo chown -R "$(id -u):$(id -g)" "$PILOT_GO_CACHE_DIR"
     du --bytes --summarize "$PILOT_GO_CACHE_DIR" > .pilot/cache-size.txt
-    test "$(cut -f1 .pilot/cache-size.txt)" -lt 7516192768
+    if [[ "${PILOT_GO_CACHE_SAVES:-true}" == true ]]; then
+        test "$(cut -f1 .pilot/cache-size.txt)" -lt 7516192768
+    fi
 fi
 printf 'Suite: **%s**; exit: **%s**; duration: **%s seconds**\n' "$PILOT_SUITE" "$result" "$elapsed" >> "$GITHUB_STEP_SUMMARY"
 exit "$result"

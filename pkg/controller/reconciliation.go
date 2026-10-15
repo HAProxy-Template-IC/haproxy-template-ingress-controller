@@ -196,13 +196,14 @@ func createReconciliationComponents(
 	// snapshot into the *[]*<generated-struct> shape Scriggo's typed globals
 	// are declared against.
 	renderService := renderer.NewRenderService(&renderer.RenderServiceConfig{
-		Engine:             engine,
-		Config:             cfg,
-		Logger:             logger,
-		Capabilities:       capabilities.Capabilities(),
-		HAProxyPodStore:    haproxyPodStore,
-		HTTPStoreComponent: httpStoreComponent,
-		TypedResourceTypes: wiring.TypedResourceTypes,
+		Engine:                    engine,
+		Config:                    cfg,
+		Logger:                    logger,
+		Capabilities:              capabilities.Capabilities(),
+		HAProxyPodStore:           haproxyPodStore,
+		HTTPStoreComponent:        httpStoreComponent,
+		TypedResourceTypes:        wiring.TypedResourceTypes,
+		AdmissionSlotWaitObserver: setup.MetricsComponent.Metrics().RecordAdmissionRenderSlotWait,
 		// Its reconcile callers, the Coordinator and the Warmer, render under
 		// the leadership term and the iteration lifecycle respectively.
 		ColdRendersRunToCompletion: true,
