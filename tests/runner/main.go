@@ -125,7 +125,7 @@ func (options *options) addScenarioFlags(flags *flag.FlagSet) error {
 		flags.StringVar(&options.provider, "provider", "", "GitOps provider: argo or flux")
 		flags.StringVar(&options.certificates, "certificates", "external", "certificate source: external or cert-manager")
 		if options.nodeImage == "" {
-			options.nodeImage = "kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e"
+			options.nodeImage = "kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0"
 		}
 	}
 	if options.name == defaultsScenario {

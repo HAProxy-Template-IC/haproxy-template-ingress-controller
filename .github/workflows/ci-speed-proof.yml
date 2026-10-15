@@ -211,7 +211,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -230,7 +230,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"e2e-minimum-kubernetes-1","runner":"ubuntu-24.04-arm","kind":"arm","haproxy":"3.4","shard":"minimum-kubernetes-1","index":"1","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","baseline":"","certificates":"","provider":"","profile":"","channel":"","settings":"","suite":"","image":"","startup":""}'
+      CI_SUITE: '{"name":"e2e-minimum-kubernetes-1","runner":"ubuntu-24.04-arm","kind":"arm","haproxy":"3.4","shard":"minimum-kubernetes-1","index":"1","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","baseline":"","certificates":"","provider":"","profile":"","channel":"","settings":"","suite":"","image":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_gitops_flux_external:
@@ -249,7 +249,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: gitops
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -268,7 +268,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"lifecycle","name":"gitops-flux-external","suite":"gitops","provider":"flux","certificates":"external","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","haproxy":"","image":"","baseline":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"lifecycle","name":"gitops-flux-external","suite":"gitops","provider":"flux","certificates":"external","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","haproxy":"","image":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_acceptance:
@@ -1384,7 +1384,7 @@ jobs:
       E2E_SHARD_INDEX: '3'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -1403,7 +1403,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"e2e-minimum-kubernetes-3","runner":"ubuntu-24.04-arm","kind":"arm","haproxy":"3.4","shard":"minimum-kubernetes-3","index":"3","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","baseline":"","certificates":"","provider":"","profile":"","channel":"","settings":"","suite":"","image":"","startup":""}'
+      CI_SUITE: '{"name":"e2e-minimum-kubernetes-3","runner":"ubuntu-24.04-arm","kind":"arm","haproxy":"3.4","shard":"minimum-kubernetes-3","index":"3","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","baseline":"","certificates":"","provider":"","profile":"","channel":"","settings":"","suite":"","image":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_e2e_hp3_2_1:
@@ -1551,7 +1551,7 @@ jobs:
       E2E_SHARD_INDEX: '2'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -1570,7 +1570,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"e2e-minimum-kubernetes-2","runner":"ubuntu-24.04-arm","kind":"arm","haproxy":"3.4","shard":"minimum-kubernetes-2","index":"2","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","baseline":"","certificates":"","provider":"","profile":"","channel":"","settings":"","suite":"","image":"","startup":""}'
+      CI_SUITE: '{"name":"e2e-minimum-kubernetes-2","runner":"ubuntu-24.04-arm","kind":"arm","haproxy":"3.4","shard":"minimum-kubernetes-2","index":"2","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","baseline":"","certificates":"","provider":"","profile":"","channel":"","settings":"","suite":"","image":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_unit_rest:
@@ -1779,7 +1779,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: gitops
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -1798,7 +1798,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"lifecycle","name":"gitops-flux-cert-manager","suite":"gitops","provider":"flux","certificates":"cert-manager","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","haproxy":"","image":"","baseline":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"lifecycle","name":"gitops-flux-cert-manager","suite":"gitops","provider":"flux","certificates":"cert-manager","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","haproxy":"","image":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_upgrade_0_3_0_minimum:
@@ -1817,7 +1817,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -1836,7 +1836,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.3.0-minimum","suite":"upgrade","baseline":"0.3.0","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.3.0-minimum","suite":"upgrade","baseline":"0.3.0","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_gitops_argo_cert_manager:
@@ -1855,7 +1855,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: gitops
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -1874,7 +1874,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"lifecycle","name":"gitops-argo-cert-manager","suite":"gitops","provider":"argo","certificates":"cert-manager","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","haproxy":"","image":"","baseline":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"lifecycle","name":"gitops-argo-cert-manager","suite":"gitops","provider":"argo","certificates":"cert-manager","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","haproxy":"","image":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_upgrade_0_4_0_current:
@@ -1931,7 +1931,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -1950,7 +1950,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.2.2-minimum","suite":"upgrade","baseline":"0.2.2","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.2.2-minimum","suite":"upgrade","baseline":"0.2.2","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_upgrade_0_5_0_minimum:
@@ -1969,7 +1969,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -1988,7 +1988,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.5.0-minimum","suite":"upgrade","baseline":"0.5.0","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.5.0-minimum","suite":"upgrade","baseline":"0.5.0","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_gateway_churn:
@@ -2069,7 +2069,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -2088,7 +2088,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.4.0-minimum","suite":"upgrade","baseline":"0.4.0","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.4.0-minimum","suite":"upgrade","baseline":"0.4.0","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_upgrade_0_2_1_minimum:
@@ -2107,7 +2107,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -2126,7 +2126,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.2.1-minimum","suite":"upgrade","baseline":"0.2.1","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.2.1-minimum","suite":"upgrade","baseline":"0.2.1","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_gitops_argo_external:
@@ -2145,7 +2145,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: gitops
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -2164,7 +2164,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"lifecycle","name":"gitops-argo-external","suite":"gitops","provider":"argo","certificates":"external","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","haproxy":"","image":"","baseline":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"lifecycle","name":"gitops-argo-external","suite":"gitops","provider":"argo","certificates":"external","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","haproxy":"","image":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_upgrade_0_5_0_current:
@@ -2259,7 +2259,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -2278,7 +2278,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.2.0-minimum","suite":"upgrade","baseline":"0.2.0","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.2.0-minimum","suite":"upgrade","baseline":"0.2.0","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
   suite_integration_3_0:
@@ -2551,7 +2551,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -2570,7 +2570,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.1.0-minimum","suite":"upgrade","baseline":"0.1.0","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.1.0-minimum","suite":"upgrade","baseline":"0.1.0","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
     needs: suite_chart_minimum
@@ -3053,7 +3053,7 @@ jobs:
       E2E_SHARD_INDEX: '4'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: ''
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -3072,7 +3072,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"name":"e2e-minimum-kubernetes-4","runner":"ubuntu-24.04-arm","kind":"arm","haproxy":"3.4","shard":"minimum-kubernetes-4","index":"4","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","baseline":"","certificates":"","provider":"","profile":"","channel":"","settings":"","suite":"","image":"","startup":""}'
+      CI_SUITE: '{"name":"e2e-minimum-kubernetes-4","runner":"ubuntu-24.04-arm","kind":"arm","haproxy":"3.4","shard":"minimum-kubernetes-4","index":"4","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","baseline":"","certificates":"","provider":"","profile":"","channel":"","settings":"","suite":"","image":"","startup":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
     needs: suite_coverage_renderer
@@ -3482,7 +3482,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: plain
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -3501,7 +3501,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04","kind":"x64","name":"install-without-gateway-minimum","suite":"plain","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":"","baseline":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04","kind":"x64","name":"install-without-gateway-minimum","suite":"plain","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":"","baseline":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
     needs: suite_upgrade_0_4_0_current
@@ -4028,7 +4028,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -4047,7 +4047,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.4.1-minimum","suite":"upgrade","baseline":"0.4.1","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.4.1-minimum","suite":"upgrade","baseline":"0.4.1","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
     needs: suite_integration_3_2
@@ -4067,7 +4067,7 @@ jobs:
       E2E_SHARD_INDEX: '1'
       HAPTIC_E2E_PROFILE: ''
       HAPTIC_E2E_GWAPI_CHANNEL: standard
-      KIND_NODE_IMAGE: kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e
+      KIND_NODE_IMAGE: kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0
       HAPTIC_E2E_EXTRA_SET: controller.resources.requests.cpu=600m;controller.resources.limits.cpu=4;controller.resources.limits.memory=4Gi
       PILOT_SUITE: upgrade
       PILOT_CI_IMAGE: ghcr.io/haproxy-haptic/haptic-ci@sha256:b27b3629fe0597aa0e7f9222e02f3b95ca4edcbb7af12877fd7d34a833b9d3ad
@@ -4086,7 +4086,7 @@ jobs:
       PILOT_STARTUP_PROFILE: '0'
       PILOT_VALIDATION_TMPFS: '1'
       PILOT_NATIVE_BUILD: '1'
-      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.2.0-alpha.3-minimum","suite":"upgrade","baseline":"0.2.0-alpha.3","node":"kindest/node:v1.33.0@sha256:02f73d6ae3f11ad5d543f16736a2cb2a63a300ad60e81dac22099b0b04784a4e","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
+      CI_SUITE: '{"runner":"ubuntu-24.04-arm","kind":"upgrade","name":"upgrade-0.2.0-alpha.3-minimum","suite":"upgrade","baseline":"0.2.0-alpha.3","node":"kindest/node:v1.35.8@sha256:07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0","channel":"","index":"","profile":"","settings":"","shard":"","startup":"","provider":"","certificates":"","haproxy":"","image":""}'
     steps: *id001
     if: ${{ !cancelled() && inputs.verification_profile != 'prose' }}
     needs: suite_integration_3_3

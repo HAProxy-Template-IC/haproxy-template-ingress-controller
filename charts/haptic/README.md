@@ -6,7 +6,7 @@ Full documentation: [haproxy-haptic.org/docs](https://haproxy-haptic.org/docs/0.
 
 ## Prerequisites
 
-- Kubernetes **1.33+** for native sidecars and graceful HAProxy shutdown
+- Kubernetes **1.35+**, the oldest release the Kubernetes project still maintains
 - Helm **3.8+** — the `oci://` chart reference needs OCI registry support, generally available since Helm 3.8
 - **HAProxy 3.0+** — the chart deploys HAProxy by default and the SSL library requires 3.0+. Pin a specific series via `haproxyVersion`.
 - **cert-manager** (optional but recommended for production) — with its API present, the default HTTPS certificate is issued by [cert-manager](https://cert-manager.io/docs/installation/). Without it, the chart creates a long-lived self-signed development certificate; production users should provide a trusted certificate — see [SSL Certificates](https://haproxy-haptic.org/docs/0.5.0/ssl-certificates/).

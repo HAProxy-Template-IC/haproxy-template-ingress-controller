@@ -15,7 +15,7 @@ To try HAPTIC without a cluster, use the [browser example](#try-in-your-browser)
 
 ## Prerequisites
 
-- A Kubernetes 1.33 or newer cluster
+- A Kubernetes 1.35 or newer cluster
 - `kubectl` configured to access the cluster
 - Helm 3.8 or newer
 - Capacity for the [default installation](operations/performance.md): about
