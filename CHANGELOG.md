@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A replica that had been standby longer than 1.5 × `driftPreventionInterval` failed liveness as soon as it became leader, so the kubelet restarted it whenever it couldn't deploy right away, for example while a critical `http.Fetch` source was down.
+- `/livez` and `/readyz` now say why a component is unhealthy instead of reporting it with no reason.
 - The dataplane agent reported ready before its admin and drain sockets existed, so a client probing right after readiness could fail with `no such file or directory`.
 - The playground escapes quotes in resource, annotation, and template names, so a shared link can no longer inject HTML attributes into the output pane.
 - A cold render cancelled while a template published a shared value, such as a follower's render when its replica becomes leader, no longer deadlocks the replica's first render, which left admission denied and input rejections unreported.

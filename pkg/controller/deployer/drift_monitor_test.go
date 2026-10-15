@@ -186,3 +186,17 @@ func TestDriftMonitor_Name(t *testing.T) {
 
 	assert.Equal(t, DriftMonitorComponentName, monitor.Name())
 }
+
+func TestDriftPreventionMonitor_HealthyRightAfterStartFollowingLongStandby(t *testing.T) {
+	interval := 100 * time.Millisecond // stall timeout 150ms
+	monitor := NewDriftPreventionMonitor(testutil.NewTestBus(), testutil.NewTestLogger(), interval)
+
+	time.Sleep(200 * time.Millisecond) // standby before the lease is acquired (#328)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = monitor.Start(ctx) }()
+	<-monitor.SubscriptionReady()
+
+	require.NoError(t, monitor.HealthCheck())
+}

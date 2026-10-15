@@ -51,8 +51,12 @@ func (r *Registry) Status() map[string]ComponentInfo {
 		// Components in StatusStandby or StatusPending cannot meaningfully report health.
 		if comp.status == StatusRunning {
 			if checker, ok := comp.component.(HealthChecker); ok {
-				healthy := checker.HealthCheck() == nil
+				healthErr := checker.HealthCheck()
+				healthy := healthErr == nil
 				info.Healthy = &healthy
+				if healthErr != nil && info.Error == "" {
+					info.Error = healthErr.Error()
+				}
 			}
 		}
 

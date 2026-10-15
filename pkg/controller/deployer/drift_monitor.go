@@ -135,6 +135,10 @@ func (m *DriftPreventionMonitor) Start(ctx context.Context) error {
 	// fills up and logs critical drops forever (mirrors Coordinator).
 	defer m.eventBus.UnsubscribeTyped(m.eventChan)
 
+	// The stall clock starts with the leadership term, not at construction: a
+	// replica can be standby far longer than the stall timeout (#328).
+	m.healthTracker.RecordActivity()
+
 	// Signal that subscription is complete for SubscriptionReadySignaler interface.
 	m.MarkReady()
 

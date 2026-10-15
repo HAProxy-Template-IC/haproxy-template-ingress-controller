@@ -304,6 +304,7 @@ func TestRegistry_Status_WithHealthCheck(t *testing.T) {
 	info := status["healthy-comp"]
 	require.NotNil(t, info.Healthy)
 	assert.True(t, *info.Healthy)
+	assert.Empty(t, info.Error)
 
 	// Make unhealthy
 	comp.healthy = false
@@ -312,6 +313,8 @@ func TestRegistry_Status_WithHealthCheck(t *testing.T) {
 	info = status["healthy-comp"]
 	require.NotNil(t, info.Healthy)
 	assert.False(t, *info.Healthy)
+	// The probe body must say why, not just that the component is unhealthy (#328).
+	assert.Equal(t, "component unhealthy", info.Error)
 
 	cancel()
 	<-errChan
