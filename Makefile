@@ -1304,8 +1304,9 @@ restore-github-pages: ## Restore the complete pinned GitHub website baseline
 prepare-github-pages: ## Package a complete website below the GitHub Pages size limit
 	python3 -m scripts.ci.github_pages --source "$(PAGES_SOURCE)" --output "$(PAGES_OUTPUT)"
 
-test-github-pages-browser: ## Verify every packaged playground engine in a real browser
+test-github-pages-browser: ## Verify every packaged playground engine and the playground embed in a real browser
 	node scripts/tests/test_github_pages_browser.mjs "$(PAGES_OUTPUT)"
+	node --test docs/site/tests/playground-embed.mjs
 
 .PHONY: build-github-website retain-github-website assemble-github-website restore-current-github-website
 restore-current-github-website: ## Restore every version recorded in the GitHub website catalog
