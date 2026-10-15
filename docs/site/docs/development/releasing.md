@@ -44,7 +44,7 @@ haptic_repo=haproxy-haptic/HAPTIC
 
 ## Publish a main snapshot
 
-Every `main` commit whose canonical `CI` push run succeeds publishes a multi-architecture snapshot: controller images `main-<sha>-haproxy<series>`, the SPOA hub `main-<sha>`, Varnish `main-<sha>`, and chart `0.0.0-main.g<sha>`. The workflow checks every required job and the retained verification receipt, then publishes the exact verified commit. The controller and SPOA images build in parallel; the chart waits for both images and the native amd64 and arm64 SPOA smoke tests. A docs-only commit passes prose CI, which builds no images, so it publishes no snapshot.
+Every `main` commit whose canonical `CI` push run succeeds publishes a multi-architecture snapshot: controller images `main-<sha>-haproxy<series>`, the SPOA hub `main-<sha>`, Varnish `main-<sha>`, and chart `0.0.0-main.g<sha>`. The workflow checks every required job and the retained verification receipt, then publishes the exact verified commit. The controller and SPOA images build in parallel; the chart waits for both images and the native amd64 and arm64 SPOA smoke tests. A docs-only commit passes prose CI, which builds no images, so it publishes no snapshot, and a manual dispatch for such a run fails.
 
 After each publication, snapshots older than 180 days are deleted. A package version that also carries a release tag is never deleted.
 
