@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -126,10 +127,10 @@ func (s *Server) drain(stop <-chan struct{}) DrainResult {
 	}
 }
 
-func (s *Server) serveDrain(ctx context.Context) error {
+func (s *Server) serveDrain(ctx context.Context, listener net.Listener) error {
 	defer close(s.drainStop)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+api.PathDrain, s.handleDrain)
 	// Finish an active preStop drain before stopping the listener's handlers.
-	return s.serveUnix(ctx, s.cfg.DrainSocket, mux, s.cfg.DrainMaxWait+shutdownGrace)
+	return s.serveUnix(ctx, listener, mux, s.cfg.DrainMaxWait+shutdownGrace)
 }
