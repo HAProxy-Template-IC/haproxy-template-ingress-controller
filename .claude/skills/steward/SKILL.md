@@ -27,7 +27,8 @@ Handle every CI result and review until the pull request is merged or closed.
 - **Gitar review**: Gitar must review the final source SHA.
   - If Gitar posts that automatic reviews are paused (monthly limit), or has
     not reviewed the current head after CI has started, comment `Gitar review`
-    on the pull request. Once per head SHA.
+    on the pull request. Once per head SHA: skip it if a `Gitar review`
+    comment already exists newer than the head commit's push.
   - Fix valid findings. Answer each thread with the fix commit or, for an
     invalid finding, the evidence; then resolve it.
 - **Human review**: implement small asks; propose larger ones to the user
@@ -37,5 +38,6 @@ Handle every CI result and review until the pull request is merged or closed.
 
 Merge without asking once the required `verified` check passed for the head SHA
 and Gitar reviewed that SHA with no open findings or unresolved threads.
-Squash-merge with the head SHA pinned, as in `docs/agents/ci.md`; never bypass
-a required check. Then report the SHA, the run, and the review state to the user.
+Follow "Before merging" in `docs/agents/ci.md`: squash-merge with the reviewed
+head SHA pinned, never with `--admin`, and never bypass a required check. Then
+report the SHA, the run, and the review state to the user.
