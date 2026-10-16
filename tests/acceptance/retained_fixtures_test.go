@@ -403,7 +403,15 @@ func (f *retainedFleet) dumpOnFailure(ctx context.Context, t *testing.T) {
 // dumpLogs logs every line above DEBUG and the last tail lines.
 func (f *retainedFleet) dumpLogs(ctx context.Context, t *testing.T, pod *corev1.Pod, container string, tail int) {
 	t.Helper()
-	logs, err := Clientset().CoreV1().Pods(f.namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: container}).DoRaw(ctx)
+	f.dumpInstanceLogs(ctx, t, pod, container, tail, false)
+	if containerRestarts(pod, container) > 0 {
+		f.dumpInstanceLogs(ctx, t, pod, container, tail, true)
+	}
+}
+
+func (f *retainedFleet) dumpInstanceLogs(ctx context.Context, t *testing.T, pod *corev1.Pod, container string, tail int, previous bool) {
+	t.Helper()
+	logs, err := Clientset().CoreV1().Pods(f.namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: container, Previous: previous}).DoRaw(ctx)
 	lines := strings.Split(strings.TrimRight(string(logs), "\n"), "\n")
 	recent := max(len(lines)-tail, 0)
 	var kept []string
@@ -412,5 +420,9 @@ func (f *retainedFleet) dumpLogs(ctx context.Context, t *testing.T, pod *corev1.
 			kept = append(kept, line)
 		}
 	}
-	t.Logf("=== %s logs of %s (err %v) ===\n%s", container, pod.Name, err, strings.Join(kept, "\n"))
+	instance := "current"
+	if previous {
+		instance = "previous"
+	}
+	t.Logf("=== %s %s logs of %s (err %v) ===\n%s", instance, container, pod.Name, err, strings.Join(kept, "\n"))
 }
