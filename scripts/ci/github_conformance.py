@@ -178,12 +178,25 @@ def diagnostics(directory, *, run=subprocess.run):
                 "pods.json": kubectl + ["get", "pods", "-A", "-o", "json"],
                 "events.json": kubectl + ["get", "events", "-A", "-o", "json"],
                 "pod-details.txt": kubectl + ["describe", "pods", "-A"],
-                "jobs.json": kubectl + ["get", "jobs", "-n", "haptic", "-o", "json"]}
-    for component, container in (("pre-rollout-validation", "preflight"), ("controller", "controller"),
-                                  ("controller", "validators"), ("loadbalancer", "spoa-hub")):
+                "jobs.json": kubectl + ["get", "jobs", "-n", "haptic", "-o", "json"],
+                "services.json": kubectl + ["get", "services", "-A", "-o", "json"],
+                "endpointslices.json": kubectl + ["get", "endpointslices", "-A", "-o", "json"],
+                "servicel2statuses.json": kubectl + ["get", "servicel2statuses.metallb.io", "-A", "-o", "json"],
+                "kube-proxy-config.yaml": kubectl + ["get", "configmap", "kube-proxy", "-n", "kube-system", "-o", "yaml"],
+                "node-neighbours.txt": ["docker", "exec", "haptic-e2e-control-plane", "ip", "neigh", "show"]}
+    for namespace, selector, container in (
+            ("haptic", "app.kubernetes.io/component=pre-rollout-validation", "preflight"),
+            ("haptic", "app.kubernetes.io/component=controller", "controller"),
+            ("haptic", "app.kubernetes.io/component=controller", "validators"),
+            ("haptic", "app.kubernetes.io/component=loadbalancer", "spoa-hub"),
+            ("metallb-system", "app=metallb,component=controller", "controller"),
+            ("metallb-system", "app=metallb,component=speaker", "speaker"),
+            ("kube-system", "k8s-app=kube-proxy", "kube-proxy")):
+        component = selector.rpartition("=")[2]
+        prefix = component if namespace == "haptic" else f"{namespace}-{component}"
         for previous in (False, True):
-            name = f"{component}-{container}-{'previous' if previous else 'current'}.log"
-            commands[name] = kubectl + ["logs", "-n", "haptic", "-l", "app.kubernetes.io/component=" + component,
+            name = f"{prefix}-{container}-{'previous' if previous else 'current'}.log"
+            commands[name] = kubectl + ["logs", "-n", namespace, "-l", selector,
                                         "-c", container, "--prefix", "--tail=-1", "--max-log-requests=20"]
             if previous:
                 commands[name].append("--previous")
@@ -202,7 +215,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", action="store_true")
     parser.add_argument("--startup-only", action="store_true")
+    parser.add_argument("--diagnostics", type=Path, metavar="DIRECTORY",
+                        help="only collect cluster diagnostics into DIRECTORY")
     args = parser.parse_args()
+    if args.diagnostics:
+        diagnostics(args.diagnostics)
+        return
     if args.bundle and args.startup_only:
         raise ValueError("Startup diagnostics cannot produce a conformance report archive")
     sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
