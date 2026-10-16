@@ -7,8 +7,10 @@ import unittest
 
 ROOT = Path(__file__).parents[2]
 SELECT = "bash .github/scripts/spoa-test-image.sh select\n"
-BUILD = "bash .github/scripts/spoa-test-image.sh build > .pilot/spoa-build.log 2>&1 &\n"
-WAIT = 'wait "$spoa_build_pid" || { cat .pilot/spoa-build.log; exit 1; }\n'
+BUILD = "setsid bash .github/scripts/spoa-test-image.sh build > .pilot/spoa-build.log 2>&1 &\n"
+WAIT = 'wait "$spoa_build_pid" || exit 1\n'
+# An early exit kills the build's whole process group, so buildx doesn't outlive the job, and prints its log.
+REAP = '-- "-$spoa_build_pid"'
 
 
 class SPOATestImageTests(unittest.TestCase):
@@ -20,12 +22,17 @@ class SPOATestImageTests(unittest.TestCase):
         ):
             with self.subTest(script=script):
                 text = (ROOT / ".github/scripts" / script).read_text()
-                for step in (SELECT, BUILD, WAIT):
+                for step in (SELECT, BUILD, WAIT, REAP):
                     self.assertEqual(text.count(step), 1, step)
+                self.assertLess(text.index("trap "), text.index(controller_build))
                 self.assertLess(text.index(SELECT), text.index(BUILD))
                 self.assertLess(text.index(BUILD), text.index(controller_build))
                 self.assertLess(text.index(controller_build), text.index(WAIT))
                 self.assertLess(text.index(WAIT), text.rindex(suite))
+
+    def test_acceptance_skips_the_hub_it_disables(self):
+        text = (ROOT / ".github/scripts/run-remaining-suite.sh").read_text()
+        self.assertLess(text.index('if [[ "$PILOT_SUITE" != acceptance ]]; then'), text.index(SELECT))
 
     def test_selection_points_every_hub_container_at_the_local_image(self):
         with tempfile.TemporaryDirectory() as temp:
