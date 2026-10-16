@@ -91,9 +91,14 @@ class ScheduleTests(unittest.TestCase):
         weights = {"jobs": {"long": {"seconds": 1, "run_id": 7}, "failed": {"seconds": 9, "run_id": 7}}}
         self.assertEqual(record(weights, runs), {
             "jobs": {"long": {"seconds": 400}, "failed": {"seconds": 9, "run_id": 7}}, "source_runs": [0, 1, 2, 3, 4]})
+        runs[1][1][0]["conclusion"] = "failure"
+        sparse = {"jobs": {"long": {"seconds": 1, "run_id": 7}}}
+        self.assertEqual(record(sparse, runs)["jobs"]["long"], {"seconds": 1, "run_id": 7})
         runs[1][0]["conclusion"] = "failure"
         with self.assertRaises(ValueError):
             record(weights, runs)
+        with self.assertRaises(ValueError):
+            record(weights, runs[:4])
 
     def test_coverage_reuses_a_producer_lane_and_keeps_all_input_dependencies(self):
         jobs = {name: {"name": name, "env": {"CI_SUITE": "{}"}}

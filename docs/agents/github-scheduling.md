@@ -9,7 +9,7 @@ receipt, which binds all jobs to the same source and run attempt.
 `.github/job-duration-weights.json` records each job's upper-quartile runner
 duration across the successful CI runs in `source_runs`. Re-measure it when suite
 durations drift with `make schedule-github-verification RECORD_RUNS="<run-id> ..."`,
-passing several recent successful runs; stale weights put a long suite behind
+passing at least five recent successful runs; stale weights put a long suite behind
 another in one lane, which sets the wall clock. `make schedule-github-verification`
 places long suites first and fills all 60 execution lanes with shorter suites, and
 prints the longest planned lane. Coverage aggregation takes over the lane

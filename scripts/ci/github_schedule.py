@@ -14,6 +14,7 @@ from .github import GitHub, jobs_for_run
 
 JOB_PREFIX = "full / "
 HANDOFF_SECONDS = 4
+MIN_RECORDED_RUNS = 5
 
 
 def balance_groups(groups, durations, count, early, handoff_seconds):
@@ -109,6 +110,8 @@ def schedule(workflow, weights):
 
 def record(weights, runs, prefix=JOB_PREFIX):
     """Weight each job by its upper quartile, not median: a lane runs several jobs, so medians under-plan it."""
+    if len(runs) < MIN_RECORDED_RUNS:
+        raise ValueError(f"Record at least {MIN_RECORDED_RUNS} successful runs; fewer make the upper quartile their maximum")
     samples = defaultdict(list)
     for run, jobs in runs:
         if run["conclusion"] != "success":
@@ -118,7 +121,7 @@ def record(weights, runs, prefix=JOB_PREFIX):
                 started, completed = (datetime.datetime.fromisoformat(job[key])
                                       for key in ("started_at", "completed_at"))
                 samples[job["name"].removeprefix(prefix)].append((completed - started).total_seconds())
-    for name in weights["jobs"].keys() & samples.keys():
+    for name in {name for name in weights["jobs"].keys() & samples.keys() if len(samples[name]) >= MIN_RECORDED_RUNS}:
         weights["jobs"][name] = {"seconds": round(sorted(samples[name])[len(samples[name]) * 3 // 4])}
     weights["source_runs"] = [run["id"] for run, _ in runs]
     return weights
@@ -150,10 +153,12 @@ def main():
         repository = json.loads(Path(".github/ci-verification.json").read_text())["repository"]
         runs = [(run, jobs_for_run(api, repository, run))
                 for run in (api.get(f"repos/{repository}/actions/runs/{run_id}") for run_id in args.record)]
-        args.weights.write_text(json.dumps(record(weights, runs), indent=2) + "\n")
+        weights = record(weights, runs)
     text = args.workflow.read_text()
     workflow = yaml.safe_load(text)
     selected = schedule(workflow, weights)
+    if args.record:
+        args.weights.write_text(json.dumps(weights, indent=2) + "\n")
     args.workflow.write_text(keep_version_comments(text, yaml.safe_dump(workflow, sort_keys=False, width=120)))
     longest = longest_lane_seconds(selected, {name: row["seconds"] for name, row in weights["jobs"].items()})
     print(f"Scheduled {sum(map(len, selected))} jobs in {len(selected)} lanes, including coverage aggregation; "
