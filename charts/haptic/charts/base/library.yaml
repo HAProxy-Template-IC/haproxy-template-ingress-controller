@@ -40,14 +40,14 @@ _helm_load:
     # The route key is wanted by spans AND by the request metrics' `path` label,
     # so it outlives tracing — see haptic.routeKeyEnabled.
     - path: templateSnippets.util-route-key
-      when: '{{- if not (include "haptic.routeKeyEnabled" .) }}true{{ end -}}'
+      when: &routeKeyOff '{{- if not (include "haptic.routeKeyEnabled" .) }}true{{ end -}}'
     - path: templateSnippets.log-fields-108-route
-      when: '{{- if not (include "haptic.routeKeyEnabled" .) }}true{{ end -}}'
+      when: *routeKeyOff
     - path: templateSnippets.util-want-route
-      when: '{{- if not (include "haptic.routeKeyEnabled" .) }}true{{ end -}}'
+      when: *routeKeyOff
     # %U costs every record its bytes_in field, so only when request_size is on.
     - path: templateSnippets.log-fields-107-request-bytes
-      when: '{{- if not (and .Values.vector.enabled (dig "requestMetrics" "enabled" false .Values.vector) (dig "requestMetrics" "metrics" "request_size" false .Values.vector)) }}true{{ end -}}'
+      when: &requestBytesOff '{{- if not (and .Values.vector.enabled (dig "requestMetrics" "enabled" false .Values.vector) (dig "requestMetrics" "metrics" "request_size" false .Values.vector)) }}true{{ end -}}'
 #   - Composable macros: import and extend utility functions
 #
 # SSL/TLS infrastructure is in ssl.yaml (loaded separately when needed)
@@ -4402,13 +4402,12 @@ validationTests:
       - type: haproxy_valid
       - {type: not_contains, target: haproxy.cfg, pattern: 'bind \*:[0-9]+ accept-proxy'}
 
-  test-access-log-route-and-request-bytes-for-metrics:
-    description: >-
-      `route` and `bytes_in` are wanted by the per-request metrics, not only by
-      tracing, so both render with tracing off.
+  test-access-log-route-for-metrics:
+    _helm_skip_test: *routeKeyOff
+    description: The request metrics' `path` label wants `route`, so it renders with tracing off.
     extraContext:
       tracing: {enabled: false}
-      vector: {requestMetrics: {enabled: true, pathLabel: true, metrics: {request_size: true}}}
+      vector: {requestMetrics: {enabled: true, pathLabel: true}}
     fixtures:
       ingresses:
         - apiVersion: networking.k8s.io/v1
@@ -4426,9 +4425,32 @@ validationTests:
     assertions:
       - type: haproxy_valid
       - {type: contains, target: haproxy.cfg, pattern: '%\(route\)\[var\(txn\.route\)\]'}
-      - {type: contains, target: haproxy.cfg, pattern: '%\(bytes_in:sint\)U'}
       # The field is worthless without the lookup that fills it.
       - {type: contains, target: haproxy.cfg, pattern: 'set-var\(txn\.route\) var\(txn\.host_match\)'}
+
+  test-access-log-request-bytes-for-metrics:
+    _helm_skip_test: *requestBytesOff
+    description: The request_size metric wants `bytes_in`, so it renders with tracing off.
+    extraContext:
+      tracing: {enabled: false}
+      vector: {requestMetrics: {enabled: true, metrics: {request_size: true}}}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: { namespace: default, name: rt }
+          spec:
+            ingressClassName: haptic
+            rules:
+              - host: log.example.com
+                http:
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+                      backend: { service: { name: echo, port: { number: 80 } } }
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: haproxy.cfg, pattern: '%\(bytes_in:sint\)U'}
 
   test-access-log-route-and-request-bytes-absent-when-unused:
     description: >-
@@ -4446,6 +4468,7 @@ validationTests:
       - {type: not_contains, target: haproxy.cfg, pattern: 'set-var\(txn\.route\)'}
 
   test-access-log-route-still-follows-tracing:
+    _helm_skip_test: *routeKeyOff
     description: >-
       Moving `route` out of the tracing block must not change what tracing alone
       produces; a span without http.route loses the attribute UIs group on.

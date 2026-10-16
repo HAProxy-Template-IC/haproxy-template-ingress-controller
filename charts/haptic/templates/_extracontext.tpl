@@ -1043,6 +1043,7 @@
 {{- $_ := set $values.vector "enabled" .Values.vector.enabled }}
 {{- $_ := set $values.vector.requestMetrics "enabled" .Values.vector.requestMetrics.enabled }}
 {{- $_ := set $values.vector.requestMetrics "pathLabel" .Values.vector.requestMetrics.pathLabel }}
+{{- $_ := set $values.vector.requestMetrics.metrics "request_size" (dig "requestMetrics" "metrics" "request_size" false .Values.vector) }}
 {{- $deployedContext := dig "templatingSettings" "extraContext" dict (.Values.controller.config | default dict) }}
 {{- $testContext := $values.controller.config.templatingSettings.extraContext }}
 {{- $_ := set $testContext.tracing "enabled" (dig "tracing" "enabled" false $deployedContext) }}

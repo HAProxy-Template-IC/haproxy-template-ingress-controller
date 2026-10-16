@@ -24,7 +24,7 @@ _helm_load:
       when: '{{- if not (dig "tracing" "otlp" "endpoint" "" (.Values.controller.config.templatingSettings.extraContext | default dict)) }}true{{ end -}}'
     # Likewise the per-request metric pipeline when nothing consumes it.
     - path: templateSnippets.vector-request-metrics-transform
-      when: '{{- if not (dig "requestMetrics" "enabled" false .Values.vector) }}true{{ end -}}'
+      when: &requestMetricsOff '{{- if not (dig "requestMetrics" "enabled" false .Values.vector) }}true{{ end -}}'
 
 files:
   vector.yaml:
@@ -1212,6 +1212,7 @@ validationTests:
         pattern: 'logMetrics\.bad is kind "enum" and must list its accepted `values`'
 
   test-vector-request-metrics-families:
+    _helm_skip_test: *requestMetricsOff
     description: >-
       All seven families render with the full label set including `term`, each
       reaching the exporter its bucket domain belongs to.
@@ -1283,6 +1284,7 @@ validationTests:
         pattern: '(?s)metrics_sizes:\s+type: prometheus_exporter.{0,200}address: 0\.0\.0\.0:9599'
 
   test-vector-request-metrics-validity-gates:
+    _helm_skip_test: *requestMetricsOff
     description: >-
       The upstream timers are grouped by validity gate: recording a -1 timer as
       zero would claim the backend answered instantly on a request that never
@@ -1353,6 +1355,7 @@ validationTests:
         pattern: '(?s)request_metrics_base:.{0,900}parse_json\(m\)'
 
   test-vector-request-metrics-label-opt-outs:
+    _helm_skip_test: *requestMetricsOff
     description: >-
       Each label opt-out removes its tag from every family rather than blanking
       it, so the rest aggregate exactly as the ingress-nginx set does.
@@ -1405,6 +1408,7 @@ validationTests:
       - {type: contains, target: file:vector.yaml, pattern: '(?m)^      - request_metrics_core$'}
 
   test-vector-request-metrics-sink-wiring:
+    _helm_skip_test: *requestMetricsOff
     description: The generated exporter inputs must name transforms the config defines.
     fixtures: {}
     extraContext:
@@ -1467,6 +1471,7 @@ validationTests:
       - {type: contains, target: file:vector.yaml, pattern: '(?m)^    address: 0\.0\.0\.0:9598$'}
 
   test-vector-request-metrics-rejects-bad-prefix:
+    _helm_skip_test: *requestMetricsOff
     description: An invalid prefix must fail before it keeps Vector export unavailable.
     fixtures: {}
     extraContext:

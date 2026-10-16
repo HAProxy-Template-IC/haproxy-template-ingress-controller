@@ -766,10 +766,10 @@ validationTests:
 
 
   test-coraza-dispatch-enable-modsecurity-host-less-accepted:
-    # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
+    # Skip on HAProxy <3.1 (mode spop), without coraza, OR when nginx-ingress is disabled: the
     # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by
     # nginx-ingress's util-nginx-ingress-coraza-scan.
-    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) (include "haptic.spoaHub.pluginUnavailable" (dict "root" . "name" "coraza")) }}true{{ else }}false{{ end }}'
     description: "An Ingress with nginx.ingress.kubernetes.io/enable-modsecurity: \"false\" and a host-less rule renders successfully — coraza-disabled.map is now keyed by <ns>/<name> (resource id), so the host dimension is irrelevant and the previous fail-loud guard is obsolete."
     extraContext:
       haproxyVersion: "3.2"
