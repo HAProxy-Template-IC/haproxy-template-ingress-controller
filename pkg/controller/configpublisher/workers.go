@@ -119,10 +119,37 @@ func (c *Component) publishWorker(ctx context.Context) {
 			// Wake only; the drain at the top of the loop takes the item.
 		case <-c.publishThrottle.FiredCh():
 			c.flushPendingPublish(ctx)
+		case request := <-c.drainWork:
+			request.done <- c.publishNewestAcknowledged(ctx, request.ctx)
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+// publishNewestAcknowledged publishes, past the throttle, the newest queued
+// render with a worker receipt: the deployment intent names the newest
+// deployment, so only its checkpoint keeps recovery available. The queue
+// keeps every render until that publication commits.
+func (c *Component) publishNewestAcknowledged(ctx, drainCtx context.Context) error {
+	if err := drainCtx.Err(); err != nil {
+		return err
+	}
+	publishCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(drainCtx, cancel)()
+	work := c.newestAcknowledged()
+	if work == nil {
+		return nil
+	}
+	if !c.publicationAllowed() {
+		return errors.New("the acknowledged checkpoint stays unpublished while rendering is blocked")
+	}
+	if !c.executePublish(publishCtx, work) {
+		return errors.New("the acknowledged checkpoint was not published")
+	}
+	c.dropDeployedThrough(work)
+	return nil
 }
 
 // processPublishWork decides whether to publish immediately or buffer for throttle.
@@ -266,8 +293,9 @@ func (c *Component) skipIfAlreadyPublished(work *publishWorkItem, msg string) bo
 	return true
 }
 
-// executePublish performs the actual K8S API call to publish the config CRD.
-func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
+// executePublish performs the actual K8S API call to publish the config CRD
+// and reports whether the publication committed.
+func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) bool {
 	request := work.request
 	if request == nil {
 		request = c.buildPublishRequest(work.config, work.entry)
@@ -279,11 +307,11 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 	})
 	if !complete {
 		c.deferOrDiscardPublication(ctx, work)
-		return
+		return false
 	}
 	if !c.commitPublish(ctx, work, result) {
 		c.deferOrDiscardPublication(ctx, work)
-		return
+		return false
 	}
 
 	c.logger.Debug("Runtime configuration published successfully",
@@ -292,6 +320,7 @@ func (c *Component) executePublish(ctx context.Context, work *publishWorkItem) {
 		"checksum", work.entry.contentChecksum,
 		"correlation_id", work.correlationID,
 	)
+	return true
 }
 
 func (c *Component) commitPublish(

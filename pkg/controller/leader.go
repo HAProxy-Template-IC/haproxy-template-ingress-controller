@@ -37,7 +37,12 @@ import (
 type leaderOnlyComponents struct {
 	cancel context.CancelFunc
 	run    *lifecycle.ComponentRun
+	drain  func(context.Context) error
 }
+
+// leadershipDrainTimeout bounds how long a graceful stop waits for the term's
+// in-flight deployment and checkpoint before it releases the Lease.
+const leadershipDrainTimeout = 15 * time.Second
 
 // startReconciliationComponents starts all-replica reconciliation components using the lifecycle registry.
 // Leader-only components (Deployer, DeploymentScheduler, ConfigPublisher) are NOT started here.
@@ -77,7 +82,15 @@ func startLeaderOnlyComponents(
 
 	// Wait for every subscription before the election adapter replays buffered events.
 	run, startErr := registry.StartLeaderOnly(leaderCtx)
-	components := &leaderOnlyComponents{cancel: leaderCancel, run: run}
+	components := &leaderOnlyComponents{cancel: leaderCancel, run: run, drain: func(ctx context.Context) error {
+		if err := leaderCtx.Err(); err != nil {
+			return err
+		}
+		drainCtx, cancel := context.WithCancel(leaderCtx)
+		defer cancel()
+		defer context.AfterFunc(ctx, cancel)()
+		return registry.DrainLeaderOnly(drainCtx)
+	}}
 	startupFailed := startErr != nil && parentCtx.Err() == nil
 
 	errGroup.Go(func() error {
@@ -164,6 +177,30 @@ func (s *leaderCallbackState) take() *leaderOnlyComponents {
 	return components
 }
 
+// drain settles the running term's deployment and checkpoint before a
+// graceful stop releases the Lease. It runs under the term's context, which
+// client-go cancels when renewal fails, so a replica that lost the Lease
+// publishes nothing.
+func (s *leaderCallbackState) drain(logger *slog.Logger) {
+	if !s.isLeading() {
+		return
+	}
+	s.mu.Lock()
+	components := s.components
+	s.mu.Unlock()
+	if components == nil || components.drain == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), leadershipDrainTimeout)
+	defer cancel()
+	if err := components.drain(ctx); err != nil {
+		logger.Warn("Leadership term ends without its latest checkpoint; replacement pods cannot use retained configuration until the next deployment is acknowledged",
+			"error", err)
+		return
+	}
+	logger.Info("Leadership term drained")
+}
+
 // stop ends one leadership term. It does not latch: the same replica may
 // re-acquire the lease and start the components again.
 func (s *leaderCallbackState) stop(logger *slog.Logger) {
@@ -242,6 +279,7 @@ type electionRun struct {
 // election then resumes the Lease on its first acquire.
 func retireLeadership(setup *componentSetup, logger *slog.Logger) {
 	if setup.LeaderState != nil {
+		setup.LeaderState.drain(logger)
 		setup.LeaderState.retire()
 	}
 	if setup.Election != nil {

@@ -72,7 +72,10 @@ components are available, not that rendering succeeded.
 `RetainedConfigUnavailable` explains why HAPTIC can't start replacement pods.
 Possible reasons include no acknowledged checkpoint, changed ownership or content,
 no agreement with running pods, a newer deployment without a saved checkpoint,
-or rejection by the current HAProxy binary.
+or rejection by the current HAProxy binary. A newer deployment without a saved
+checkpoint follows a leader that stopped without a graceful shutdown shortly
+after deploying, or one that logged `Leadership term ends without its latest
+checkpoint`.
 Repair rendering or restore the complete original checkpoint from a trusted
 backup. Changing a checksum to match edited content doesn't restore its identity.
 

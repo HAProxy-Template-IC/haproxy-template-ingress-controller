@@ -60,6 +60,7 @@ func TestAllAcceptanceParallel(t *testing.T) {
 		buildRetainedConfigurationFeature("Recovery", 0, (*retainedFleet).assessRecovery),
 		buildRetainedConfigurationFeature("Recovery with 3200 watched inputs", 3200, (*retainedFleet).assessRecovery),
 		buildRetainedConfigurationFeature("Sudden leader loss", 0, (*retainedFleet).assessSuddenRecovery),
+		buildRetainedConfigurationFeature("Leader change right after a deployment", 1, (*retainedFleet).assessRecentDeployment),
 		buildRetainedConfigurationFeature("Tampering", 0, (*retainedFleet).assessTampering),
 		buildRetainedConfigurationFeature("Freshness", 0, (*retainedFleet).assessFreshness),
 		// Error scenarios tests

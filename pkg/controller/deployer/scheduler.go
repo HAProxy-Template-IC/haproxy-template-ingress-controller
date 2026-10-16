@@ -73,7 +73,10 @@ type schedulerState struct {
 	activeCorrelationID string
 	activeOccurrence    *rendercycle.Occurrence
 	deploymentStartTime time.Time
-	pending             *scheduledDeployment
+	// lastScheduled is the newest occurrence this term dispatched, whatever
+	// its completion: the deployer records its plan as the intent before applying.
+	lastScheduled *rendercycle.Occurrence
+	pending       *scheduledDeployment
 }
 
 // scheduledDeployment is the latest desired deployment waiting for the loop.
@@ -198,6 +201,13 @@ type DeploymentScheduler struct {
 	completed     chan struct{}
 	loopDone      chan struct{}
 
+	// Drain state, guarded by schedulerMutex; see Drain.
+	draining        bool
+	drainOccurrence *rendercycle.Occurrence
+	dispatching     bool
+	followUpArmed   bool
+	drainProgress   chan struct{}
+
 	retained            *retainedRecovery
 	retainedResults     chan retainedResult
 	retainedWorkers     sync.WaitGroup
@@ -266,6 +276,7 @@ func newDeploymentScheduler(eventBus *busevents.EventBus, logger *slog.Logger, m
 		minDeploymentInterval: minDeploymentInterval,
 		deploymentTimeout:     deploymentTimeout,
 		healthTracker:         lifecycle.NewProcessingTracker(SchedulerComponentName, lifecycle.DefaultProcessingTimeout),
+		drainProgress:         make(chan struct{}, 1),
 	}
 }
 
@@ -294,6 +305,8 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.schedulerMutex.Lock()
 	s.retryStopped = false
 	s.retryGeneration++
+	s.draining, s.drainOccurrence, s.dispatching, s.followUpArmed = false, nil, false, false
+	s.state.lastScheduled = nil
 	s.schedulerMutex.Unlock()
 
 	// Create deploy-loop channels fresh for this leadership term (see struct).

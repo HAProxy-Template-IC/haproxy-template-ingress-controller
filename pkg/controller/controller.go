@@ -219,9 +219,11 @@ type persistentInfra struct {
 	eventDropMetrics      *persistentEventDropMetrics
 	processCancel         context.CancelFunc
 	draining              atomic.Bool
-	introspectionRun      *persistentServerRun
-	metricsRun            *persistentServerRun
-	eventSource           *eventSourceDelegate
+	// leadership is the newest iteration's term, drained on process shutdown.
+	leadership       atomic.Pointer[leaderCallbackState]
+	introspectionRun *persistentServerRun
+	metricsRun       *persistentServerRun
+	eventSource      *eventSourceDelegate
 
 	// The process-owned admission listener stays bound between validator generations.
 	webhookMu     sync.Mutex
@@ -656,7 +658,9 @@ func Run(
 		infra.MetricsServer = pkgmetrics.NewServer(fmt.Sprintf(":%d", metricsPort), prometheus.NewRegistry())
 	}
 	shutdown := drainOnCancellation(ctx, procCtx, procCancel, func(drainCtx context.Context) error {
-		return infra.drainAdmission(drainCtx, logger)
+		err := infra.drainAdmission(drainCtx, logger)
+		infra.leadership.Load().drain(logger)
+		return err
 	})
 
 	iterations := &iterationSequence{logger: logger}

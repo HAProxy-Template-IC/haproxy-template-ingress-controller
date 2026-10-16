@@ -77,6 +77,21 @@ type SubscriptionReadySignaler interface {
 }
 ```
 
+### Drainer Interface
+
+Optional for leader-only components. `DrainLeaderOnly(ctx)` calls `Drain` on
+the running ones in registration order and stops at the first error, so the
+scheduler's drain (no newer plan, pending reloads observed) precedes the
+deployer's (no new deployment, Lease re-checked), which precedes the config
+publisher's checkpoint flush. The controller runs it under the term's context
+before a graceful stop releases the Lease.
+
+```go
+type Drainer interface {
+    Drain(ctx context.Context) error
+}
+```
+
 ## Registration
 
 Pass `leaderOnly=true` for components that only run on the elected leader:

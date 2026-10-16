@@ -38,7 +38,7 @@ func (s *DeploymentScheduler) scheduleOrQueueOccurrence(
 		return
 	}
 	s.schedulerMutex.Lock()
-	if contextCancelled(ctx) {
+	if contextCancelled(ctx) || !s.drainAdmitsLocked(identity.occurrence) {
 		s.schedulerMutex.Unlock()
 		return
 	}
@@ -62,7 +62,7 @@ func (s *DeploymentScheduler) scheduleOrQueueOccurrence(
 func (s *DeploymentScheduler) installPending(ctx context.Context, dep *scheduledDeployment) {
 	s.schedulerMutex.Lock()
 	defer s.schedulerMutex.Unlock()
-	if !s.pendingRevisionCurrentLocked(ctx, dep) {
+	if !s.pendingRevisionCurrentLocked(ctx, dep) || !s.drainAdmitsLocked(dep.occurrence) {
 		return
 	}
 	s.state.pending = dep
@@ -107,6 +107,7 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 		s.schedulerMutex.Lock()
 		dep := s.state.pending
 		s.state.pending = nil
+		s.dispatching = dep != nil
 		s.schedulerMutex.Unlock()
 
 		if dep == nil {
@@ -117,7 +118,12 @@ func (s *DeploymentScheduler) runDeployLoop(ctx context.Context) {
 			}
 			continue
 		}
-		if !s.dispatchPending(ctx, dep) {
+		dispatched := s.dispatchPending(ctx, dep)
+		s.schedulerMutex.Lock()
+		s.dispatching = false
+		s.signalDrainProgressLocked()
+		s.schedulerMutex.Unlock()
+		if !dispatched {
 			return // ctx cancelled
 		}
 	}
@@ -145,6 +151,7 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	s.state.activeDeploymentID = scheduledEvent.EventID()
 	s.state.activeCorrelationID = dep.correlationID
 	s.state.activeOccurrence = dep.occurrence
+	s.state.lastScheduled = dep.occurrence
 	s.lastPodSetHash = computePodSetHash(dep.endpoints)
 	s.schedulerMutex.Unlock()
 

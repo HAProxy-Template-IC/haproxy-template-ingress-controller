@@ -18,6 +18,7 @@ package acceptance
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,6 +53,66 @@ func (f *retainedFleet) assessSuddenRecovery(ctx context.Context, t *testing.T) 
 	t.Helper()
 	f.abruptFailover = true
 	f.assessRecovery(ctx, t)
+}
+
+func TestRetainedConfigurationAfterRecentDeployment(t *testing.T) {
+	testEnv.Test(t, buildRetainedConfigurationFeature("Leader change right after a deployment", 1, (*retainedFleet).assessRecentDeployment))
+}
+
+// assessRecentDeployment deletes the leader right after a deployment whose
+// receipt the publish throttle still holds (issue #358).
+func (f *retainedFleet) assessRecentDeployment(ctx context.Context, t *testing.T) {
+	t.Helper()
+	f.blockSource(ctx, t)
+	leader := f.refreshStandby(ctx, t)
+	f.waitCheckpoint(ctx, t)
+	f.deployWatchedInputs(ctx, t, 2)
+	plan := f.deployWatchedInputs(ctx, t, 3)
+	require.NoError(t, Clientset().CoreV1().Pods(f.namespace).Delete(ctx, leader, metav1.DeleteOptions{}))
+	require.NoError(t, WaitForPodTerminated(ctx, f.client, f.namespace, leader, retainedReadyBound))
+	// Captured after the stop: a graceful stop may still observe a paced reload.
+	old := f.captureFleet(ctx, t)
+	leader = f.leader(ctx, t)
+	f.waitRenderFailure(ctx, t, leader)
+	f.scale(ctx, t, f.deployment.Name, 3)
+	f.waitReady(ctx, t, 3)
+	f.assertUnchanged(ctx, t, old)
+	for _, pod := range f.pods(ctx, t) {
+		require.Equal(t, plan, f.state(ctx, t, pod.Name).AppliedPlanID, "pod %s must run the last deployment", pod.Name)
+	}
+	f.waitGauge(ctx, t, leader, 1)
+	f.repair(ctx, t, leader)
+}
+
+// deployWatchedInputs grows the watched set to count and returns the plan
+// once every HAProxy pod applied it.
+func (f *retainedFleet) deployWatchedInputs(ctx context.Context, t *testing.T, count int) string {
+	t.Helper()
+	_, err := Clientset().CoreV1().ConfigMaps(f.namespace).Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   fmt.Sprintf("watched-%05d", count-1),
+			Labels: map[string]string{"retained-fixture": f.namespace},
+		},
+		Data: map[string]string{"value": "healthy"},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+	var plan string
+	require.NoError(t, wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, retainedReadyBound, true, func(ctx context.Context) (bool, error) {
+		plan = ""
+		for _, pod := range f.pods(ctx, t) {
+			content, err := f.exec(ctx, pod.Name, "haproxy", "cat", "/etc/haproxy/haproxy.cfg")
+			if err != nil || !strings.Contains(content, fmt.Sprintf("# watched inputs: %d", count)) {
+				return false, nil
+			}
+			applied := f.state(ctx, t, pod.Name).AppliedPlanID
+			if plan != "" && applied != plan {
+				return false, nil
+			}
+			plan = applied
+		}
+		return plan != "", nil
+	}))
+	return plan
 }
 
 func TestRetainedConfigurationTampering(t *testing.T) {

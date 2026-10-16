@@ -52,6 +52,7 @@ type RetainedIntentStore interface {
 	ClaimDeploymentAuthority(context.Context, *configpublisher.DeploymentAuthority) error
 	RecordDeploymentIntent(context.Context, *configpublisher.DeploymentAuthority, string, string) error
 	CheckDeploymentIntent(context.Context, *configpublisher.DeploymentAuthority, string, string) error
+	CheckDeploymentAuthority(context.Context, *configpublisher.DeploymentAuthority) error
 }
 
 // RetainedStore provides snapshots and the durable deployment barrier.
@@ -109,6 +110,17 @@ func (c *Component) claimRetainedAuthority(ctx context.Context) error {
 	}
 	r.authority.Store(&authority)
 	return nil
+}
+
+func (c *Component) checkRetainedAuthority(ctx context.Context) error {
+	if c.retained == nil || c.retained.store == nil {
+		return nil
+	}
+	authority := c.retained.currentAuthority()
+	if authority == nil {
+		return errors.New("deployment authority is not claimed")
+	}
+	return c.retained.store.CheckDeploymentAuthority(ctx, authority)
 }
 
 func (c *Component) prepareRetainedDeployment(ctx context.Context, event *events.DeploymentScheduledEvent, req *deployRequest) {

@@ -136,6 +136,40 @@ transient API or agent failures. A new authenticated render cancels pending
 recovery. The first successful render uses the normal per-pod diff and runtime
 operations where supported, including for pods started from the checkpoint.
 
+### Graceful leader stop
+
+The publication throttle (`configPublishInterval`, 10 s by default) holds a
+receipt for up to one interval after its deployment, while the intent already
+names that deployment. A leader that stops in that window leaves the intent
+naming a plan no checkpoint holds, and the next leader correctly refuses every
+older checkpoint (issue #358). A graceful stop therefore drains the term before
+it releases the Lease: on process shutdown after admission drains, and before a
+same-replica hand-over. While the term still renews the Lease, the scheduler
+dispatches no plan other than the last one it dispatched, completed or timed
+out, and waits for that deployment and its pending-reload follow-ups, because a
+paced reload confirms the worker receipt only on the follow-up. The deployer
+then starts no further deployment, waits for any in flight, and re-reads the
+Lease to confirm that holder, epoch, and claim are still its own. Only then does
+the publisher handle every event already delivered and publish the newest
+acknowledged receipt past the throttle, through the normal checkpoint path and
+publication latch. The drain runs under the term's context, which ends when
+renewal fails, and is bounded to 15 s. A replica that lost the Lease, or whose
+Lease check fails, publishes nothing; the intent then keeps refusing older
+checkpoints exactly as before.
+
+A sudden stop (crash, OOM kill, node loss, or a grace period shorter than the
+drain) still leaves the window open: up to one publish interval plus the
+publication itself after the last acknowledged deployment, or an apply cut short
+after its intent. Closing it by construction would mean saving the complete
+checkpoint before recording each intent, which puts a full content-addressed
+`HAProxyCfg` write, its children, and their read-back on the critical path of
+every deployment, including runtime-only endpoint updates that run every few
+seconds. That is the etcd write rate the throttle exists to avoid, and a
+pre-acknowledgement checkpoint carries no worker receipt for a fleet of only
+bootstrap pods. Recording intent only after the checkpoint is saved would
+instead let a pod load bytes no intent names. Both alternatives are rejected;
+the supersession check stays unchanged.
+
 ### Publication while blocked
 
 A failed reconciliation cancels active ordinary publication and prevents queued
@@ -233,5 +267,15 @@ publication, forged ownership, mismatched content, pod disagreement, and the gua
 against applying to configured pods. They also cover takeover during an intent
 update, delayed writes from the previous leader, acknowledgement reordering, a
 newer apply without a saved checkpoint, and fleet changes before dispatch.
+`TestRetainedConfigurationAfterRecentDeployment` deletes the leader right after a
+deployment whose receipt the publish throttle still holds; replacement pods must
+start from that deployment's checkpoint.
+`TestGracefulLeaderStopLeavesTheNextLeaderAUsableCheckpoint` runs the production
+deployer, config publisher, and Lease fencing against fake API servers and a fake
+agent: a deployment inside the publish throttle, then a graceful stop, must leave
+the checkpoint the intent names. `TestDrainPublishesNothingAfterAnotherReplicaTookTheLease`
+proves that a term whose Lease another replica claimed writes no `HAProxyCfg`.
+`TestSchedulerDrainFollowsUpThePendingReloadAndDispatchesNoNewerPlan` covers a
+stop during a paced reload.
 `TestLeaderChangeReloadsNothing` remains the normal failover regression. Full
 merge-train validation is required before merge.

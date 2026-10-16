@@ -10,6 +10,7 @@ package deployer
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -53,7 +54,8 @@ func TestHandleDeploymentCancelRequest(t *testing.T) {
 			c.handleDeploymentCancelRequest(event)
 		})
 
-		ctx, cancel := c.beginDeployment(t.Context(), "any-deployment", "any-correlation")
+		ctx, cancel, begun := c.beginDeployment(t.Context(), "any-deployment", "any-correlation")
+		require.True(t, begun)
 		defer cancel()
 		assert.ErrorIs(t, ctx.Err(), context.Canceled)
 		assert.Empty(t, c.pendingCancellation)
@@ -98,10 +100,62 @@ func TestHandleDeploymentCancelRequest(t *testing.T) {
 		default:
 		}
 
-		ctx, cancel := c.beginDeployment(t.Context(), "next-deployment", "trace")
+		ctx, cancel, begun := c.beginDeployment(t.Context(), "next-deployment", "trace")
+		require.True(t, begun)
 		defer cancel()
 		assert.ErrorIs(t, ctx.Err(), context.Canceled)
 	})
+}
+
+func TestDrainWaitsForTheDeploymentInFlightAndStartsNoOther(t *testing.T) {
+	bus := busevents.NewEventBus(10)
+	bus.Start()
+	c := createTestDeployer(bus)
+	_, cancel, begun := c.beginDeployment(t.Context(), "in-flight", "trace")
+	require.True(t, begun)
+	defer cancel()
+
+	drained := make(chan error, 1)
+	go func() { drained <- c.Drain(t.Context()) }()
+	require.Eventually(t, func() bool {
+		c.cancelMu.Lock()
+		defer c.cancelMu.Unlock()
+		return c.draining
+	}, time.Second, time.Millisecond)
+	_, _, begun = c.beginDeployment(t.Context(), "after-drain", "trace")
+	assert.False(t, begun, "a draining term must start no deployment")
+	select {
+	case err := <-drained:
+		t.Fatalf("Drain returned %v before the deployment in flight finished", err)
+	default:
+	}
+
+	c.cancelMu.Lock()
+	close(c.deploymentDone)
+	c.deploymentDone = nil
+	c.cancelMu.Unlock()
+	require.NoError(t, <-drained)
+}
+
+func TestDrainOfAnEndedTermLeavesDeploymentsRunning(t *testing.T) {
+	bus := busevents.NewEventBus(10)
+	bus.Start()
+	c := createTestDeployer(bus)
+	ended, cancelEnded := context.WithCancel(t.Context())
+	cancelEnded()
+
+	require.ErrorIs(t, c.Drain(ended), context.Canceled)
+	_, cancel, begun := c.beginDeployment(t.Context(), "next-term", "trace")
+	require.True(t, begun, "an ended term's drain must not stop deployments")
+	cancel()
+}
+
+func TestDrainRefusesWhenANewerTermClaimedTheLease(t *testing.T) {
+	bus := busevents.NewEventBus(10)
+	bus.Start()
+	c := createTestDeployer(bus)
+	installRetainedTestIntent(c, &retainedTestIntent{authorityErr: errors.New("deployment authority belongs to a newer controller term")})
+	require.ErrorContains(t, c.Drain(t.Context()), "newer controller term")
 }
 
 func TestCancelActiveDeployment(t *testing.T) {

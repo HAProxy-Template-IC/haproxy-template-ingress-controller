@@ -682,6 +682,7 @@ func (s *DeploymentScheduler) schedulePendingReloadFollowUp(event *events.Deploy
 		defer done()
 		s.runRetry(generation, workRevision, pendingReloadFollowUpReason)
 	})
+	s.followUpArmed = true
 
 	// Renders keep dispatching while a reload is pending, and every completion
 	// re-arms this timer — dozens of identical lines per second on a
@@ -773,6 +774,7 @@ func (s *DeploymentScheduler) runFailureRetry(generation, workRevision uint64) {
 // runRetry re-dispatches the last validated render under a reason, if the
 // timer that fired is still the armed one and the term did not move on.
 func (s *DeploymentScheduler) runRetry(generation, workRevision uint64, reason string) {
+	defer s.settleFollowUp()
 	s.schedulerMutex.Lock()
 	if generation != s.retryGeneration {
 		s.schedulerMutex.Unlock()
@@ -789,7 +791,17 @@ func (s *DeploymentScheduler) runRetry(generation, workRevision uint64, reason s
 	s.rescheduleLastValidated(generation, workRevision, reason)
 }
 
+func (s *DeploymentScheduler) settleFollowUp() {
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	if s.retryTimer == nil {
+		s.followUpArmed = false
+	}
+	s.signalDrainProgressLocked()
+}
+
 func (s *DeploymentScheduler) stopRetryTimerLocked() {
+	s.followUpArmed = false
 	s.retryGeneration++
 	if s.retryTimer == nil {
 		return
@@ -838,6 +850,7 @@ func (s *DeploymentScheduler) failureRetryBackoff(attempt int) time.Duration {
 func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision uint64, reason string) {
 	s.schedulerMutex.Lock()
 	newerPending := s.state.pending != nil && s.state.pending.retryGeneration == 0
+	draining, drained := s.draining, s.drainOccurrence
 	s.schedulerMutex.Unlock()
 	if newerPending {
 		// A newer render is already waiting; dispatching it covers this one.
@@ -857,6 +870,9 @@ func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision u
 	correlationID := s.lastCorrelationID
 	endpoints := s.currentEndpoints
 	s.mu.Unlock()
+	if draining {
+		occurrence = drained
+	}
 
 	if len(endpoints) == 0 || occurrence == nil || occurrence.ValidateAuthentication() != nil {
 		s.logger.Debug("Fast retry skipped: no validated config or no endpoints")
@@ -936,6 +952,7 @@ func (s *DeploymentScheduler) resetDeploymentTerm() {
 	s.state.activeDeploymentID = ""
 	s.state.activeCorrelationID = ""
 	s.state.activeOccurrence = nil
+	s.state.lastScheduled = nil
 	s.state.pending = nil
 
 	s.retryStopped = true

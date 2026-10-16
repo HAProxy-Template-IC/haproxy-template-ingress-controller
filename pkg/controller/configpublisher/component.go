@@ -16,6 +16,7 @@ package configpublisher
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -263,6 +264,14 @@ type Component struct {
 	// flushes it on publishThrottle.FiredCh(). Protected by pendingMu.
 	pendingPublish *publishWorkItem
 	pendingMu      sync.Mutex
+
+	drainRequests chan drainRequest
+	drainWork     chan drainRequest
+}
+
+type drainRequest struct {
+	ctx  context.Context
+	done chan error
 }
 
 // Option configures the Component.
@@ -319,6 +328,8 @@ func New(
 		invalidSuperseded:    make(chan struct{}),
 		publicationRetryWait: waitForPublicationRetry,
 		endpointAuthorities:  make(map[podAuthorityKey]podAuthority),
+		drainRequests:        make(chan drainRequest),
+		drainWork:            make(chan drainRequest, 1),
 
 		deployedChecksumByPod: make(map[podAuthorityKey]string),
 	}
@@ -407,9 +418,55 @@ func (c *Component) Start(ctx context.Context) error {
 		case event := <-c.eventChan:
 			c.handleEvent(ctx, event)
 
+		case request := <-c.drainRequests:
+			c.acceptDrain(ctx, request)
+
 		case <-ctx.Done():
 			c.logger.Info("Config publisher shutting down", "reason", ctx.Err())
 			return ctx.Err()
+		}
+	}
+}
+
+// Drain publishes the newest acknowledged checkpoint without waiting for the
+// publish throttle, after handling every event delivered before the call.
+// The publication runs under the term's context, so a lost Lease stops it.
+func (c *Component) Drain(ctx context.Context) error {
+	request := drainRequest{ctx: ctx, done: make(chan error, 1)}
+	select {
+	case c.drainRequests <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Component) acceptDrain(ctx context.Context, request drainRequest) {
+	// A new term starts only after the previous term's context ended.
+	if err := request.ctx.Err(); err != nil {
+		request.done <- err
+		return
+	}
+	c.handleDeliveredEvents(ctx)
+	select {
+	case c.drainWork <- request:
+	default:
+		request.done <- errors.New("a checkpoint flush is already pending")
+	}
+}
+
+func (c *Component) handleDeliveredEvents(ctx context.Context) {
+	for {
+		select {
+		case event := <-c.eventChan:
+			c.handleEvent(ctx, event)
+		default:
+			return
 		}
 	}
 }
@@ -450,6 +507,7 @@ func (c *Component) preparePublicationTerm() {
 
 	c.publishWork = make(chan *publishWorkItem, publishWorkChannelSize)
 	c.validationFailedWork = make(chan *validationFailedWorkItem, publishWorkChannelSize)
+	c.drainWork = make(chan drainRequest, 1)
 
 	c.deployedPendingMu.Lock()
 	c.deployedPending = nil

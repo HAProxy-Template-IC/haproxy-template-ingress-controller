@@ -17,6 +17,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -126,4 +127,24 @@ func (r *Registry) StartLeaderOnly(ctx context.Context) (*ComponentRun, error) {
 	}
 
 	return run, nil
+}
+
+// DrainLeaderOnly drains the running leader-only components in registration
+// order and stops at the first failure, so no component acts on work an
+// earlier one could not settle.
+func (r *Registry) DrainLeaderOnly(ctx context.Context) error {
+	r.mu.RLock()
+	var drainers []*registeredComponent
+	for _, comp := range r.components {
+		if _, ok := comp.component.(Drainer); ok && comp.leaderOnly && comp.status == StatusRunning {
+			drainers = append(drainers, comp)
+		}
+	}
+	r.mu.RUnlock()
+	for _, comp := range drainers {
+		if err := comp.component.(Drainer).Drain(ctx); err != nil {
+			return fmt.Errorf("draining %s: %w", comp.name, err)
+		}
+	}
+	return nil
 }

@@ -95,6 +95,12 @@ type SubscriptionReadySignaler interface {
 	SubscriptionReady() <-chan struct{}
 }
 
+// Drainer settles a leader-only component's in-flight work while its term
+// still holds the Lease; see Registry.DrainLeaderOnly.
+type Drainer interface {
+	Drain(ctx context.Context) error
+}
+
 // Status represents the current lifecycle state of a component.
 type Status string
 

@@ -63,6 +63,8 @@ Each worker is a single goroutine. The publish worker enforces the leading-edge 
 
 An incomplete publication stays on its worker and retries transient failures with bounded exponential backoff. The retry uses the immutable request snapshot captured at enqueue time. A newer validation generation interrupts and supersedes an older validation retry, while deploy-driven work retains arrival order without superseding validation work. Permanent API rejections release the worker for later items. Only a complete, still-authoritative publication advances content deduplication or emits `ConfigPublishedEvent`. Validation-driven repeats reconcile same-checksum resources idempotently, so deletion or metadata drift heals without duplicate completion events. Each leadership term owns fresh queues, throttles, retry scheduling, and subscription-readiness state.
 
+`Drain(ctx)` (the `lifecycle.Drainer` hook a graceful leader stop calls after the deployer's drain) handles every event already delivered, then publishes the newest queued deploy-driven render that carries a worker receipt on the publish worker, past the throttle and subject to the failure latch. Once that publication commits, the older queued renders are dropped: the deployment intent names the newest deployment, so only its checkpoint keeps retained recovery available (ADR-0033). A failed publication leaves the queue as it was. A drain whose term already ended changes nothing.
+
 ## See Also
 
 - [`pkg/k8s/configpublisher`](../../k8s/configpublisher/) — the underlying `Publisher` that does the actual CRD writes
