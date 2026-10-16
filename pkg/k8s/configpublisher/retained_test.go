@@ -44,7 +44,12 @@ func retainedPublishRequest(t *testing.T) PublishRequest {
 
 func retainedPublishRequestWithConfig(t *testing.T, config string) PublishRequest {
 	t.Helper()
-	fixture := newConfigPublisherOutputFixtureWithConfig(t, config)
+	return retainedPublishRequestWithMaps(t, config, 0)
+}
+
+func retainedPublishRequestWithMaps(t *testing.T, config string, extraMaps int) PublishRequest {
+	t.Helper()
+	fixture := newConfigPublisherOutputFixtureWithMaps(t, config, extraMaps)
 	req := basePublishRequest()
 	req.OutputSnapshot = fixture.snapshot
 	planID, err := fixture.snapshot.PlanID()
@@ -162,7 +167,7 @@ func TestRetainedPublicationSurvivesNewUnacknowledgedRender(t *testing.T) {
 	_, err = publisher.LoadRetained(ctx, req.TemplateConfigNamespace, req.TemplateConfigName, req.TemplateConfigUID)
 	require.NoError(t, err)
 	for _, action := range crd.Actions() {
-		assert.Equal(t, "get", action.GetVerb(), "recovery must not publish or clean up")
+		assert.Contains(t, []string{"get", "list"}, action.GetVerb(), "recovery must not publish or clean up")
 	}
 }
 
@@ -463,4 +468,96 @@ func TestRetainedReadsCheckpointOwnedFiles(t *testing.T) {
 	require.NoError(t, err)
 	_, err = publisher.LoadRetained(ctx, req.TemplateConfigNamespace, req.TemplateConfigName, req.TemplateConfigUID)
 	require.ErrorContains(t, err, "content address differs", "a shared owner needs a shared name")
+}
+
+// Each checkpoint publication, and each republication of a committed one,
+// reads the shared children once per kind for publication and once per kind
+// for verification, independent of how many children there are.
+func TestRetainedPublicationReadsSharedChildrenPerKind(t *testing.T) {
+	const checkpoints, republications, extraMaps, kinds = 2, 3, 24, 4
+	ctx, kube, crd, publisher := newTestPublisher(t)
+	childResources := map[string]bool{"haproxymapfiles": true, "haproxygeneralfiles": true, "haproxycrtlistfiles": true, "secrets": true}
+	reads := map[string]int{}
+	publishRetained := func(request *PublishRequest) {
+		_, err := publisher.PublishConfig(ctx, request)
+		require.NoError(t, err)
+		crd.ClearActions()
+		kube.ClearActions()
+		require.NoError(t, publisher.PublishRetained(ctx, request))
+		for _, action := range append(crd.Actions(), kube.Actions()...) {
+			if childResources[action.GetResource().Resource] && (action.GetVerb() == "get" || action.GetVerb() == "list") {
+				reads[action.GetVerb()]++
+			}
+		}
+	}
+	var last PublishRequest
+	for i := range checkpoints {
+		last = retainedPublishRequestWithMaps(t, fmt.Sprintf("global\n  maxconn %d\n", 1000+i), extraMaps)
+		publishRetained(&last)
+	}
+	for range republications {
+		publishRetained(&last)
+	}
+
+	publications := checkpoints + republications
+	assert.Equal(t, map[string]int{"list": 2 * kinds * publications}, reads)
+	loaded, err := publisher.LoadRetained(ctx, last.TemplateConfigNamespace, last.TemplateConfigName, last.TemplateConfigUID)
+	require.NoError(t, err)
+	require.Len(t, loaded, checkpoints)
+	for i := range loaded {
+		require.NoError(t, loaded[i].Authority.ValidateSnapshot(loaded[i].Output))
+	}
+}
+
+func TestRetainedRepublicationRepairsSharedChildren(t *testing.T) {
+	ctx, kube, crd, publisher := newTestPublisher(t)
+	req := retainedPublishRequest(t)
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.NoError(t, publisher.PublishRetained(ctx, &req))
+	namespace := req.TemplateConfigNamespace
+	maps := crd.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace)
+	listed, err := maps.List(ctx, metav1.ListOptions{LabelSelector: retainedLabel})
+	require.NoError(t, err)
+	require.Len(t, listed.Items, 1)
+	original := listed.Items[0].Spec
+	tampered := listed.Items[0].DeepCopy()
+	tampered.Spec.Entries = "tampered backend\n"
+	_, err = maps.Update(ctx, tampered, metav1.UpdateOptions{})
+	require.NoError(t, err)
+	secrets, err := kube.CoreV1().Secrets(namespace).List(ctx, metav1.ListOptions{LabelSelector: retainedLabel})
+	require.NoError(t, err)
+	require.NotEmpty(t, secrets.Items)
+	deleted := secrets.Items[0].Name
+	require.NoError(t, kube.CoreV1().Secrets(namespace).Delete(ctx, deleted, metav1.DeleteOptions{}))
+
+	require.NoError(t, publisher.PublishRetained(ctx, &req))
+	repaired, err := maps.Get(ctx, tampered.Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, original, repaired.Spec)
+	_, err = kube.CoreV1().Secrets(namespace).Get(ctx, deleted, metav1.GetOptions{})
+	require.NoError(t, err)
+	_, err = publisher.LoadRetained(ctx, namespace, req.TemplateConfigName, req.TemplateConfigUID)
+	require.NoError(t, err)
+}
+
+func TestRetainedPublicationReadsLiveWhenListingMissesChild(t *testing.T) {
+	ctx, _, crd, publisher := newTestPublisher(t)
+	req := retainedPublishRequest(t)
+	_, err := publisher.PublishConfig(ctx, &req)
+	require.NoError(t, err)
+	require.NoError(t, publisher.PublishRetained(ctx, &req))
+	crd.PrependReactor("list", "haproxymapfiles", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, &v1.HAProxyMapFileList{}, nil
+	})
+	crd.ClearActions()
+	require.NoError(t, publisher.PublishRetained(ctx, &req))
+	var mapReads []string
+	for _, action := range crd.Actions() {
+		if action.GetResource().Resource == "haproxymapfiles" {
+			mapReads = append(mapReads, action.GetVerb())
+		}
+	}
+	assert.Equal(t, []string{"list", "create", "get", "list", "get"}, mapReads,
+		"a child the listing misses is created, refused as existing, and then read live")
 }

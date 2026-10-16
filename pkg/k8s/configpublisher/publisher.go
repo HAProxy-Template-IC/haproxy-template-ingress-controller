@@ -504,11 +504,14 @@ func (p *Publisher) publishAuxiliaryFiles(
 	result *PublishResult,
 ) error {
 	suffix, scope := req.NameSuffix, runtimeConfig.Name+"\x00"+string(runtimeConfig.UID)
-	if req.RetainedPlan != "" {
-		suffix, scope = retainedChildSuffix, req.TemplateConfigName+"\x00"+string(req.TemplateConfigUID)
-	}
 	files := req.AuxiliaryFiles
 	var err error
+	if req.RetainedPlan != "" {
+		suffix, scope = retainedChildSuffix, req.TemplateConfigName+"\x00"+string(req.TemplateConfigUID)
+		if req.retainedChildren, err = p.listRetainedChildren(ctx, req.TemplateConfigNamespace, req.TemplateConfigUID, files.kinds()); err != nil {
+			return incompletePublicationError(PublicationStageAuxiliary, runtimeConfig.Namespace, runtimeConfig.Name, "AuxiliaryFiles", runtimeConfig.Name, err)
+		}
+	}
 	if result.MapFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindMapFile, suffix, scope, files.MapFiles,
 		func(file auxiliaryfiles.MapFile) (string, string) {
 			return p.generateMapFileName(path.Base(file.Path)), file.Path

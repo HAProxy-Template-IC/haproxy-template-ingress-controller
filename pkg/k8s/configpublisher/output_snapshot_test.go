@@ -16,6 +16,7 @@ package configpublisher
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -282,6 +283,11 @@ func newConfigPublisherOutputFixture(tb testing.TB) configPublisherOutputFixture
 
 func newConfigPublisherOutputFixtureWithConfig(tb testing.TB, config string) configPublisherOutputFixture {
 	tb.Helper()
+	return newConfigPublisherOutputFixtureWithMaps(tb, config, 0)
+}
+
+func newConfigPublisherOutputFixtureWithMaps(tb testing.TB, config string, extraMaps int) configPublisherOutputFixture {
+	tb.Helper()
 	reload := true
 	files := &dataplane.AuxiliaryFiles{
 		MapFiles: []auxiliaryfiles.MapFile{{
@@ -306,6 +312,11 @@ func newConfigPublisherOutputFixtureWithConfig(tb testing.TB, config string) con
 		CRTListFiles: []auxiliaryfiles.CRTListFile{{
 			Path: "ssl/frontends.list", Content: "site.pem example.test\n",
 		}},
+	}
+	for i := range extraMaps {
+		files.MapFiles = append(files.MapFiles, auxiliaryfiles.MapFile{
+			Path: fmt.Sprintf("maps/extra-%d.map", i), Content: fmt.Sprintf("extra-%d.test backend\n", i),
+		})
 	}
 	artifactAuthority := renderartifact.NewAuthority()
 	artifacts, err := dataplane.BuildAuxiliaryFileSnapshot(artifactAuthority, nil, files)
@@ -332,6 +343,10 @@ func newConfigPublisherOutputFixtureWithConfig(tb testing.TB, config string) con
 			exactPublisherPlanFile("ssl/frontends.list", renderplan.FileKindCRTList, false, "site.pem example.test\n"),
 			exactPublisherPlanFile("files/dynamic-ca.pem", renderplan.FileKindCA, false, "dynamic ca\n"),
 		},
+	}
+	for _, file := range files.MapFiles[1:] {
+		plan.Maps[file.Path] = renderplan.Map{Path: file.Path, Ordered: true, Entries: renderplan.ParseMapEntries(file.Content)}
+		plan.Files = append(plan.Files, exactPublisherPlanFile(file.Path, renderplan.FileKindMap, false, file.Content))
 	}
 	plan.ComputeID()
 	outputAuthority, err := renderoutput.NewAuthority(renderplan.NewAuthority(), artifactAuthority)
