@@ -24,6 +24,7 @@ package warmer
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -85,6 +86,8 @@ type Component struct {
 	followerCtx    context.Context
 	cancelFollower context.CancelFunc
 	requests       chan context.Context
+	// failing is whether the last follower render failed; only transitions log above Debug.
+	failing bool
 }
 
 // Warmed is closed once a render left a committed graph behind, which is when
@@ -196,11 +199,17 @@ func (c *Component) render(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	if err != nil {
-		if context.Cause(ctx) == nil {
-			c.Logger().Debug("Follower render failed", "error", err)
-		}
+	if pipeline.RenderHeld(err) {
+		c.Logger().Debug("Follower render skipped while rendering is paused", "error", err)
 		return
+	}
+	if err != nil {
+		c.renderFailed(err)
+		return
+	}
+	if c.failing {
+		c.failing = false
+		c.Logger().Info("Follower renders succeed again")
 	}
 	if c.metrics != nil {
 		c.metrics.RecordRender(result.CacheState)
@@ -212,4 +221,17 @@ func (c *Component) render(ctx context.Context) {
 		"render_ms", result.RenderDurationMs,
 		"cache_state", result.CacheState,
 		"cache_build_ms", result.CacheBuildMs)
+}
+
+func (c *Component) renderFailed(err error) {
+	if c.metrics != nil {
+		c.metrics.RecordRenderFailure(c.graphWarm == nil || c.graphWarm())
+	}
+	if c.failing || pipeline.InputsMoved(err) || errors.Is(err, stores.ErrSnapshotChanged) {
+		c.Logger().Debug("Follower render failed", "error", err)
+		return
+	}
+	c.failing = true
+	c.Logger().Warn("Follower render failed, so a leadership change on this replica starts cold. Fix the error it reports.",
+		"error", err)
 }

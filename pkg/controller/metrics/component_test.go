@@ -93,13 +93,28 @@ func TestComponent_ReconciliationEvents(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ReconciliationTotal))
 	assert.Equal(t, 0.0, testutil.ToFloat64(metrics.ReconciliationErrors))
 
-	eventBus.Publish(events.NewReconciliationFailedEvent("template error", "render", nil))
+	eventBus.Publish(events.NewReconciliationFailedEventWithStatusSnapshot("template error", "render", 2500, nil))
 
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify error counter incremented
 	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.ReconciliationTotal))
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.ReconciliationErrors))
+	assert.InDelta(t, 4.0, histogramSum(t, registry, "haptic_reconciliation_duration_seconds"), 1e-9,
+		"a failed cycle adds its duration")
+}
+
+func histogramSum(t *testing.T, registry *prometheus.Registry, name string) float64 {
+	t.Helper()
+	families, err := registry.Gather()
+	require.NoError(t, err)
+	for _, family := range families {
+		if family.GetName() == name {
+			return family.GetMetric()[0].GetHistogram().GetSampleSum()
+		}
+	}
+	t.Fatalf("metric %s is not registered", name)
+	return 0
 }
 
 func TestComponent_DeploymentEvents(t *testing.T) {

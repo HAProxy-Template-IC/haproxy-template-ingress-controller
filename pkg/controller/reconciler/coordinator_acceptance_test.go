@@ -26,12 +26,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/helpers"
 	controllerhttpstore "github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pipeline"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercycle"
@@ -55,6 +58,8 @@ type acceptanceHarness struct {
 	coordinator *Coordinator
 	routes      *k8sstore.MemoryStore
 	rendered    chan renderedOutput
+	metrics     *metrics.Metrics
+	stop        func()
 }
 
 type renderedOutput struct {
@@ -103,6 +108,7 @@ func newAcceptanceHarnessWithTemplate(t *testing.T, pageURL, template string, su
 	harness := &acceptanceHarness{
 		t: t, bus: bus, component: component, service: service, routes: routes,
 		rendered: make(chan renderedOutput, 16),
+		metrics:  metrics.NewMetrics(prometheus.NewRegistry()),
 	}
 	require.NoError(t, routes.Add(harness.route(pageURL, ""), []string{"default", "a"}))
 	harness.coordinator = NewCoordinator(&CoordinatorConfig{
@@ -110,6 +116,8 @@ func newAcceptanceHarnessWithTemplate(t *testing.T, pageURL, template string, su
 		Pipeline:       pipeline.New(&pipeline.PipelineConfig{Renderer: service, Logger: logger}),
 		StoreProvider:  stores.NewRealStoreProvider(map[string]stores.Store{"routes": routes}),
 		HTTPAcceptance: component,
+		GraphWarm:      service.IncrementalGraphWarm,
+		Metrics:        harness.metrics,
 		Logger:         logger,
 	})
 	observed := bus.Subscribe("acceptance-harness", 64)
@@ -125,10 +133,22 @@ func newAcceptanceHarnessWithTemplate(t *testing.T, pageURL, template string, su
 		defer close(stopped)
 		_ = harness.coordinator.Start(ctx)
 	}()
-	t.Cleanup(func() {
+	componentStopped := make(chan struct{})
+	go func() {
+		defer close(componentStopped)
+		_ = component.Start(ctx)
+	}()
+	harness.stop = func() {
 		cancel()
-		<-stopped
-	})
+		for _, done := range []chan struct{}{stopped, componentStopped} {
+			select {
+			case <-done:
+			case <-time.After(testutil.EventTimeout):
+				t.Fatal("the coordinator or the HTTP store did not stop")
+			}
+		}
+	}
+	t.Cleanup(harness.stop)
 	select {
 	case <-harness.coordinator.SubscriptionReady():
 	case <-time.After(testutil.EventTimeout):
@@ -425,10 +445,51 @@ func TestCriticalFetchFailureReportsBlockedReconciliation(t *testing.T) {
 	failure := testutil.WaitForEvent[*events.TemplateRenderFailedEvent](t, failures, 5*time.Second)
 	require.Contains(t, failure.Error, "503")
 	testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, failures, testutil.EventTimeout)
-	require.Eventually(t, func() bool { return h.coordinator.ledger.attempted.Load() >= 2 }, 5*time.Second, 5*time.Millisecond)
 	repaired.Store(true)
 	require.Equal(t, "a=page\n", h.deployedFor("http_content_accepted").config)
 	require.NoError(t, h.coordinator.ledger.criticalContentFailure())
+}
+
+// The leader without a critical source's content reports the failed
+// reconciliation once and neither renders nor fetches again per trigger.
+func TestUnavailableCriticalSourceDoesNotReRenderPerReconcile(t *testing.T) {
+	var requests atomic.Int64
+	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(page.Close)
+	var observed <-chan busevents.Event
+	template := strings.Replace(routeTemplate(true), `"retries": 1`, `"retries": 1, "interval": "1h"`, 1)
+	h := newAcceptanceHarnessWithTemplate(t, page.URL, template, func(bus *busevents.EventBus) {
+		observed = bus.SubscribeTypes("critical-outage", 64,
+			events.EventTypeReconciliationStarted, events.EventTypeReconciliationFailed)
+	})
+	started := func(reason string) {
+		t.Helper()
+		testutil.WaitForEventWithPredicate(t, observed, 5*time.Second, func(event *events.ReconciliationStartedEvent) bool {
+			return event.Trigger == reason
+		})
+	}
+	h.reconcile("critical source unavailable")
+	failure := testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, observed, 5*time.Second)
+	require.Contains(t, failure.Error, "503")
+	renders := promtestutil.ToFloat64(h.metrics.RenderTotal.WithLabelValues("cold"))
+	failed := promtestutil.ToFloat64(h.metrics.RenderErrors.WithLabelValues("cold"))
+	require.Positive(t, failed, "failed renders are counted")
+	require.Equal(t, renders, failed, "no render succeeded")
+	fetched := requests.Load()
+
+	for i := range 10 {
+		require.NoError(t, h.routes.Update(h.route(page.URL, strconv.Itoa(i)), []string{"default", "a"}))
+		h.reconcile("churn " + strconv.Itoa(i))
+		started("churn " + strconv.Itoa(i))
+	}
+	h.reconcile("settled")
+	started("settled")
+	testutil.AssertNoEvent[*events.ReconciliationFailedEvent](t, observed, testutil.NoEventTimeout)
+	assert.Equal(t, fetched, requests.Load(), "held reconciles must not fetch")
+	assert.Equal(t, renders, promtestutil.ToFloat64(h.metrics.RenderTotal.WithLabelValues("cold")), "held reconciles must not render")
 }
 
 func TestCriticalFetchRetryStopsOnShutdown(t *testing.T) {
@@ -436,10 +497,14 @@ func TestCriticalFetchRetryStopsOnShutdown(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(page.Close)
+	var failures <-chan busevents.Event
 	template := strings.Replace(routeTemplate(true), `"retries": 1`, `"retries": 1, "interval": "24h"`, 1)
-	h := newAcceptanceHarnessWithTemplate(t, page.URL, template)
+	h := newAcceptanceHarnessWithTemplate(t, page.URL, template, func(bus *busevents.EventBus) {
+		failures = bus.SubscribeTypes("critical-fetch-failures", 16, events.EventTypeReconciliationFailed)
+	})
 	h.reconcile("critical source unavailable")
-	require.Eventually(t, func() bool { return h.coordinator.ledger.attempted.Load() >= 2 }, 5*time.Second, 5*time.Millisecond)
+	testutil.WaitForEvent[*events.ReconciliationFailedEvent](t, failures, 5*time.Second)
+	h.stop()
 }
 
 func TestCriticalFetchFailureClearsWhenRecoveredContentIsInvalid(t *testing.T) {
@@ -452,20 +517,20 @@ func TestCriticalFetchFailureClearsWhenRecoveredContentIsInvalid(t *testing.T) {
 		_, _ = w.Write([]byte("page"))
 	}))
 	t.Cleanup(page.Close)
-	template := `{% var _, fetchErr = http.Fetch(item | dig_string("", "spec", "url"), map[string]any{"critical": true, "retries": 1, "timeout": "1s"}) %}
+	template := `{% var _, fetchErr = http.Fetch(item | dig_string("", "spec", "url"), map[string]any{"critical": true, "retries": 1, "timeout": "1s", "interval": "200ms"}) %}
 {% if fetchErr == nil %}{{ fail("recovered content is invalid") }}{% end %}`
 	h := newAcceptanceHarnessWithTemplate(t, page.URL, template)
 	h.reconcile("critical source unavailable")
-	h.waitForAttempts(1)
+	h.waitForAttempts(0)
 	require.True(t, pipeline.CriticalContentUnavailable(h.coordinator.ledger.criticalContentFailure()))
 	repaired.Store(true)
 	h.reconcile("critical source repaired")
-	h.waitForAttempts(2)
+	require.Eventually(t, func() bool {
+		h.coordinator.ledger.mu.Lock()
+		defer h.coordinator.ledger.mu.Unlock()
+		return strings.Contains(h.coordinator.ledger.lastRefusal, "recovered content is invalid")
+	}, 5*time.Second, 5*time.Millisecond, "the source's refetch leads to an acceptance attempt")
 	require.NoError(t, h.coordinator.ledger.criticalContentFailure())
-	h.coordinator.ledger.mu.Lock()
-	refusal := h.coordinator.ledger.lastRefusal
-	h.coordinator.ledger.mu.Unlock()
-	require.Contains(t, refusal, "recovered content is invalid")
 	_, accepted := h.component.GetStore().Get(page.URL)
 	require.False(t, accepted, "invalid recovered content must remain unaccepted")
 }

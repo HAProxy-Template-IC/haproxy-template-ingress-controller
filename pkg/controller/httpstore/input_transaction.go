@@ -124,6 +124,9 @@ func (t *InputTransaction) fetchStaged(
 	ctx context.Context,
 	source *purehttpstore.StagedSource,
 ) (*inputFetchResult, error) {
+	if result, unavailable, err := t.unavailableResult(source); unavailable || err != nil {
+		return result, err
+	}
 	if t.withholdCandidates {
 		if result, withheld, err := t.withholdUnaccepted(source); withheld || err != nil {
 			return result, err
@@ -153,6 +156,39 @@ func (t *InputTransaction) fetchStaged(
 		return nil, errors.New("HTTP candidate fetch returned an invalid result")
 	}
 	return result, nil
+}
+
+// unavailableResult answers an unaccepted critical source with its last
+// failed fetch instead of fetching it again; the HTTP store refetches it.
+func (t *InputTransaction) unavailableResult(
+	source *purehttpstore.StagedSource,
+) (*inputFetchResult, bool, error) {
+	if !source.Critical() {
+		return nil, false, nil
+	}
+	failure := t.component.criticalOutageFailure(source)
+	if failure == nil {
+		return nil, false, nil
+	}
+	accepted, _, err := t.component.store.AcceptedStagedSnapshot(source)
+	if err != nil || accepted.Found {
+		return nil, false, err
+	}
+	url := source.URL()
+	result := &inputFetchResult{
+		snapshot: purehttpstore.ContentSnapshot{URL: url, Descriptor: source.Descriptor()},
+		err:      failure,
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.state != transactionOpen {
+		return nil, false, errors.New("render input transaction is no longer open")
+	}
+	if previous, exists := t.results[url]; exists {
+		return previous, true, nil
+	}
+	t.results[url] = result
+	return result, true, nil
 }
 
 // withholdUnaccepted records an unaccepted source as unavailable, as a failed
@@ -209,6 +245,7 @@ func (t *InputTransaction) fetchAndRecord(
 	}
 
 	snapshot, candidate, fetchErr := t.component.store.PrepareStagedSnapshot(ctx, source)
+	t.component.observeInitialFetch(ctx, source, fetchErr)
 	if snapshot.URL == "" {
 		snapshot.URL = url
 		snapshot.Descriptor = source.Descriptor()

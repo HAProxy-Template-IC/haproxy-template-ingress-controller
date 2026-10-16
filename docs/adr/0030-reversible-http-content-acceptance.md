@@ -98,10 +98,22 @@ as a narrowing. Two facts were not weighed then:
    If fetching required content fails, the acceptance worker records that failure
    and requests reconciliation once. The coordinator reports the blocked render
    through its normal failure events, allowing retained-configuration recovery.
-   Acceptance retries at the failed source's configured refresh interval, without
-   holding the render permit. New requests can retry sooner; ending leadership
-   cancels the wait. A zero interval still requires another trigger.
    Successful acceptance clears the failure.
+6. **An unavailable critical source holds renders, not just deploys** (issue
+   #332). Without a graph, every reconcile render is cold and fails on the same
+   missing source, so retrying it per trigger burned a full render and a fetch
+   for each resource change. When a critical source without accepted content
+   fails to fetch, the HTTP store records the failure and refetches the source
+   outside any render, every `interval` or every 30 s without one. Renders that
+   reach the source read the recorded failure instead of fetching it. After a
+   reconcile render fails on it, the replica's reconcile renders (follower
+   warm-up, deploy, and acceptance) return that failure without rendering until
+   the refetch succeeds, which triggers a render that adopts the fetched
+   candidate. A refetch that fails after renders were skipped triggers one render,
+   because the skipped inputs may no longer need the source. A completed render
+   ends every outage, since an unavailable critical source fails its render.
+   Configuration changes start a new iteration without that state. The leader
+   reports the held failure once per term.
 
 ## RULE #2 delta
 

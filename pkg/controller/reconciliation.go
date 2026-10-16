@@ -238,6 +238,7 @@ func createReconciliationComponents(
 		StoreProvider:  storeProvider,
 		CurrentFiles:   currentFiles,
 		HTTPAcceptance: httpStoreComponent,
+		GraphWarm:      renderService.IncrementalGraphWarm,
 		Metrics:        setup.MetricsComponent.Metrics(),
 		Logger:         logger,
 	})

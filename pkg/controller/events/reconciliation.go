@@ -379,6 +379,9 @@ type ReconciliationFailedEvent struct {
 	Error string
 	Phase string // Which phase failed: "render", "validate", "deploy"
 
+	// DurationMs is how long the failed cycle ran.
+	DurationMs int64
+
 	// StatusPatches are the chart-rendered status patches from the most
 	// recent SUCCESSFUL render (the failure itself rarely produces patches —
 	// render failures have none; validation failures have the just-rendered
@@ -416,11 +419,13 @@ func NewReconciliationFailedEvent(err, phase string, statusPatches []templating.
 	}
 }
 
-// NewReconciliationFailedEventWithStatusSnapshot carries the last successful patch set.
-func NewReconciliationFailedEventWithStatusSnapshot(err, phase string, statusPatchSnapshot *templating.StatusPatchSnapshot, opts ...CorrelationOption) *ReconciliationFailedEvent {
+// NewReconciliationFailedEventWithStatusSnapshot carries the last successful
+// patch set, nil before the first one, and how long the failed cycle ran.
+func NewReconciliationFailedEventWithStatusSnapshot(err, phase string, durationMs int64, statusPatchSnapshot *templating.StatusPatchSnapshot, opts ...CorrelationOption) *ReconciliationFailedEvent {
 	return &ReconciliationFailedEvent{
 		Error:               err,
 		Phase:               phase,
+		DurationMs:          durationMs,
 		StatusPatchSnapshot: statusPatchSnapshot,
 		timestamped:         newTimestamped(),
 		Correlation:         newCorrelation(opts...),

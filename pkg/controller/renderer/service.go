@@ -530,6 +530,11 @@ func (s *RenderService) withRenderTimeout(ctx context.Context) (context.Context,
 	return ctx, func() {}
 }
 
+// HTTPStoreComponent returns the HTTP store this service renders against, or nil.
+func (s *RenderService) HTTPStoreComponent() *httpstore.Component {
+	return s.httpStoreComponent
+}
+
 // IncrementalGraphWarm reports whether the next reconcile render builds on a
 // committed graph: one has been published and no cache build is pending. A
 // service without incremental snippets has nothing to warm and reports true.

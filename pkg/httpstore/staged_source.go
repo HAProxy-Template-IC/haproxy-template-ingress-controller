@@ -17,6 +17,7 @@ package httpstore
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // StagedSource is one render-local authoritative source declaration.
@@ -90,6 +91,32 @@ func (s *HTTPStore) StageSource(
 		return nil, err
 	}
 	return s.stageSourceLocked(url, &spec), nil
+}
+
+// RestageSource captures the current authority for an earlier declaration.
+func (s *HTTPStore) RestageSource(source *StagedSource) (*StagedSource, error) {
+	if source == nil || source.store != s {
+		return nil, errors.New("staged HTTP source does not belong to this store")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if err := s.publicationErrorLocked(); err != nil {
+		return nil, err
+	}
+	return s.stageSourceLocked(source.url, &source.spec), nil
+}
+
+// Critical reports whether the declaration fails the render when it has no content.
+func (s *StagedSource) Critical() bool {
+	return s != nil && s.spec.options.Critical
+}
+
+// RefreshInterval returns the declared refresh interval; zero means none.
+func (s *StagedSource) RefreshInterval() time.Duration {
+	if s == nil {
+		return 0
+	}
+	return s.spec.options.Delay
 }
 
 func (s *HTTPStore) stageSourceLocked(url string, spec *sourceSpec) *StagedSource {
