@@ -53,3 +53,29 @@ tests:
             ports:
               - port: 8888
                 protocol: TCP
+
+  # An ipBlock catch-all doesn't match node traffic on Cilium (#340).
+  - it: accepts webhook calls from any source by default
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            ports:
+              - port: 9443
+                protocol: TCP
+
+  - it: restricts the webhook port to the configured peers
+    set:
+      controller.networkPolicy.ingress.webhook.from:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+    asserts:
+      - contains:
+          path: spec.ingress
+          content:
+            from:
+              - ipBlock:
+                  cidr: 10.0.0.0/16
+            ports:
+              - port: 9443
+                protocol: TCP

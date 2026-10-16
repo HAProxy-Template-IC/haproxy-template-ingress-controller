@@ -907,7 +907,7 @@ No CPU limit is set by default to avoid throttling. With no limit, HAProxy's `nb
 | `controller.networkPolicy.ingress.healthChecks.enabled` | bool | `true` | Allow health check access |
 | `controller.networkPolicy.ingress.healthChecks.from` | list | `[{podSelector: {}}]` | NetworkPolicy peers allowed to reach the health port (`controller.ports.healthz`). The default `podSelector: {}` admits every pod in the release namespace |
 | `controller.networkPolicy.ingress.webhook.enabled` | bool | `true` | Allow webhook access |
-| `controller.networkPolicy.ingress.webhook.from` | list | IPv4+IPv6 `ipBlock` catch-alls | NetworkPolicy peers allowed to reach the webhook port (`controller.ports.webhook`). Defaults to `ipBlock` catch-alls because the kube-apiserver runs host-network on most distributions — a pod/namespace selector would silently fail to match it and the webhook would return 502 errors. Both `0.0.0.0/0` and `::/0` appear because `ipBlock.cidr` is single-family. Tighten to your apiserver/node CIDRs for production |
+| `controller.networkPolicy.ingress.webhook.from` | list | `[]` | NetworkPolicy peers allowed to reach the webhook port (`controller.ports.webhook`). Empty omits `from`, so any source may connect: the kube-apiserver often calls the webhook from the host network, which pod and namespace selectors don't match and Cilium doesn't match against `ipBlock`. List your apiserver/node peers to restrict it for production |
 | `controller.networkPolicy.ingress.additionalRules` | list | `[]` | Additional ingress rules |
 
 ## See also
