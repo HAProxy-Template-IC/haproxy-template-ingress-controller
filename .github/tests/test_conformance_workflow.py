@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 import yaml
 
+from scripts.ci import github_conformance
 from scripts.ci.github_conformance import bundle, diagnostics, execute, plan, sample_startup
 
 
@@ -166,15 +167,61 @@ class ConformanceWorkflowTests(unittest.TestCase):
     def test_diagnostics_survive_missing_pods_and_timed_out_commands(self):
         with tempfile.TemporaryDirectory() as directory:
             run = Mock(side_effect=[subprocess.TimeoutExpired("docker", 30)]
-                       + [subprocess.CompletedProcess("kubectl", 1)] * 12)
+                       + [subprocess.CompletedProcess("kubectl", 1)] * 23)
             diagnostics(Path(directory), run=run)
-            self.assertEqual(run.call_count, 13)
+            self.assertEqual(run.call_count, 24)
             results = json.loads((Path(directory) / "collection.json").read_text())
             self.assertIn("error", results["containers.txt"])
             self.assertEqual(results["pods.json"], {"exit_code": 1})
             for call in run.call_args_list:
                 self.assertNotIn("secrets", call.args[0])
                 self.assertEqual(call.kwargs["timeout"], 30)
+
+    def test_diagnostics_attribute_unreachable_vips_to_a_network_layer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Mock(return_value=subprocess.CompletedProcess("kubectl", 0))
+            diagnostics(Path(directory), run=run)
+            commands = [" ".join(call.args[0]) for call in run.call_args_list]
+        for expected in ("get services -A", "get endpointslices -A", "get servicel2statuses.metallb.io -A",
+                         "get configmap kube-proxy -n kube-system", "get events -A", "ip neigh show",
+                         "logs -n metallb-system -l app=metallb,component=controller -c controller",
+                         "logs -n metallb-system -l app=metallb,component=speaker -c speaker",
+                         "logs -n kube-system -l k8s-app=kube-proxy -c kube-proxy",
+                         "logs -n haptic -l app.kubernetes.io/component=controller -c controller"):
+            matching = [command for command in commands if expected in command]
+            with self.subTest(expected=expected):
+                self.assertTrue(matching)
+                if " logs " in matching[0]:
+                    self.assertEqual(sum(command.endswith("--previous") for command in matching), 1)
+
+    def test_conformance_shards_collect_diagnostics_into_the_retained_evidence(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci-speed-proof.yml").read_text())
+        jobs = [job for job in workflow["jobs"].values()
+                if any("make test-gateway-conformance" in step.get("run", "") for step in job.get("steps", []))]
+        self.assertTrue(jobs)
+        for job in jobs:
+            with self.subTest(job=job["name"]):
+                steps = job["steps"]
+                names = [step.get("name") for step in steps]
+                conformance = next(i for i, step in enumerate(steps)
+                                   if "make test-gateway-conformance" in step.get("run", ""))
+                collect = names.index("Collect conformance cluster diagnostics")
+                retain = names.index("Retain verification evidence")
+                self.assertLess(conformance, collect)
+                self.assertLess(collect, retain)
+                self.assertTrue(steps[collect]["if"].startswith("always()"))
+                self.assertEqual(steps[collect]["run"],
+                                 "python3 -m scripts.ci.github_conformance --diagnostics .pilot/conformance-diagnostics")
+                self.assertIn(".pilot/", steps[retain]["with"]["path"].split())
+        self.assertIn("suite_gateway_canary", [key for key, job in workflow["jobs"].items() if job in jobs])
+
+    def test_diagnostics_mode_collects_without_planning_a_run(self):
+        with patch("scripts.ci.github_conformance.diagnostics") as collect, \
+                patch("scripts.ci.github_conformance.plan") as planned, \
+                patch("sys.argv", ["github_conformance", "--diagnostics", "out"]):
+            github_conformance.main()
+        collect.assert_called_once_with(Path("out"))
+        planned.assert_not_called()
 
 
 class ConformanceArchiveTests(unittest.TestCase):

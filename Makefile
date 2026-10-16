@@ -498,15 +498,13 @@ CONFORMANCE_TIMEOUT ?= 30m
 # -test.parallel). Without it Go defaults to GOMAXPROCS — 16 on the CI
 # runners — and the suite's parallel tests all start within milliseconds,
 # creating ~6 Gateways (= per-Gateway LoadBalancer Services) in one burst.
-# MetalLB announces each VIP immediately, but kube-proxy programs the
-# service DNAT rules asynchronously; under the burst its sync lags behind
-# and a SYN arriving at the node before the rules exist is answered with
-# ICMP host-unreachable ("connect: no route to host" — mechanism verified
-# by freezing kube-proxy and dialing a fresh VIP from a sibling container).
-# The first test-created VIP consistently ate >10s of that lag in CI,
-# exhausting the suite's MaxTimeToConsistency budget. Capping concurrency
-# spreads Gateway creation out so kube-proxy keeps up; 4 matches the
-# acceptance suite's default and costs ~1-2 min of shard wall-clock.
+# Every fresh VIP is unreachable ("connect: no route to host") for 1-3 s;
+# under the burst the first test-created VIP ate >10s, exhausting the
+# suite's MaxTimeToConsistency budget. Which layer (MetalLB announcement or
+# kube-proxy rules) lags is unconfirmed; the conformance snapshotter's
+# conformance-network-* ConfigMaps capture both. Capping
+# concurrency spreads Gateway creation out; 4 matches the acceptance suite's
+# default and costs ~1-2 min of shard wall-clock.
 CONFORMANCE_PARALLEL ?= 4
 # Container name used when CONFORMANCE_KEEP_CONTAINER is set (the report job
 # keeps the stopped container so it can `docker cp` the written report out).

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
 	"sync"
@@ -98,6 +99,8 @@ type snapshottingRoundTripper struct {
 	callCount              map[string]int
 	pollSnapshotMinCalls   int
 	pollSnapshotMinElapsed time.Duration
+
+	networkGate *networkCaptureGate
 }
 
 // newSnapshottingRoundTripper wraps inner with on-error HAProxy
@@ -124,6 +127,7 @@ func newSnapshottingRoundTripper(
 		maxSnapshotsPerTest:    3,
 		pollSnapshotMinCalls:   3,
 		pollSnapshotMinElapsed: 3 * time.Second,
+		networkGate:            newNetworkCaptureGate(),
 	}
 }
 
@@ -143,7 +147,9 @@ func newSnapshottingRoundTripper(
 //     suite to retry until MaxTimeToConsistency expires (10s).
 //
 // Both paths share the per-test throttle (≤ maxSnapshotsPerTest,
-// ≤ 1 / throttleWindow). The snapshot itself is fire-and-forget
+// ≤ 1 / throttleWindow). A network-layer error that persists also
+// captures VIP state under networkGate (see captureNetwork).
+// The snapshot itself is fire-and-forget
 // so exec latency can't extend the test's own backoff.
 func (s *snapshottingRoundTripper) CaptureRoundTrip(req roundtripper.Request) (*roundtripper.CapturedRequest, *roundtripper.CapturedResponse, error) {
 	testName := ""
@@ -171,7 +177,18 @@ func (s *snapshottingRoundTripper) CaptureRoundTrip(req roundtripper.Request) (*
 	if s.shouldSnapshot(testName) {
 		go s.snapshot(testName, req.Host, req.URL.Host, req.ServerName, reason)
 	}
+	if ip, ok := dialedIP(req.URL.Host); ok && isNetworkLayerError(err) {
+		if capture := s.admitNetworkCapture(testName, ip); capture > 0 {
+			go s.captureNetwork(testName, ip, capture, reason)
+		}
+	}
 	return cReq, cRes, err
+}
+
+func (s *snapshottingRoundTripper) admitNetworkCapture(testName string, ip netip.Addr) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.networkGate.admit(testName+"|"+ip.String(), time.Now())
 }
 
 // recordCall tracks the per-test call count and first-call time
@@ -247,7 +264,7 @@ func (s *snapshottingRoundTripper) snapshot(testName, host, urlHost, sni, reason
 	// HAProxy state. /etc/haproxy holds haproxy.cfg, maps/,
 	// general/ (errorfiles + crt-lists), and ssl/ (certs) — every
 	// file the controller manages through the dataplane API.
-	tarball, err := s.execTar(ctx, pod, []string{"tar", "-czf", "-", "-C", "/etc/haproxy", "."})
+	tarball, err := s.exec(ctx, snapshotNamespace, pod, "haproxy", []string{"tar", "-czf", "-", "-C", "/etc/haproxy", "."})
 	if err != nil {
 		return
 	}
@@ -259,7 +276,7 @@ func (s *snapshottingRoundTripper) snapshot(testName, host, urlHost, sni, reason
 		crdYAML = []byte(fmt.Sprintf("# haproxycfg dump failed: %v\n", crdErr))
 	}
 
-	cmName := snapshotConfigMapName(testName)
+	cmName := snapshotConfigMapName("conformance-snapshot-", testName)
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cmName,
@@ -361,17 +378,16 @@ func isPodReady(p *corev1.Pod) bool {
 	return false
 }
 
-// execTar runs the supplied command in the haproxy container and
-// returns its stdout. Used to tar up /etc/haproxy without a kubectl
-// dependency in the test container.
-func (s *snapshottingRoundTripper) execTar(ctx context.Context, podName string, command []string) ([]byte, error) {
+// exec runs command in a pod container and returns its stdout; the
+// test container has no kubectl.
+func (s *snapshottingRoundTripper) exec(ctx context.Context, namespace, podName, container string, command []string) ([]byte, error) {
 	req := s.cs.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(podName).
-		Namespace(snapshotNamespace).
+		Namespace(namespace).
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
-			Container: "haproxy",
+			Container: container,
 			Command:   command,
 			Stdin:     false,
 			Stdout:    true,
@@ -390,7 +406,7 @@ func (s *snapshottingRoundTripper) execTar(ctx context.Context, podName string, 
 		Stderr: &stderr,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("exec failed: %w (stderr: %s)", err, stderr.String())
+		return stdout.Bytes(), fmt.Errorf("exec failed: %w (stderr: %s)", err, stderr.String())
 	}
 	return stdout.Bytes(), nil
 }
@@ -406,8 +422,7 @@ func (s *snapshottingRoundTripper) execTar(ctx context.Context, podName string, 
 // sanitizeForName converted to `-`) doesn't make the API server
 // reject the ConfigMap. Matches the same trim sanitizeForLabel
 // applies for the label-value alphabet.
-func snapshotConfigMapName(testName string) string {
-	const prefix = "conformance-snapshot-"
+func snapshotConfigMapName(prefix, testName string) string {
 	sanitized := sanitizeForName(testName)
 	const maxNameLen = 253
 	if len(prefix)+len(sanitized) > maxNameLen {
