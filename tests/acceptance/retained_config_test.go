@@ -133,11 +133,7 @@ func buildRetainedConfigurationFeature(name string, watchedObjects int, assess f
 		}).
 		Assess("a blocked fresh leader safely handles replacement pods", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
 			t.Helper()
-			defer func() {
-				if t.Failed() {
-					DumpControllerLogsOnError(ctx, t, fleet.client, fleet.namespace)
-				}
-			}()
+			defer fleet.dumpOnFailure(ctx, t)
 			assess(fleet, ctx, t)
 			return ctx
 		}).
