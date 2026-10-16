@@ -64,6 +64,18 @@ print('image built')
                 result, attempts, delays = self.run_build(4, message)
                 self.assertEqual((result.returncode, attempts, delays), (7, 1, []))
 
+    def test_reads_output_written_after_the_build_exits(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            delayed = f"(sleep 0.3; echo '{REGISTRY_FAILURE}' >&2) & exit 7"
+            sleeper = Path(temporary) / "sleep"
+            sleeper.write_text('#!/bin/sh\n[ "$1" != 0.3 ] || exec /bin/sleep "$1"\n')
+            sleeper.chmod(0o755)
+            result = subprocess.run(["bash", str(ROOT / "scripts/retry-registry-build.sh"), "sh", "-c", delayed],
+                                    env={**os.environ, "PATH": temporary + os.pathsep + os.environ["PATH"]},
+                                    text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(result.stderr.count("retrying build"), 2, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
