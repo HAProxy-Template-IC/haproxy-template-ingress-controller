@@ -17,6 +17,7 @@ package validation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -104,6 +105,9 @@ type ValidationService struct {
 	// process-wide default gate with the admission webhook.
 	checkGate *dataplane.CheckGate
 
+	verdicts      *dataplane.CheckVerdicts
+	checkObserver CheckObserver
+
 	// baseDir is the production base directory used in "default-path origin".
 	// During validation, this is replaced with the temp directory path so
 	// relative paths resolve correctly.
@@ -146,6 +150,41 @@ type ValidationServiceConfig struct {
 	// CheckGate serializes this service's `haproxy -c` runs. Give the render
 	// gate its own so admission never waits out a fleet-sized config check.
 	CheckGate *dataplane.CheckGate
+
+	// Verdicts answers an input set HAProxy already judged; services sharing
+	// one never check the same bytes twice. Nil checks every time, and a
+	// strict-DNS service never reuses a verdict.
+	Verdicts *dataplane.CheckVerdicts
+
+	// CheckObserver is told about every check this service asks HAProxy for.
+	CheckObserver CheckObserver
+}
+
+// CheckObserver receives one check's result (see CheckResult) and whether its
+// verdict was reused instead of running `haproxy -c`.
+type CheckObserver func(result string, reused bool)
+
+// Check results reported to a CheckObserver.
+const (
+	CheckPassed    = "passed"
+	CheckRefused   = "refused"
+	CheckError     = "error"
+	CheckCancelled = "cancelled"
+)
+
+// CheckResult classifies a check's error: HAProxy's verdict, a cancellation,
+// or a check that could not run.
+func CheckResult(ctx context.Context, err error) string {
+	switch {
+	case err == nil:
+		return CheckPassed
+	case errors.Is(err, dataplane.ErrHAProxyRefused):
+		return CheckRefused
+	case context.Cause(ctx) != nil:
+		return CheckCancelled
+	default:
+		return CheckError
+	}
 }
 
 // NewValidationService creates a new ValidationService.
@@ -177,6 +216,8 @@ func NewValidationService(cfg *ValidationServiceConfig) *ValidationService {
 		logger:            logger,
 		skipDNSValidation: cfg.SkipDNSValidation,
 		checkGate:         cfg.CheckGate,
+		verdicts:          cfg.Verdicts,
+		checkObserver:     cfg.CheckObserver,
 		baseDir:           baseDir,
 		mapsDir:           mapsDir,
 		sslCertsDir:       sslCertsDir,
@@ -319,7 +360,10 @@ func (s *ValidationService) validateHAProxy(
 
 	// Step 3: Run semantic validation with haproxy -c using the MODIFIED config
 	// This validates that HAProxy can actually load the config with all file references resolved.
-	err = dataplane.ValidateSemanticsContext(ctx, validationConfig, auxFiles, paths, s.skipDNSValidation, s.checkGate)
+	reused, err := dataplane.ValidateSemanticsWithVerdicts(ctx, validationConfig, auxFiles, paths, s.skipDNSValidation, s.checkGate, s.verdicts)
+	if s.checkObserver != nil {
+		s.checkObserver(CheckResult(ctx, err), reused)
+	}
 	if err != nil {
 		return failedResult(err, validationPhase(err), startTime)
 	}

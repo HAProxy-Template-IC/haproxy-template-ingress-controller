@@ -22,7 +22,11 @@ import (
 	pkgmetrics "github.com/haproxy-haptic/HAPTIC/pkg/metrics"
 )
 
-const reasonLabel = "reason"
+const (
+	reasonLabel    = "reason"
+	resultLabel    = "result"
+	validatorLabel = "validator"
+)
 
 // Metrics holds all controller-specific Prometheus metrics.
 //
@@ -105,6 +109,12 @@ type Metrics struct {
 	// Validation metrics
 	ValidationTotal  prometheus.Counter
 	ValidationErrors prometheus.Counter
+
+	// HAProxyChecksTotal counts the `haproxy -c` runs each validator asked for,
+	// on every replica; HAProxyChecksReusedTotal counts the ones answered by an
+	// identical input set's verdict instead of a process.
+	HAProxyChecksTotal       *prometheus.CounterVec
+	HAProxyChecksReusedTotal *prometheus.CounterVec
 
 	// Resource metrics
 	ResourceCount         *prometheus.GaugeVec
@@ -325,6 +335,19 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			"Total number of failed validations",
 		),
 
+		HAProxyChecksTotal: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_haproxy_checks_total",
+			"`haproxy -c` runs on this replica, by validator (input, http_content, render_gate, retained, admission) and result (passed, refused, error, cancelled).",
+			[]string{validatorLabel, resultLabel},
+		),
+		HAProxyChecksReusedTotal: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_haproxy_checks_reused_total",
+			"`haproxy -c` runs avoided on this replica because HAProxy had already judged the identical input set, by validator and reused result (passed, refused).",
+			[]string{validatorLabel, resultLabel},
+		),
+
 		// Resource metrics
 		ResourceCount: pkgmetrics.NewGaugeVec(
 			registry,
@@ -374,7 +397,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_webhook_requests_total",
 			"Total number of webhook admission requests",
-			[]string{"gvk", "result"},
+			[]string{"gvk", resultLabel},
 		),
 		WebhookRequestDuration: pkgmetrics.NewHistogramWithBuckets(
 			registry,
@@ -392,7 +415,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_webhook_validation_total",
 			"Total number of webhook validation results",
-			[]string{"gvk", "result"},
+			[]string{"gvk", resultLabel},
 		),
 
 		// Leader election metrics
@@ -424,7 +447,7 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 			registry,
 			"haptic_config_rejected_total",
 			"Total number of HAProxyTemplateConfig loads refused by the config-validation gate, labelled by the validator that rejected the config (basic, template, jsonpath, validationtests) or \"coordinator\" when a validator timed out / didn't respond. Non-zero growth means the controller is refusing a new config and continuing on the last-good one.",
-			[]string{"validator"},
+			[]string{validatorLabel},
 		),
 
 		HTTPContentRejectedTotal: pkgmetrics.NewCounter(
@@ -628,6 +651,16 @@ func (m *Metrics) RecordValidation(success bool) {
 	if !success {
 		m.ValidationErrors.Inc()
 	}
+}
+
+// RecordHAProxyCheck records one check a validator asked HAProxy for; reused
+// means an earlier verdict answered it without running `haproxy -c`.
+func (m *Metrics) RecordHAProxyCheck(validator, result string, reused bool) {
+	if reused {
+		m.HAProxyChecksReusedTotal.WithLabelValues(validator, result).Inc()
+		return
+	}
+	m.HAProxyChecksTotal.WithLabelValues(validator, result).Inc()
 }
 
 // SetResourceCount sets the count for a specific resource type.

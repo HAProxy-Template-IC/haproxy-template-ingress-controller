@@ -37,6 +37,7 @@ import (
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/httpstore"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/inputisolation"
 	leaderelectionctrl "github.com/haproxy-haptic/HAPTIC/pkg/controller/leaderelection"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/names"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pipeline"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/proposalvalidator"
@@ -82,6 +83,8 @@ type reconciliationWiring struct {
 	// warmed is the follower warmer's first-render signal; a hand-over waits
 	// for it so the new leader's first render is warm.
 	warmed <-chan struct{}
+	// admissionChecks records the webhook's `haproxy -c` runs.
+	admissionChecks validation.CheckObserver
 }
 
 // renderInputs routes the deploy side's two feedback channels: the plan the
@@ -215,18 +218,17 @@ func createReconciliationComponents(
 	})
 
 	// Input acceptance requires complete validation before publication (ADR-0032).
-	inputValidation := newFullValidator(cfg, logger)
-	proposalValidation := newFullValidator(cfg, logger)
+	checks := newCheckServices(cfg, logger, setup.MetricsComponent.Metrics())
 	inputSelector := newInputSelector(setup, cfg, pipeline.New(&pipeline.PipelineConfig{
 		Renderer:        renderService,
-		Validator:       inputValidation,
+		Validator:       checks.input,
 		OutputValidator: outputValidator,
-		CommitValidator: inputValidation,
+		CommitValidator: checks.input,
 		Logger:          logger,
 	}), logger)
 	proposalPipeline := pipeline.New(&pipeline.PipelineConfig{
 		Renderer:        renderService,
-		Validator:       proposalValidation,
+		Validator:       checks.httpContent,
 		OutputValidator: outputValidator,
 		Logger:          logger,
 	})
@@ -268,7 +270,7 @@ func createReconciliationComponents(
 	renderGateComponent := rendergate.New(&rendergate.Config{
 		EventBus: setup.Bus,
 		Logger:   logger,
-		Checker:  rendergate.ServiceChecker{Service: newRenderGateValidator(cfg, logger)},
+		Checker:  rendergate.ServiceChecker{Service: checks.renderGate},
 		Metrics:  setup.MetricsComponent.Metrics(),
 	})
 
@@ -303,7 +305,7 @@ func createReconciliationComponents(
 	}
 	setup.AddCleanup(stopPublisherInformers)
 	deployStack.EnableRetainedRecovery(purePublisher,
-		rendergate.ServiceChecker{Service: newRenderGateValidator(cfg, logger)}, crd, setup.MetricsComponent.Metrics(), cfg.Controller.LeaderElection.LeaseName)
+		rendergate.ServiceChecker{Service: checks.retained}, crd, setup.MetricsComponent.Metrics(), cfg.Controller.LeaderElection.LeaseName)
 	configPublisherComponent := ctrlconfigpublisher.New(purePublisher, setup.Bus, logger,
 		ctrlconfigpublisher.WithPublishInterval(cfg.Dataplane.GetConfigPublishInterval()),
 		ctrlconfigpublisher.WithTemplateConfig(crd),
@@ -377,6 +379,7 @@ func createReconciliationComponents(
 		inputIsolation:        inputSelector,
 		gvrMapper:             gvrMapper,
 		warmed:                warmerComponent.Warmed(),
+		admissionChecks:       observeChecks(setup.MetricsComponent.Metrics(), "admission"),
 	}, nil
 }
 
@@ -391,6 +394,38 @@ func registerLifecycleComponents(reg *lifecycle.Registry, allReplica, leaderOnly
 	}
 }
 
+// checkVerdictCapacity bounds the verdicts kept for reuse. A render is checked
+// by input acceptance and then by the render gate; input isolation can add a
+// handful of trial renders in between.
+const checkVerdictCapacity = 32
+
+// checkServices are the `haproxy -c -dr` services of one iteration. They share
+// one verdict store: the render gate re-checks exactly the bytes input
+// acceptance has just checked with the same flags, so it reuses that verdict.
+type checkServices struct {
+	input       *validation.ValidationService
+	httpContent *validation.ValidationService
+	renderGate  *validation.ValidationService
+	retained    *validation.ValidationService
+}
+
+func newCheckServices(cfg *coreconfig.Config, logger *slog.Logger, m *metrics.Metrics) *checkServices {
+	verdicts := dataplane.NewCheckVerdicts(checkVerdictCapacity)
+	return &checkServices{
+		input:       newFullValidator(cfg, logger, verdicts, observeChecks(m, "input")),
+		httpContent: newFullValidator(cfg, logger, verdicts, observeChecks(m, "http_content")),
+		renderGate:  newRenderGateValidator(cfg, logger, verdicts, observeChecks(m, "render_gate")),
+		retained:    newRenderGateValidator(cfg, logger, verdicts, observeChecks(m, "retained")),
+	}
+}
+
+func observeChecks(m *metrics.Metrics, validator string) validation.CheckObserver {
+	if m == nil {
+		return nil
+	}
+	return func(result string, reused bool) { m.RecordHAProxyCheck(validator, result, reused) }
+}
+
 // newRenderGateValidator builds the render gate's validation service: the
 // `haproxy -c -dr` run, on a gate of its own.
 //
@@ -398,12 +433,14 @@ func registerLifecycleComponents(reg *lifecycle.Registry, allReplica, leaderOnly
 // never revert a fleet. The gate's own CheckGate keeps the webhook's 9 s
 // failurePolicy: Fail budget clear of it, and its duty-cycle interval bounds
 // the CPU a render storm can take from admission.
-func newRenderGateValidator(cfg *coreconfig.Config, logger *slog.Logger) *validation.ValidationService {
+func newRenderGateValidator(cfg *coreconfig.Config, logger *slog.Logger, verdicts *dataplane.CheckVerdicts, observer validation.CheckObserver) *validation.ValidationService {
 	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
 	return validation.NewValidationService(&validation.ValidationServiceConfig{
 		Logger:            logger.With("validation", "rendergate"),
 		SkipDNSValidation: true,
 		CheckGate:         dataplane.NewCheckGate(cfg.Controller.GetRenderGateInterval()),
+		Verdicts:          verdicts,
+		CheckObserver:     observer,
 		BaseDir:           dirConfig.BaseDir,
 		MapsDir:           dirConfig.MapsDir,
 		SSLCertsDir:       dirConfig.SSLCertsDir,
@@ -415,12 +452,16 @@ func newRenderGateValidator(cfg *coreconfig.Config, logger *slog.Logger) *valida
 func newFullValidator(
 	cfg *coreconfig.Config,
 	logger *slog.Logger,
+	verdicts *dataplane.CheckVerdicts,
+	observer validation.CheckObserver,
 ) *validation.ValidationService {
 	dirConfig := extractValidationDirConfig(&cfg.Dataplane)
 	return validation.NewValidationService(&validation.ValidationServiceConfig{
 		Logger:            logger.With("validation", "full"),
 		SkipDNSValidation: true,
 		CheckGate:         dataplane.NewCheckGate(0),
+		Verdicts:          verdicts,
+		CheckObserver:     observer,
 		BaseDir:           dirConfig.BaseDir,
 		MapsDir:           dirConfig.MapsDir,
 		SSLCertsDir:       dirConfig.SSLCertsDir,

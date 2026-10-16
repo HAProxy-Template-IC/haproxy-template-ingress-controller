@@ -75,11 +75,26 @@ func refusalCauses(output, workDir string) []string {
 // This writes files to actual /etc/haproxy/ directories and runs haproxy -c.
 // If skipDNSValidation is true, the -dr flag is passed to HAProxy to skip DNS resolution
 // failures (servers with unresolvable hostnames start in DOWN state instead of failing).
-// gate serializes the check; nil uses defaultCheckGate.
-func validateSemantics(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate) error {
+// gate serializes the check; nil uses defaultCheckGate. verdicts, when non-nil,
+// answers an input set it has already judged; reused reports that it did.
+func validateSemantics(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate, verdicts *CheckVerdicts) (reused bool, err error) {
 	if cause := context.Cause(ctx); cause != nil {
-		return cause
+		return false, cause
 	}
+	key, reusable := verdicts.key(mainConfig, auxFiles, paths, skipDNSValidation)
+	if reusable {
+		if verdict, found := verdicts.lookup(key); found {
+			return true, verdict.err
+		}
+	}
+	err = runSemanticCheck(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate)
+	if reusable && context.Cause(ctx) == nil && (err == nil || errors.Is(err, ErrHAProxyRefused)) {
+		verdicts.remember(key, checkVerdict{err: err})
+	}
+	return false, err
+}
+
+func runSemanticCheck(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate) error {
 	// Timing for file I/O setup vs haproxy check
 	var clearMs, writeAuxMs, writeConfigMs, haproxyCheckMs int64
 
@@ -253,63 +268,60 @@ func writeFileWithDir(path, content, fileType string) error {
 	return nil
 }
 
-// resolveAndWriteAuxiliaryFile resolves filePath under its base directory,
-// rejecting any path that escapes it, then writes the content to disk.
-func resolveAndWriteAuxiliaryFile(filePath, content, configDir, fallbackDir, label string) error {
-	resolved, err := resolveAuxiliaryFilePath(filePath, configDir, fallbackDir)
-	if err != nil {
-		return err
-	}
-	return writeFileWithDir(resolved, content, label)
-}
-
 // writeAuxiliaryFiles writes all auxiliary files to their respective directories.
 func writeAuxiliaryFiles(auxFiles *AuxiliaryFiles, paths *ValidationPaths) error {
+	return eachAuxiliaryFile(auxFiles, paths, writeFileWithDir)
+}
+
+// eachAuxiliaryFile resolves every auxiliary file to the path it is written
+// to, in write order: a later file at the same path replaces an earlier one.
+func eachAuxiliaryFile(auxFiles *AuxiliaryFiles, paths *ValidationPaths, visit func(resolved, content, label string) error) error {
 	if auxFiles == nil {
-		return nil // No auxiliary files to write
+		return nil
 	}
 
 	configDir := filepath.Dir(paths.ConfigFile)
+	each := func(filePath, content, fallbackDir, label string) error {
+		resolved, err := resolveAuxiliaryFilePath(filePath, configDir, fallbackDir)
+		if err != nil {
+			return err
+		}
+		return visit(resolved, content, label)
+	}
 
-	// Write map files
 	for _, mapFile := range auxFiles.MapFiles {
-		if err := resolveAndWriteAuxiliaryFile(mapFile.Path, mapFile.Content, configDir, paths.MapsDir, "map file "+mapFile.Path); err != nil {
+		if err := each(mapFile.Path, mapFile.Content, paths.MapsDir, "map file "+mapFile.Path); err != nil {
 			return err
 		}
 	}
 
-	// Write general files
-	// Use file.Path when set (contains full relative path like "ssl/ca-bundle.pem" for
-	// CA files). Fall back to file.Filename for backward compatibility with code that
-	// only sets Filename.
+	// file.Path carries the full relative path ("ssl/ca-bundle.pem" for CA
+	// files); Filename is the fallback for callers that only set it.
 	for _, file := range auxFiles.GeneralFiles {
 		pathToUse := file.Path
 		if pathToUse == "" {
 			pathToUse = file.Filename
 		}
-		if err := resolveAndWriteAuxiliaryFile(pathToUse, file.Content, configDir, paths.GeneralStorageDir, "general file "+pathToUse); err != nil {
+		if err := each(pathToUse, file.Content, paths.GeneralStorageDir, "general file "+pathToUse); err != nil {
 			return err
 		}
 	}
 
-	// Write SSL certificates
 	for _, cert := range auxFiles.SSLCertificates {
-		if err := resolveAndWriteAuxiliaryFile(cert.Path, cert.Content, configDir, paths.SSLCertsDir, "SSL certificate "+cert.Path); err != nil {
+		if err := each(cert.Path, cert.Content, paths.SSLCertsDir, "SSL certificate "+cert.Path); err != nil {
 			return err
 		}
 	}
 
-	// Write SSL CA files (stored in same directory as SSL certificates)
 	for _, caFile := range auxFiles.SSLCaFiles {
-		if err := resolveAndWriteAuxiliaryFile(caFile.Path, caFile.Content, configDir, paths.SSLCertsDir, "SSL CA file "+caFile.Path); err != nil {
+		if err := each(caFile.Path, caFile.Content, paths.SSLCertsDir, "SSL CA file "+caFile.Path); err != nil {
 			return err
 		}
 	}
 
-	// Write CRT-list files
-	// Use CRTListDir which may differ from SSLCertsDir on HAProxy < 3.2
+	// CRTListDir may differ from SSLCertsDir on HAProxy < 3.2.
 	for _, crtList := range auxFiles.CRTListFiles {
-		if err := resolveAndWriteAuxiliaryFile(crtList.Path, crtList.Content, configDir, paths.CRTListDir, "CRT-list file "+crtList.Path); err != nil {
+		if err := each(crtList.Path, crtList.Content, paths.CRTListDir, "CRT-list file "+crtList.Path); err != nil {
 			return err
 		}
 	}
@@ -346,19 +358,9 @@ func runHAProxyCheck(ctx context.Context, configPath, configContent string, skip
 		return fmt.Errorf("getting absolute config path: %w", err)
 	}
 
-	// Build haproxy command arguments
-	// -c: check configuration and exit
-	// -f: path to configuration file
-	// -dr: (optional) skip DNS resolution failures - servers start in DOWN state instead of failing
-	var args []string
-	if skipDNSValidation {
-		args = []string{"-dr", "-c", "-f", filepath.Base(absConfigPath)}
-	} else {
-		args = []string{"-c", "-f", filepath.Base(absConfigPath)}
-	}
-
 	// Run haproxy with the working directory set to the config file
 	// directory so relative paths inside the config resolve.
+	args := checkArgs(skipDNSValidation, filepath.Base(absConfigPath))
 	output, err := getHAProxyExecutor().Check(ctx, filepath.Dir(absConfigPath), args...)
 	if err != nil {
 		if cause := context.Cause(ctx); cause != nil {
@@ -376,6 +378,15 @@ func runHAProxyCheck(ctx context.Context, configPath, configContent string, skip
 	}
 
 	return nil
+}
+
+// checkArgs is the `haproxy` command line for checking configName. -dr skips
+// DNS resolution failures: servers start DOWN instead of failing the check.
+func checkArgs(skipDNSValidation bool, configName string) []string {
+	if skipDNSValidation {
+		return []string{"-dr", "-c", "-f", configName}
+	}
+	return []string{"-c", "-f", configName}
 }
 
 // interpretHAProxyExitError classifies a non-zero `haproxy -c` exit. Three
@@ -407,7 +418,12 @@ func interpretHAProxyExitError(output []byte, exitErr error, configContent, work
 			"output", trimmedOutput)
 		return nil
 	}
-	return &RefusalError{Causes: refusalCauses(string(output), workDir), message: parseHAProxyError(string(output), configContent)}
+	message := parseHAProxyError(string(output), configContent)
+	if workDir != "" {
+		// The check's working directory is gone once it returns, and a reused verdict outlives it.
+		message = strings.ReplaceAll(message, workDir+string(filepath.Separator), "")
+	}
+	return &RefusalError{Causes: refusalCauses(string(output), workDir), message: message}
 }
 
 // hasFailureLines reports whether output contains any HAProxy log line at or

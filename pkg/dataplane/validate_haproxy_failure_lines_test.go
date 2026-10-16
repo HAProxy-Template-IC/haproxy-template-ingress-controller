@@ -160,6 +160,15 @@ func TestInterpretHAProxyExitError(t *testing.T) {
 			"[ALERT] output must surface as a validation error — anything else would "+
 				"admit broken configs")
 	})
+
+	t.Run("refusal names files relative to the check's working directory", func(t *testing.T) {
+		t.Parallel()
+		out := []byte(`[ALERT] (001) : config : parsing [haproxy.cfg:3] : 'bind :443' : unable to stat SSL certificate from file '/tmp/haproxy-validation-1/ssl/site.pem'`)
+		err := interpretHAProxyExitError(out, exitErr, "", "/tmp/haproxy-validation-1")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "'ssl/site.pem'")
+		assert.NotContains(t, err.Error(), "haproxy-validation-1")
+	})
 }
 
 func TestRefusalCausesCompareAcrossChecks(t *testing.T) {
