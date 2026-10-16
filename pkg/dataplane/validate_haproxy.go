@@ -418,7 +418,12 @@ func interpretHAProxyExitError(output []byte, exitErr error, configContent, work
 			"output", trimmedOutput)
 		return nil
 	}
-	return &RefusalError{Causes: refusalCauses(string(output), workDir), message: parseHAProxyError(string(output), configContent)}
+	message := parseHAProxyError(string(output), configContent)
+	if workDir != "" {
+		// The check's working directory is gone once it returns, and a reused verdict outlives it.
+		message = strings.ReplaceAll(message, workDir+string(filepath.Separator), "")
+	}
+	return &RefusalError{Causes: refusalCauses(string(output), workDir), message: message}
 }
 
 // hasFailureLines reports whether output contains any HAProxy log line at or
