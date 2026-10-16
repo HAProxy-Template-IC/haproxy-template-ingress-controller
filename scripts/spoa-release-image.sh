@@ -28,7 +28,7 @@ fi
 # shellcheck source=../versions-spoa.env
 source versions-spoa.env
 hub_image="ghcr.io/haproxy-haptic/haproxy-spoa-hub:${SPOA_HUB_VERSION#v}"
-hub_digest="$(docker buildx imagetools inspect "$hub_image" --format '{{json .Manifest.Digest}}' | jq -er '.')"
+hub_digest="$(bash scripts/retry.sh docker buildx imagetools inspect "$hub_image" --format '{{json .Manifest.Digest}}' | jq -er '.')"
 [[ "$hub_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Upstream SPOA image has no valid digest'
 for arch in amd64 arm64 armv7; do
     compgen -G "plugins/${arch}/*.so" >/dev/null || fail "SPOA plugins/${arch} is empty; run make spoa-prep"
@@ -40,6 +40,7 @@ done
 } > "$work_dir/inputs"
 inputs_hash="$(sha256sum "$work_dir/inputs" | awk '{print $1}')"
 
+# Not retried: callers read "not found" from its stderr to detect a missing release.
 image_digest() {
     docker buildx imagetools inspect "$1" --format '{{json .Manifest.Digest}}' |
         jq -er 'select(test("^sha256:[0-9a-f]{64}$"))'
@@ -47,7 +48,7 @@ image_digest() {
 
 verify_bundle() {
     local digest="$1" platform child config
-    docker buildx imagetools inspect "${repository}@${digest}" --raw > "$work_dir/index.json"
+    bash scripts/retry.sh docker buildx imagetools inspect "${repository}@${digest}" --raw > "$work_dir/index.json"
     jq -e '
         [.manifests[].platform | .os + "/" + .architecture +
           (if .variant then "/" + .variant else "" end)] | sort ==
@@ -55,7 +56,7 @@ verify_bundle() {
     ' "$work_dir/index.json" >/dev/null || fail "SPOA ${release_image} must contain exactly amd64, arm64, and arm/v7"
     while IFS=$'\t' read -r platform child; do
         [[ "$child" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "SPOA ${platform} manifest has no valid digest"
-        config="$(docker buildx imagetools inspect "${repository}@${child}" --format '{{json .Image}}')"
+        config="$(bash scripts/retry.sh docker buildx imagetools inspect "${repository}@${child}" --format '{{json .Image}}')"
         jq -e --arg key "$input_label" --arg hash "$inputs_hash" --arg version "$version" '
             .config.Labels[$key] == $hash and
             .config.Labels["org.opencontainers.image.version"] == $version
