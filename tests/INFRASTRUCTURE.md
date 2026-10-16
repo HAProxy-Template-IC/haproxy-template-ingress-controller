@@ -1,6 +1,6 @@
 # Test infrastructure contracts
 
-This inventory records the migration in [issue 293](https://gitlab.com/haproxy-haptic/haptic/-/work_items/293).
+This inventory records the migration in [issue #291](https://github.com/haproxy-haptic/HAPTIC/issues/291).
 The starting tree is `00a69a3120ff0437a04100bf3b5bb98fc0da2679`.
 The shared Go helpers and scenarios replace the original implementations below.
 

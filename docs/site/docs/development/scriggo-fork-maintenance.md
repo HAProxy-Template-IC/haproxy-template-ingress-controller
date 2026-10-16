@@ -9,7 +9,7 @@ the process for keeping it current and secure. It's the maintenance counterpart
 to the sandbox posture and fork notes in
 [`pkg/templating/README.md`](https://github.com/haproxy-haptic/HAPTIC/blob/main/pkg/templating/README.md).
 
-Origin: [issue #143](https://gitlab.com/haproxy-haptic/haptic/-/issues/143), an
+Origin: [issue #148](https://github.com/haproxy-haptic/HAPTIC/issues/148), an
 architecture review of the forked runtime as a component.
 
 ## Why the fork exists
@@ -35,7 +35,7 @@ in `pkg/templating/README.md`. Keep that table and this page consistent.
 
 Sizing the drift needs the recorded fork point below plus network access to both
 remotes. Re-measure it at each sync and update these numbers. The figures below
-are from the [#143 audit](https://gitlab.com/haproxy-haptic/haptic/-/issues/143)
+are from the [#148 audit](https://github.com/haproxy-haptic/HAPTIC/issues/148)
 (2026-08-22):
 
 - **Fork point:** upstream [`open2b/scriggo`](https://github.com/open2b/scriggo)
@@ -60,7 +60,7 @@ never reviews and HAPTIC depends on most:
 
 Secondary changes cover tooling and builtins. When a sync forces a re-review of
 this code, sweep the parallel-render paths for the class of bug
-[#169](https://gitlab.com/haproxy-haptic/haptic/-/issues/169) found: an `int8`
+[#169](https://github.com/haproxy-haptic/HAPTIC/issues/169) found: an `int8`
 slice index that truncates silently past 256 targets. That fix bounded the index
 with a build-time limit error and swept the adjacent `NativeFunctions`
 occurrence; re-check every `int8(len(slice))` index in `emitter_func_store.go`
@@ -107,7 +107,7 @@ Run these steps in a clone of the fork:
 
 6. Run the HAPTIC template tests, including the race detector and the benchmarks,
    and add a regression test for anything the sync fixed. The re-pin for #169
-   ([`!1686`](https://gitlab.com/haproxy-haptic/haptic/-/merge_requests/1686)) is
+   ([`3a4a923f5`](https://github.com/haproxy-haptic/HAPTIC/commit/3a4a923f5ee4b4878a7f671b2643249838d3eff6)) is
    the reference shape: a `go.mod`/`go.sum` bump plus a regression test
    (`pkg/templating/gorender_limit_test.go`) and a changelog line.
 

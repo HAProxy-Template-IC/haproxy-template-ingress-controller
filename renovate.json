@@ -215,7 +215,6 @@
     {
       "description": "Packages HAPTIC's maintainers publish skip the soak — minimumReleaseAge guards against a compromised third-party release and buys nothing here, while delaying an internal fix reaching its consumer.",
       "matchPackageNames": [
-        "gitlab.com/haproxy-haptic/{/,}**",
         "haproxy-haptic/{/,}**",
         "github.com/haproxy-haptic/{/,}**"
       ],

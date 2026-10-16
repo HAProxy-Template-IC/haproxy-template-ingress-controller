@@ -176,9 +176,9 @@ pair doesn't establish the cause or repeatability of those differences.
 The diagnostic commits change only three harness and CI files, which are
 identical across both revisions. Runtime and chart sources match their product
 commits. The candidate became part of main through
-[MR !1877](https://gitlab.com/haproxy-haptic/haptic/-/merge_requests/1877).
+[commit d20bf9dd5](https://github.com/haproxy-haptic/HAPTIC/commit/d20bf9dd5d5e10482d783d2acb3fe6f384ece643).
 These measurements precede the runtime-map replay fix in
-[MR !1880](https://gitlab.com/haproxy-haptic/haptic/-/merge_requests/1880);
+[commit 28169f723](https://github.com/haproxy-haptic/HAPTIC/commit/28169f723e3a7cfe4745f664ce658c5eaf002f8e);
 they don't measure subsequent main commits or a released version.
 
 The baseline ran first, then the candidate, on the same `AMD Ryzen 7 5700X3D`
