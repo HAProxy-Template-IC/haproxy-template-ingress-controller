@@ -55,6 +55,32 @@ func TestVerifiedStateSerializesWorkerObservation(t *testing.T) {
 	assert.Equal(t, "confirmed", state.AppliedPlanID)
 }
 
+func TestVerifiedStateSerializesWithApply(t *testing.T) {
+	model, agent := newWorkerObservationServer(t)
+	observed := make(chan bool, 1)
+	model.With(func(m *haproxytest.Model) {
+		m.Reject = func(command string) (string, bool) {
+			if !strings.HasSuffix(command, "show info float") {
+				return "", false
+			}
+			free := agent.apply.TryLock()
+			if free {
+				agent.apply.Unlock()
+			}
+			observed <- free
+			return "", false
+		}
+	})
+	_, err := agent.stateResponse(true, false)
+	require.NoError(t, err)
+	select {
+	case free := <-observed:
+		assert.False(t, free, "an apply must not land its tree while a verified read re-observes disk")
+	default:
+		t.Fatal("verified state did not observe the worker")
+	}
+}
+
 func TestReloadSerializesWorkerObservation(t *testing.T) {
 	model, agent := newWorkerObservationServer(t)
 	interleaved := make(chan bool, 1)
