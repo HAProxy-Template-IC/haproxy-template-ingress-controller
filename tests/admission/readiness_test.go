@@ -39,17 +39,19 @@ const (
 	clientTimeout = `error: error when creating "STDIN": Post "https://127.0.0.1:43119/apis/networking.k8s.io/v1/namespaces/haptic/ingresses?dryRun=All&fieldManager=kubectl-create&fieldValidation=Strict&timeout=10s": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`
 	// The same timeout from GitHub run 38841081852, without the Client.Timeout suffix.
 	clientDeadline = `error: error when creating "STDIN": Post "https://127.0.0.1:39327/apis/networking.k8s.io/v1/namespaces/haptic/ingresses?dryRun=All&fieldManager=kubectl-create&fieldValidation=Strict&timeout=10s": context deadline exceeded`
+	// The API server's own deadline, after a refused webhook call, from GitHub run 38939983452.
+	serverTimeout = `Error from server (Timeout): error when creating "STDIN": the server was unable to return a response in the time allotted, but may still be processing the request (post ingresses.networking.k8s.io)`
 	// The same timeout from GitHub run 38692183458.
 	clientCanceled = `error: error when creating "STDIN": Post "https://127.0.0.1:33829/apis/networking.k8s.io/v1/namespaces/haptic/ingresses?dryRun=All&fieldManager=kubectl-create&fieldValidation=Strict&timeout=10s": net/http: request canceled (Client.Timeout exceeded while awaiting headers)`
 )
 
 func TestAdmissionConnectionClassification(t *testing.T) {
-	for _, message := range []string{refused, noEndpoints, clientTimeout, clientDeadline, clientCanceled, refused + "\n" + clientTimeout, "Warning: deprecated\n" + refused + "\n"} {
+	for _, message := range []string{refused, noEndpoints, clientTimeout, clientDeadline, clientCanceled, serverTimeout, refused + "\n" + serverTimeout, refused + "\n" + clientTimeout, "Warning: deprecated\n" + refused + "\n"} {
 		assert.True(t, ConnectionPending(message), "%s", message)
 	}
 	assert.False(t, ConnectionPending(""))
 	assert.False(t, ConnectionPending("Warning: deprecated"))
-	for _, message := range []string{denied, denied + ": context deadline exceeded", "error: malformed manifest", "error: Unauthorized", refused + " extra", "unknown error"} {
+	for _, message := range []string{denied, denied + ": context deadline exceeded", "error: malformed manifest", "error: Unauthorized", refused + " extra", serverTimeout + " extra", "unknown error"} {
 		assert.False(t, ConnectionPending(message), "%s", message)
 		assert.False(t, ConnectionPending(refused+"\n"+message), "a terminal error must dominate: %s", message)
 	}
