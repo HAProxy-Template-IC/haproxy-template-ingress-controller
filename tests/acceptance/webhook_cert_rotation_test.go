@@ -267,12 +267,12 @@ func servedSerial(ctx context.Context, namespace, dnsName string) (string, error
 	return strings.TrimSpace(out), nil
 }
 
-// containerRestarts returns the restart count of the named container, or -1 if
-// the container status is not present yet.
+// containerRestarts returns the restart count of the named container (native
+// sidecars included), or -1 if the container status is not present yet.
 func containerRestarts(pod *corev1.Pod, container string) int32 {
-	for i := range pod.Status.ContainerStatuses {
-		if pod.Status.ContainerStatuses[i].Name == container {
-			return pod.Status.ContainerStatuses[i].RestartCount
+	for _, status := range append(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses...) {
+		if status.Name == container {
+			return status.RestartCount
 		}
 	}
 	return -1
