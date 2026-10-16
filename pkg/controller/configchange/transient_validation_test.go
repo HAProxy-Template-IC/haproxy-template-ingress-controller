@@ -202,3 +202,74 @@ func TestStatusUpdater_HandleConfigValidationInconclusive(t *testing.T) {
 	assert.Equal(t, reasonValidationInconclusive, cond.Reason)
 	assert.Contains(t, cond.Message, "context deadline exceeded")
 }
+
+// transientResolveError is what the effective-config resolver returns when the
+// apiserver couldn't answer discovery or schema requests.
+type transientResolveError struct{ transient bool }
+
+func (e transientResolveError) Error() string {
+	return "discovery for gateway.networking.k8s.io/v1: context deadline exceeded"
+}
+func (e transientResolveError) Transient() bool { return e.transient }
+
+func TestConfigChangeHandler_TransientEffectiveConfigFailureIsRetried(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	handler := NewConfigChangeHandler(bus, logger, make(chan *ReloadRequest, 1), []string{"template"}, testDebounceInterval)
+	resolves := 0
+	handler.SetEffectiveResolver(func(c *coreconfig.Config) (*ResolvedConfig, error) {
+		resolves++
+		if resolves == 1 {
+			return nil, transientResolveError{transient: true}
+		}
+		return &ResolvedConfig{Config: c}, nil
+	})
+	eventChan := bus.Subscribe("test-sub", 50)
+	startScriptedValidators(bus, func(_ int, requestID string) []*events.ConfigValidationResponse {
+		return []*events.ConfigValidationResponse{events.NewConfigValidationResponse(requestID, "template", true, nil)}
+	})
+	bus.Start()
+	go handler.Start(t.Context())
+
+	time.Sleep(testutil.StartupDelay)
+	bus.Publish(events.NewConfigParsedEvent(&coreconfig.Config{}, nil, "v1", "sv1"))
+
+	sawInconclusive := false
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case ev := <-eventChan:
+			switch e := ev.(type) {
+			case *events.ConfigInvalidEvent:
+				t.Fatalf("a transient effective-config failure was reported as invalid: %v", e.ValidationErrors)
+			case *events.ConfigValidationInconclusiveEvent:
+				assert.Contains(t, e.Reasons, "effective-config")
+				sawInconclusive = true
+			case *events.ConfigValidatedEvent:
+				if e.Version == "v1" {
+					assert.True(t, sawInconclusive, "the first resolution must have been inconclusive")
+					return
+				}
+			}
+		case <-deadline:
+			t.Fatal("v1 was never validated after one transient effective-config failure")
+		}
+	}
+}
+
+func TestConfigChangeHandler_EffectiveConfigRejectionStaysFinal(t *testing.T) {
+	bus, logger := testutil.NewTestBusAndLogger()
+	handler := NewConfigChangeHandler(bus, logger, make(chan *ReloadRequest, 1), []string{"template"}, testDebounceInterval)
+	handler.SetEffectiveResolver(func(*coreconfig.Config) (*ResolvedConfig, error) {
+		return nil, transientResolveError{transient: false}
+	})
+	eventChan := bus.Subscribe("test-sub", 50)
+	bus.Start()
+	go handler.Start(t.Context())
+
+	time.Sleep(testutil.StartupDelay)
+	bus.Publish(events.NewConfigParsedEvent(&coreconfig.Config{}, nil, "v1", "sv1"))
+
+	invalid := testutil.WaitForEvent[*events.ConfigInvalidEvent](t, eventChan, testutil.LongTimeout)
+	assert.Equal(t, "v1", invalid.Version)
+	assert.Contains(t, invalid.ValidationErrors, "effective-config")
+}

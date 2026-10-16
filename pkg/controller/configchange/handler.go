@@ -2,6 +2,7 @@ package configchange
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -598,6 +599,9 @@ func (h *ConfigChangeHandler) validateCandidate(ctx context.Context, candidate *
 			outcome.validationErrors = map[string][]string{
 				"effective-config": {err.Error()},
 			}
+			// An apiserver that couldn't answer says nothing about the config.
+			var transient interface{ Transient() bool }
+			outcome.inconclusive = errors.As(err, &transient) && transient.Transient()
 			return outcome
 		}
 		if resolved == nil || resolved.Config == nil {

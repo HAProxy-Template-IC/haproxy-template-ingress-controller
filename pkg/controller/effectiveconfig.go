@@ -16,6 +16,7 @@ import (
 
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/configchange"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/crdwatch"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validator"
 
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -220,13 +221,16 @@ func resolveEffectiveConfig(ctx context.Context, cfg *coreconfig.Config, k8sClie
 	checker := NewDiscoveryServedChecker(ctx, k8sClient.Clientset().Discovery(), fetcher, logger)
 	effective, resolution, err := coreconfig.ResolveEffective(cfg, checker, checker)
 	if err != nil {
+		if schemaErr := (&validator.SchemaAcquisitionError{Subject: "the effective config", Err: err}); schemaErr.Transient() {
+			return nil, nil, schemaErr
+		}
 		return nil, nil, err
 	}
 	if terr := checker.TransientErr(); terr != nil {
 		// Fail the whole resolution rather than act on a partial view: an
 		// optional feature must not strip (nor a reload fire) because of an
-		// apiserver blip. The caller retries.
-		return nil, nil, fmt.Errorf("transient discovery error during resolution: %w", terr)
+		// apiserver blip. The config-change handler retries a transient error.
+		return nil, nil, &validator.SchemaAcquisitionError{Subject: "the effective config", Err: terr}
 	}
 
 	for name, version := range resolution.ResolvedVersions {
