@@ -21,8 +21,10 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -30,6 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/helpers"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/inputisolation"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/metrics"
@@ -37,8 +40,10 @@ import (
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/renderer"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendergate"
+	ctrltestutil "github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/typebootstrap"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validation"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/warmer"
 	coreconfig "github.com/haproxy-haptic/HAPTIC/pkg/core/config"
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 	k8sstore "github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
@@ -160,6 +165,54 @@ func TestEndpointChurnRunsOneHAProxyCheckPerRender(t *testing.T) {
 			assert.InDelta(t, wantReused, testutil.ToFloat64(m.HAProxyChecksReusedTotal.WithLabelValues("render_gate", validation.CheckPassed)), 0)
 		})
 	}
+}
+
+// TestFollowerChurnRunsOneHAProxyCheckPerInterval pins the follower half of
+// issue #335: the warmer accepted every trigger's render, so a follower ran one
+// `haproxy -c` per endpoint change for renders it never deploys.
+func TestFollowerChurnRunsOneHAProxyCheckPerInterval(t *testing.T) {
+	const interval = time.Second
+	haproxy := &countingHAProxy{}
+	t.Cleanup(dataplane.SetHAProxyExecutor(haproxy))
+	m := metrics.NewMetrics(prometheus.NewRegistry())
+	r := newReplica(t, m)
+	live := k8sstore.NewMemoryStore(2)
+	provider := stores.NewRealStoreProvider(map[string]stores.Store{"endpoints": live})
+	require.NoError(t, live.Add(endpointSlice("10.0.0.1"), []string{"default", "web-abc"}))
+	bus, logger := ctrltestutil.NewTestBusAndLogger()
+	follower := warmer.New(&warmer.Config{
+		EventBus: bus, Pipeline: r.selector, StoreProvider: provider,
+		CurrentFilesSource: newCurrentFilesAuthority(newPublishedAuxFiles("haptic")).PublishedExactSource,
+		Interval:           interval, Metrics: m, Logger: logger,
+	})
+	bus.Start()
+	go func() { _ = follower.Start(t.Context()) }()
+
+	bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	select {
+	case <-follower.Warmed():
+	case <-time.After(ctrltestutil.EventTimeout):
+		t.Fatal("the follower never rendered")
+	}
+	for i := range 10 {
+		require.NoError(t, live.Update(endpointSlice(fmt.Sprintf("10.0.1.%d", i)), []string{"default", "web-abc"}))
+		bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	}
+
+	require.Eventually(t, func() bool {
+		accepted, _, ready := r.selector.Snapshot()
+		if !ready {
+			return false
+		}
+		items, err := accepted.GetStore("endpoints").List()
+		if err != nil || len(items) != 1 {
+			return false
+		}
+		slice, ok := items[0].(*unstructured.Unstructured)
+		return ok && strings.Contains(fmt.Sprint(slice.Object), "10.0.1.9")
+	}, interval+ctrltestutil.EventTimeout, 10*time.Millisecond, "the follower accepts the latest inputs")
+	assert.Equal(t, int32(2), haproxy.checks.Load(), "one haproxy -c for the first trigger, one for the coalesced churn")
+	assert.InDelta(t, 2, testutil.ToFloat64(m.HAProxyChecksTotal.WithLabelValues("input", validation.CheckPassed)), 0)
 }
 
 type refusingHAProxy struct{ checks atomic.Int32 }

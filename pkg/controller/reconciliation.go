@@ -252,6 +252,7 @@ func createReconciliationComponents(
 		StoreProvider:      storeProvider,
 		CurrentFilesSource: currentFiles.PublishedExactSource,
 		GraphWarm:          renderService.IncrementalGraphWarm,
+		Interval:           followerRenderInterval,
 		Metrics:            setup.MetricsComponent.Metrics(),
 		Logger:             logger,
 	})
@@ -393,6 +394,10 @@ func registerLifecycleComponents(reg *lifecycle.Registry, allReplica, leaderOnly
 		reg.Register(c, true)
 	}
 }
+
+// followerRenderInterval paces a follower's input acceptance, whose `haproxy -c`
+// guards no deployment (ADR-0036).
+const followerRenderInterval = 5 * time.Second
 
 // checkVerdictCapacity bounds the verdicts kept for reuse. A render is checked
 // by input acceptance and then by the render gate; input isolation can add a

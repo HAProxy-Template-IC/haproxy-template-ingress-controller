@@ -16,10 +16,10 @@
 //
 // Only the leader's Coordinator renders to deploy, so without this a follower's
 // graph sits at generation zero and every leadership change starts with a cold
-// render. The warmer runs the same reconcile render on every trigger a follower
-// receives and commits it, which is what publishes the graph, then discards the
-// output: nothing it renders reaches the fleet, the API server, or any other
-// component.
+// render. The warmer runs the same reconcile render for the triggers a follower
+// receives, at most once per Interval, and commits it, which is what publishes
+// the graph, then discards the output: nothing it renders reaches the fleet, the
+// API server, or any other component.
 package warmer
 
 import (
@@ -27,6 +27,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/component"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
@@ -67,8 +68,11 @@ type Config struct {
 	// Warmed closes after the first render that leaves one. Nil means every
 	// completed render counts.
 	GraphWarm func() bool
-	Metrics   *metrics.Metrics
-	Logger    *slog.Logger
+	// Interval is the shortest start-to-start spacing of follower renders;
+	// triggers in between coalesce into the next one. Zero renders every trigger.
+	Interval time.Duration
+	Metrics  *metrics.Metrics
+	Logger   *slog.Logger
 }
 
 // Component renders on a follower and cancels its work when leadership changes.
@@ -79,6 +83,7 @@ type Component struct {
 	storeProvider  stores.StoreProvider
 	currentFiles   func() (rendercontext.CurrentAuxFilesSource, error)
 	graphWarm      func() bool
+	interval       time.Duration
 	metrics        *metrics.Metrics
 	leader         bool
 	warmed         chan struct{}
@@ -105,6 +110,7 @@ func New(cfg *Config) *Component {
 		storeProvider: cfg.StoreProvider,
 		currentFiles:  cfg.CurrentFilesSource,
 		graphWarm:     cfg.GraphWarm,
+		interval:      cfg.Interval,
 		metrics:       cfg.Metrics,
 		warmed:        make(chan struct{}),
 		requests:      make(chan context.Context, 1),
@@ -142,12 +148,19 @@ func (c *Component) Start(ctx context.Context) error {
 }
 
 func (c *Component) runRenders(ctx context.Context) {
+	var nextStart time.Time
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(nextStart)):
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case renderCtx := <-c.requests:
 			if renderCtx.Err() == nil {
+				nextStart = time.Now().Add(c.interval)
 				component.SafeDispatch(c.Logger(), ComponentName, nil, func() { c.render(renderCtx) })
 			}
 		}

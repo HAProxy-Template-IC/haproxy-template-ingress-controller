@@ -13,7 +13,7 @@ Scope queries to your installation when Prometheus monitors more than one releas
 | `haptic_reconciliation_errors_total` | Counter | Failed reconciliation cycles |
 | `haptic_render_profiles` | Gauge | Distinct backend profiles (`defaults haptic-be-*`) in the most recent render. Backends of the same shape collapse onto one profile, so this tracks the config's structural size independently of the raw backend count. Leader-only; `0` on followers |
 | `haptic_render_warnings` | Gauge | Current template-recorded warnings, labeled by `reason`, from the last successful reconciliation. Only the leader reports them; resolved reasons disappear. Alert on `sum by (reason) (haptic_render_warnings) > 0` to detect degraded routes such as `ServicePortNotFound` or `BackendUnresolved` |
-| `haptic_render_total` | Counter | Reconcile renders, failed ones included, by `cache_state`: `cold` re-evaluated every template, `warm` reused the incremental graph, `replay` reused the previous output unchanged. Counts on every replica, because followers render to keep their graph warm for a leadership change. A replica that keeps counting `cold` pays the full render cost on every change |
+| `haptic_render_total` | Counter | Reconcile renders, failed ones included, by `cache_state`: `cold` re-evaluated every template, `warm` reused the incremental graph, `replay` reused the previous output unchanged. Counts on every replica, because followers render to keep their graph warm for a leadership change. A follower renders at most once every 5 seconds. A replica that keeps counting `cold` pays the full render cost on every change |
 | `haptic_render_errors_total` | Counter | Reconcile renders that failed, by the `cache_state` they ran from. Each also counts in `haptic_render_total`. Counts on every replica, so a follower whose renders fail shows up here |
 
 **Key queries:**
@@ -179,7 +179,7 @@ Track HAProxy validation failures with
 |--------|------|--------|-------------|
 | `haptic_validation_total` | Counter | — | Render gate verdicts on the leader |
 | `haptic_validation_errors_total` | Counter | — | Render gate verdicts that refused the render or couldn't run |
-| `haptic_haproxy_checks_total` | Counter | `validator`, `result` | `haproxy -c` processes this replica ran, on leader and followers. `validator` is `input` (input acceptance, every render), `render_gate`, `retained`, `http_content`, or `admission`. `result` is `passed`, `refused`, `error`, or `cancelled`. |
+| `haptic_haproxy_checks_total` | Counter | `validator`, `result` | `haproxy -c` processes this replica ran, on leader and followers. `validator` is `input` (input acceptance: every render on the leader, at most one every 5 seconds on a follower), `render_gate`, `retained`, `http_content`, or `admission`. `result` is `passed`, `refused`, `error`, or `cancelled`. |
 | `haptic_haproxy_checks_reused_total` | Counter | `validator`, `result` | Checks answered without a process, because HAProxy had already judged the identical config, files, flags, and binary. Strict-DNS admission checks are never reused. |
 
 **Key queries:**

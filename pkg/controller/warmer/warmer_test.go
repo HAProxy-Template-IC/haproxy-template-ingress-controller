@@ -88,6 +88,11 @@ type harness struct {
 
 func newHarness(t *testing.T, p *recordingPipeline) *harness {
 	t.Helper()
+	return newPacedHarness(t, p, 0)
+}
+
+func newPacedHarness(t *testing.T, p *recordingPipeline, interval time.Duration) *harness {
+	t.Helper()
 	bus, logger := testutil.NewTestBusAndLogger()
 	h := &harness{
 		bus:      bus,
@@ -107,6 +112,7 @@ func newHarness(t *testing.T, p *recordingPipeline) *harness {
 		StoreProvider:      stores.NewRealStoreProvider(nil),
 		CurrentFilesSource: func() (rendercontext.CurrentAuxFilesSource, error) { return h.files() },
 		GraphWarm:          h.graphWarm.Load,
+		Interval:           interval,
 		Metrics:            h.metrics,
 		Logger:             logger,
 	})
@@ -176,6 +182,27 @@ func TestWarmerCoalescesABurstOfTriggers(t *testing.T) {
 	close(p.gate)
 	h.waitForRender(t)
 	h.waitForRender(t)
+	h.assertNoRender(t)
+	assert.Equal(t, 2, p.executions(), "one render for the first trigger, one for the coalesced rest")
+}
+
+func TestWarmerRendersAtMostOncePerInterval(t *testing.T) {
+	const interval = 300 * time.Millisecond
+	p := &recordingPipeline{result: warmResult(), ran: make(chan struct{}, 8)}
+	h := newPacedHarness(t, p, interval)
+
+	h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	h.waitForRender(t)
+	first := time.Now()
+	for range 5 {
+		h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	}
+	select {
+	case <-p.ran:
+	case <-time.After(interval + testutil.EventTimeout):
+		t.Fatal("the coalesced triggers never rendered")
+	}
+	assert.GreaterOrEqual(t, time.Since(first), interval*3/4, "the second render waits for the interval")
 	h.assertNoRender(t)
 	assert.Equal(t, 2, p.executions(), "one render for the first trigger, one for the coalesced rest")
 }

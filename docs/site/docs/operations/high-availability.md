@@ -12,6 +12,8 @@ proxy; see [anti-affinity](#anti-affinity). Each controller needs the full
 Leader election uses a Kubernetes Lease to choose the replica that deploys
 configuration. Every replica watches resources, renders changes, and serves
 admission requests. Followers keep their caches and render state ready for takeover.
+A follower renders and validates the latest changes at most once every 5 seconds,
+since it deploys nothing; the new leader validates every render before deploying it.
 
 If the leader fails, a follower acquires the lease and renders the current state
 before deploying. A voluntary handoff releases the lease without waiting for it

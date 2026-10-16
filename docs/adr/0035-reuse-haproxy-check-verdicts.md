@@ -59,7 +59,7 @@ The key doesn't cover every input:
 
 Followers keep their input acceptance check. Its verdict decides which inputs the
 follower accepts, and admission and a later failover use that accepted state, so
-the follower's check isn't redundant.
+the follower's check isn't redundant. ADR-0036 limits how often it runs.
 
 `haptic_haproxy_checks_total{validator,result}` counts each `haproxy -c` run on
 every replica, including followers. `haptic_haproxy_checks_reused_total` counts

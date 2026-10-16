@@ -15,7 +15,7 @@ All replicas, however, do useful work:
 - Watch Kubernetes resources, keeping a hot cache for failover
 - Handle admission webhook requests, so the webhook stays available through a failover
 
-Every replica renders, but only the leader's render goes anywhere: the leader-only Coordinator drives the synchronous render pipeline and hands the result to the RenderGate (HAProxy's own check) and the deployment components, while the all-replica Warmer runs the same render on a follower purely to keep its incremental graph warm and discards the output. A new leader's first reconciliation is therefore a warm render, not a cold one. Only **deployment operations** strictly need exclusivity, but co-locating rendering with deployment keeps the pipeline synchronous and simple. A new leader starts the gate optimistic: the agents' own last-known-good file sets already protect the fleet.
+Every replica renders, but only the leader's render goes anywhere: the leader-only Coordinator drives the synchronous render pipeline and hands the result to the RenderGate (HAProxy's own check) and the deployment components, while the all-replica Warmer runs the same render on a follower, at most once every 5 seconds, to keep its incremental graph warm and its accepted inputs current, and discards the output ([ADR-0036](https://github.com/haproxy-haptic/HAPTIC/blob/main/docs/adr/0036-pace-follower-input-acceptance.md)). A new leader's first reconciliation is therefore a warm render, not a cold one. Only **deployment operations** strictly need exclusivity, but co-locating rendering with deployment keeps the pipeline synchronous and simple. A new leader starts the gate optimistic: the agents' own last-known-good file sets already protect the fleet.
 
 ## Lease-based election
 
@@ -68,7 +68,7 @@ The actual classification lives in `pkg/controller/reconciliation.go` (search fo
 - StateCache (`pkg/controller/statecache.go`) — Maintains live state snapshot for debug introspection
 - DebugServer (`pkg/introspection`) — Serves `/debug/vars` and `/debug/pprof` endpoints
 
-The renderer **isn't** a registered component. It lives in `pkg/controller/renderer` as the synchronous `RenderService` that the leader-only Coordinator drives via `pkg/controller/pipeline`. On a follower the all-replica Warmer (`pkg/controller/warmer`) drives the same service and pipeline for each trigger, committing the render for its incremental graph and publishing nothing else.
+The renderer **isn't** a registered component. It lives in `pkg/controller/renderer` as the synchronous `RenderService` that the leader-only Coordinator drives via `pkg/controller/pipeline`. On a follower the all-replica Warmer (`pkg/controller/warmer`) drives the same service and pipeline at most once every 5 seconds, coalescing the triggers between renders, committing the render for its incremental graph and publishing nothing else.
 
 **Leader-only components** (lifecycle registry's `LeaderOnly(...)` group; only constructed and started while leadership is held, torn down on `LostLeadershipEvent`):
 
