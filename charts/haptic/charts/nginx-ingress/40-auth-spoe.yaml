@@ -552,7 +552,7 @@ templateSnippets:
   #     → entry in coraza-disabled.map; the resource_key is excluded from the
   #       unconditional default-on dispatch in frontend-spoe-filters-050-coraza.
   #   nginx.ingress.kubernetes.io/enable-modsecurity: "true"
-  #     → under opt-in dispatch, entry in haproxy-ingress-waf.map (deny).
+  #     → under opt-in dispatch, entry in haproxy-ingress-waf.map (detect).
   #
   # Validation (route-scoped, like the native library's rejectRoute):
   #   - modsec-snippet contains TOML triple-quote (injection vector — TOML
