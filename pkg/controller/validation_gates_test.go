@@ -61,8 +61,8 @@ func TestFullValidationGatesDoNotBlockEachOther(t *testing.T) {
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 			cfg := &coreconfig.Config{}
 			services := map[string]*validation.ValidationService{
-				"input acceptance": newFullValidator(cfg, logger),
-				"admission":        newFullValidator(cfg, logger),
+				"input acceptance": newFullValidator(cfg, logger, nil, nil),
+				"admission":        newFullValidator(cfg, logger, nil, nil),
 			}
 			other := "admission"
 			if blocked == other {

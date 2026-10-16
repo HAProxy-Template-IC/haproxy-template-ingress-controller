@@ -38,10 +38,19 @@ type ValidationPaths struct {
 
 // ValidateSemanticsContext checks the configuration with HAProxy; a nil gate uses the shared default.
 func ValidateSemanticsContext(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate) error {
-	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate); err != nil {
-		return phaseSemantic.wrap(err)
+	_, err := ValidateSemanticsWithVerdicts(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate, nil)
+	return err
+}
+
+// ValidateSemanticsWithVerdicts is ValidateSemanticsContext answering an input
+// set verdicts already judged, which reused reports. A verdict is reused only
+// when paths.TempDir is a fresh, empty directory.
+func ValidateSemanticsWithVerdicts(ctx context.Context, mainConfig string, auxFiles *AuxiliaryFiles, paths *ValidationPaths, skipDNSValidation bool, gate *CheckGate, verdicts *CheckVerdicts) (reused bool, err error) {
+	reused, err = validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate, verdicts)
+	if err != nil {
+		return reused, phaseSemantic.wrap(err)
 	}
-	return nil
+	return reused, nil
 }
 
 // ValidateConfigurationContext checks isolated validation files with HAProxy; a nil gate uses the shared default.
@@ -51,7 +60,7 @@ func ValidateConfigurationContext(ctx context.Context, mainConfig string, auxFil
 	}
 
 	start := time.Now()
-	if err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate); err != nil {
+	if _, err := validateSemantics(ctx, mainConfig, auxFiles, paths, skipDNSValidation, gate, nil); err != nil {
 		return phaseSemantic.wrap(err)
 	}
 	slog.Debug("Validation completed", "semantic_ms", time.Since(start).Milliseconds())

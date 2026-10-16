@@ -175,10 +175,12 @@ Track HAProxy validation failures with
 
 ## Validation metrics
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `haptic_validation_total` | Counter | Total validation attempts |
-| `haptic_validation_errors_total` | Counter | Failed validations |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `haptic_validation_total` | Counter | — | Render gate verdicts on the leader |
+| `haptic_validation_errors_total` | Counter | — | Render gate verdicts that refused the render or couldn't run |
+| `haptic_haproxy_checks_total` | Counter | `validator`, `result` | `haproxy -c` processes this replica ran, on leader and followers. `validator` is `input` (input acceptance, every render), `render_gate`, `retained`, `http_content`, or `admission`. `result` is `passed`, `refused`, `error`, or `cancelled`. |
+| `haptic_haproxy_checks_reused_total` | Counter | `validator`, `result` | Checks answered without a process, because HAProxy had already judged the identical config, files, flags, and binary. Strict-DNS admission checks are never reused. |
 
 **Key queries:**
 
@@ -191,6 +193,9 @@ rate(haptic_validation_total[5m])
   rate(haptic_validation_errors_total[5m]) /
   rate(haptic_validation_total[5m])
 ))
+
+# haproxy -c processes per second, per replica and validator
+sum by (pod, validator) (rate(haptic_haproxy_checks_total[5m]))
 ```
 
 ## Resource metrics

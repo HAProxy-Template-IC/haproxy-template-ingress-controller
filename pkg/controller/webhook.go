@@ -232,6 +232,7 @@ func createDryRunValidator(
 	validationService := validation.NewValidationService(&validation.ValidationServiceConfig{
 		Logger:            logger,
 		SkipDNSValidation: false, // Strict mode for webhook validation
+		CheckObserver:     wiring.admissionChecks,
 		BaseDir:           dirConfig.BaseDir,
 		MapsDir:           dirConfig.MapsDir,
 		SSLCertsDir:       dirConfig.SSLCertsDir,
