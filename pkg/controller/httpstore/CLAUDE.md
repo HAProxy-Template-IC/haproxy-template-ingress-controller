@@ -182,6 +182,7 @@ instead of fetching. The reconcile pipeline brackets each render with
 `BeginReconcileRender` / `HoldReconcileRenders` / `ReconcileRenderCompleted`:
 after a render fails on an outage, reconcile renders return that failure
 without rendering until the outage epoch moves (ADR-0030, issue #332).
+Input isolation checks `Pipeline.HeldRender` before capturing inputs (#354).
 
 ## Component Lifecycle
 

@@ -38,6 +38,8 @@ import (
 // Pipeline validates the complete rendered configuration and all auxiliary output.
 type Pipeline interface {
 	Execute(context.Context, stores.StoreProvider, rendercontext.RenderMode, ...rendercontext.Option) (*pipeline.PipelineResult, error)
+	// HeldRender returns the error Execute would return for every input set, or nil.
+	HeldRender(rendercontext.RenderMode) error
 }
 
 // Rejection identifies a watched resource revision that has not been accepted.
@@ -133,6 +135,9 @@ func (s *Service) Execute(ctx context.Context, observed stores.StoreProvider, mo
 		defer func() { <-s.permit }()
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+	if err := s.pipeline.HeldRender(mode); err != nil {
+		return nil, err
 	}
 	base := s.baseBranches()
 	groups, err := s.captureChanges(ctx, observed, base)
