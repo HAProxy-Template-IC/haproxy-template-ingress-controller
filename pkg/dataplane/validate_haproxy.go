@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -35,6 +36,40 @@ var defaultCheckGate = NewCheckGate(0)
 // tree, cancelled) does not wrap it, so callers never read an infrastructure
 // failure as a verdict on the config.
 var ErrHAProxyRefused = errors.New("haproxy validation failed")
+
+// RefusalError is a configuration refusal by the haproxy binary. It wraps ErrHAProxyRefused.
+type RefusalError struct {
+	// Causes are HAProxy's failure messages without process IDs, line numbers, or the
+	// check's working directory, so refusals of different renders compare by cause.
+	Causes []string
+
+	message string
+}
+
+func (e *RefusalError) Error() string { return ErrHAProxyRefused.Error() + ": " + e.message }
+
+func (e *RefusalError) Unwrap() error { return ErrHAProxyRefused }
+
+var (
+	failureLinePrefix  = regexp.MustCompile(`^\[(?:EMERG|ALERT|CRIT|ERR)\][^:]*:\s*`)
+	configLinePosition = regexp.MustCompile(`(\[[^\]\s:]+):\d+\]`)
+)
+
+func refusalCauses(output, workDir string) []string {
+	var causes []string
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !failureLinePrefix.MatchString(trimmed) || shouldSkipLine(trimmed) {
+			continue
+		}
+		cause := failureLinePrefix.ReplaceAllString(trimmed, "")
+		if workDir != "" {
+			cause = strings.ReplaceAll(cause, workDir+string(filepath.Separator), "")
+		}
+		causes = append(causes, configLinePosition.ReplaceAllString(cause, "$1]"))
+	}
+	return causes
+}
 
 // validateSemantics performs semantic validation using haproxy binary.
 // This writes files to actual /etc/haproxy/ directories and runs haproxy -c.
@@ -334,7 +369,7 @@ func runHAProxyCheck(ctx context.Context, configPath, configContent string, skip
 		if len(output) == 0 && errors.Is(err, exec.ErrNotFound) {
 			return err
 		}
-		return interpretHAProxyExitError(output, err, configContent)
+		return interpretHAProxyExitError(output, err, configContent, filepath.Dir(absConfigPath))
 	}
 	if cause := context.Cause(ctx); cause != nil {
 		return cause
@@ -362,7 +397,7 @@ func runHAProxyCheck(ctx context.Context, configPath, configContent string, skip
 //
 // Extracted so the decision logic is unit-testable without invoking the
 // haproxy binary.
-func interpretHAProxyExitError(output []byte, exitErr error, configContent string) error {
+func interpretHAProxyExitError(output []byte, exitErr error, configContent, workDir string) error {
 	trimmedOutput := strings.TrimSpace(string(output))
 	if trimmedOutput == "" {
 		return fmt.Errorf("haproxy exited with error but produced no output: %w", exitErr)
@@ -372,7 +407,7 @@ func interpretHAProxyExitError(output []byte, exitErr error, configContent strin
 			"output", trimmedOutput)
 		return nil
 	}
-	return fmt.Errorf("%w: %s", ErrHAProxyRefused, parseHAProxyError(string(output), configContent))
+	return &RefusalError{Causes: refusalCauses(string(output), workDir), message: parseHAProxyError(string(output), configContent)}
 }
 
 // hasFailureLines reports whether output contains any HAProxy log line at or
