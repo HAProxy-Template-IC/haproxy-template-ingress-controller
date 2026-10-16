@@ -29,7 +29,7 @@ for tool in json.load(open(sys.argv[1]))["tools"]:
 ' "$tools_dir/plan.json")
 tar -xzf "$tools_dir/helm.tar.gz" -C "$tools_dir" linux-arm64/helm
 mv "$tools_dir/linux-arm64/helm" "$tools_dir/helm"
-chmod +x "$tools_dir"/{kind,helm,kubectl,yq}
+chmod +x "$tools_dir"/{kind,helm,kubectl,yq,cosign}
 printf '%s\n' "$tools_dir" >> "$GITHUB_PATH"
 python3 -c 'import json,sys; print("HAPTIC_NATIVE_GO_VERSION=" + json.load(open(sys.argv[1]))["go_version"])' \
     "$tools_dir/plan.json" >> "$GITHUB_ENV"

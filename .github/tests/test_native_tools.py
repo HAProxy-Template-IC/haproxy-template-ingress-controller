@@ -55,7 +55,8 @@ class NativeToolTests(unittest.TestCase):
         selected = plan(self.pins, self.checksums, self.images)
         outputs = ["go" + self.version, "kind v" + self.pins["KIND_VERSION"], "v" + self.pins["HELM_VERSION"],
                    json.dumps({"clientVersion": {"gitVersion": "v" + self.pins["KUBECTL_VERSION"]}}),
-                   "yq version v" + self.pins["YQ_VERSION"]]
+                   "yq version v" + self.pins["YQ_VERSION"],
+                   json.dumps({"gitVersion": "v" + self.pins["COSIGN_VERSION"]})]
         self.assertEqual(verify(selected, output=Mock(side_effect=outputs))["go"], self.version)
         outputs[0] = "go99.0.0\n"
         with self.assertRaisesRegex(ValueError, "differ"):

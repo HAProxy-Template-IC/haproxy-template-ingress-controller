@@ -23,6 +23,7 @@ def plan(pins, checksums, images):
         ("helm", "helm.tar.gz", "https://get.helm.sh/helm-v{version}-linux-arm64.tar.gz"),
         ("kubectl", "kubectl", "https://dl.k8s.io/release/v{version}/bin/linux/arm64/kubectl"),
         ("yq", "yq", "https://github.com/mikefarah/yq/releases/download/v{version}/yq_linux_arm64"),
+        ("cosign", "cosign", "https://github.com/sigstore/cosign/releases/download/v{version}/cosign-linux-arm64"),
     ):
         version = pins[name.upper() + "_VERSION"]
         if not re.fullmatch(r"\d+\.\d+\.\d+", version):
@@ -43,6 +44,7 @@ def verify(selected, *, output=subprocess.check_output):
         "kubectl": json.loads(output(["kubectl", "version", "--client", "-o", "json"], text=True))[
             "clientVersion"]["gitVersion"].removeprefix("v"),
         "yq": output(["yq", "--version"], text=True).split()[-1].removeprefix("v"),
+        "cosign": json.loads(output(["cosign", "version", "--json"], text=True))["gitVersion"].removeprefix("v"),
     }
     expected = {"go": selected["go_version"], **{tool["name"]: tool["version"] for tool in selected["tools"]}}
     if versions != expected:

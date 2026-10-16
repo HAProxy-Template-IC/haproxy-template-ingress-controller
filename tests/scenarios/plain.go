@@ -25,6 +25,9 @@ func (s *Session) InstallWithoutGatewayAPI(ctx context.Context) error {
 	if err := s.LoadControllerImage(ctx); err != nil {
 		return err
 	}
+	if err := s.LoadSPOAImage(ctx); err != nil {
+		return err
+	}
 	s.Infof("Installing chart defaults without Gateway API")
 	args := []string{helmInstall, s.Release, filepath.Join(s.Root, "charts", chartName), "--create-namespace", "--timeout", "10m"}
 	if _, err = s.Helm(ctx, append(args, s.ImageValues()...)...); err != nil {

@@ -114,6 +114,9 @@ func (s *Session) installDefaultsChart(ctx context.Context, options *DefaultsOpt
 	if err := kindutil.ValidateChartImageTag(images.SPOAHub, options.SPOATag); err != nil {
 		return err
 	}
+	if err := s.LoadSPOAImage(ctx); err != nil {
+		return err
+	}
 	args := []string{helmUpgrade, "--install", s.Release, filepath.Join(s.Root, "charts", chartName), "--create-namespace"}
 	if options.Image != "" {
 		args = append(args, s.ImageValues()...)

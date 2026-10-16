@@ -64,7 +64,11 @@ esac
 chart_version="0.0.0-github.g${PILOT_SOURCE_SHA:0:8}"
 sed -i "s|^version:.*|version: ${chart_version}|" charts/haptic/Chart.yaml
 yq -i '.cache.varnish.image = strenv(PILOT_VARNISH_IMAGE)' charts/haptic/values.yaml
+bash .github/scripts/spoa-test-image.sh select
+bash .github/scripts/spoa-test-image.sh build > .pilot/spoa-build.log 2>&1 &
+spoa_build_pid=$!
 make docker-build-test
+wait "$spoa_build_pid" || { cat .pilot/spoa-build.log; exit 1; }
 docker image inspect haptic:test > .pilot/controller-image.json
 
 case "$PILOT_SUITE" in
