@@ -28,7 +28,7 @@ _helm_load:
   enable: '{{ .Values.controller.templateLibraries.base.enabled }}'
   inject:
     - path: watchedResources.controller_services.labelSelector
-      value: 'app.kubernetes.io/name={{ include "haptic.name" . }},app.kubernetes.io/component=loadbalancer'
+      value: 'app.kubernetes.io/name={{ include "haptic.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=loadbalancer'
     - path: templateSnippets.frontend-routing-logic
       from: templateSnippets.frontend-routing-logic-regex-last
       when: '{{- with .Values.controller.config.templatingSettings.extraContext.routing -}}{{- if eq .regexMatchOrder "last" }}true{{ end -}}{{- end -}}'

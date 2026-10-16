@@ -296,14 +296,18 @@ tests:
           path: spec.watchedResources.gateways.fieldSelector
           value: spec.gatewayClassName=my-gw-class
 
-  - it: should inject controller-services labelSelector via _helm_load
+  # Scoped to this release: another release's load balancer addresses must not
+  # reach this release's Ingress status (#345).
+  - it: should inject this release's controller-services labelSelector via _helm_load
+    release:
+      name: edge-public
     documentSelector:
       path: metadata.name
       value: haptic-config
     asserts:
-      - matchRegex:
+      - equal:
           path: spec.watchedResources.controller_services.labelSelector
-          pattern: app\.kubernetes\.io/name=.*,app\.kubernetes\.io/component=loadbalancer
+          value: app.kubernetes.io/name=haptic,app.kubernetes.io/instance=edge-public,app.kubernetes.io/component=loadbalancer
 
   - it: should swap frontend-routing-logic to regex-last variant when configured
     documentSelector:

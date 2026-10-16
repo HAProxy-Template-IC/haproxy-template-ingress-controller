@@ -67,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Fixed
 
 - The controller NetworkPolicy now accepts webhook calls from any source by default. Its `0.0.0.0/0` and `::/0` `ipBlock` rules don't match node traffic on Cilium, so admission calls arriving from other nodes timed out and Ingress changes failed intermittently. `controller.networkPolicy.ingress.webhook.from` still restricts the webhook port when set.
+- With several releases in one cluster, each release's Ingress and Gateway status listed every release's load balancer addresses, so external-dns published names with other releases' IPs. The controller now watches only its own release's load balancer Services (`app.kubernetes.io/instance`).
 - TLS Gateways use isolated service addresses and pod ports to prevent routing to another Gateway's TLSRoutes.
 - Gateway API: TLSRoutes retain their original hostname specificity after listener intersection, with older routes winning ties.
 - Pre-rollout validation and the controller's load gate no longer fail with `vector.enabled=false`, `vector.requestMetrics` features off, `spoaHub.enabled=false`, or the mirror plugin off; bundled tests now run only when the release includes the feature they test.
