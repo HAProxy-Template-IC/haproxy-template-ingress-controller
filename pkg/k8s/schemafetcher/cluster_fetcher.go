@@ -27,18 +27,16 @@ import (
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )
 
-// CRDLister returns the cluster's installed CRDs. The production
-// implementation calls the apiextensions client; tests stand up a
-// stub that returns a fixed slice.
-//
-// Listing the full set on every Fetch would be wasteful — controllers
-// boot once per CRD version of HAProxyTemplateConfig, and during that
-// boot they fetch schemas for every watched resource. The
-// [ClusterFetcher] caches the list internally; CRDLister
-// implementations are only consulted once.
-type CRDLister interface {
-	ListCRDs(ctx context.Context) ([]apiextensionsv1.CustomResourceDefinition, error)
+// CRDGetter returns the CRD that serves a GroupVersionKind, or an error
+// wrapping [ErrNoCRD] when no CRD serves it. The production implementation
+// reads the single CRD by name: a consistent LIST of every CRD costs seconds
+// on some apiservers (#329).
+type CRDGetter interface {
+	GetCRD(ctx context.Context, gvk schema.GroupVersionKind) (*apiextensionsv1.CustomResourceDefinition, error)
 }
+
+// ErrNoCRD reports that no CRD serves a GroupVersionKind.
+var ErrNoCRD = errors.New("no CRD serves the resource")
 
 // OpenAPIV3Provider returns the cluster's OpenAPI v3 spec for a
 // GroupVersion. Wraps client-go's [openapi3.Root].GVSpec so tests
@@ -48,66 +46,35 @@ type OpenAPIV3Provider interface {
 }
 
 // ClusterFetcher resolves schemas against the cluster. It tries CRDs
-// first (cheap, single-resource read once the list is cached) and
+// first (one single-resource read per GVK) and
 // falls back to the aggregated OpenAPI v3 endpoint for built-ins
 // AND for any CRD-defined resource whose schema didn't load via the
 // CRD path (e.g. because the controller's RBAC doesn't include
-// `apiextensions.k8s.io/customresourcedefinitions list`).
+// `apiextensions.k8s.io/customresourcedefinitions get`).
 //
-// Concurrency: Fetch is safe for concurrent use. The CRD list is
-// pulled at most once per successful boot (guarded by a mutex);
-// the OpenAPI per-GroupVersion specs are pulled at most once per
-// GV (guarded by a per-GV done channel cache). Context-scoped
-// failures (cancellation, deadline) DO NOT poison the cache —
-// the relevant entry is evicted so the next caller retries with
-// a fresh context.
+// Concurrency: Fetch is safe for concurrent use. Each CRD is read at
+// most once per GVK and each OpenAPI per-GroupVersion spec at most
+// once per GV; concurrent callers coalesce onto one API call.
+// Context-scoped failures (cancellation, deadline) DO NOT poison the
+// cache — the entry is evicted so the next caller retries with a
+// fresh context.
 type ClusterFetcher struct {
-	crds    CRDLister
+	crds    CRDGetter
 	openapi OpenAPIV3Provider
 
-	// crdState protects the cached CRD list (or its terminal error).
-	// We deliberately don't use sync.Once: it caches the first
-	// outcome forever, which permanently poisons the fetcher if the
-	// first caller's context expired mid-fetch. Replacing Once with
-	// a mutex + done channel lets us evict the cached entry on
-	// context cancellation while still coalescing concurrent
-	// non-cancelled callers onto a single API call.
-	crdState struct {
-		mu      sync.Mutex
-		done    chan struct{} // closed when populated; nil before first attempt
-		list    []apiextensionsv1.CustomResourceDefinition
-		err     error
-		fetched bool // true after a successful fetch — never re-attempt then
-	}
-
-	gvSpecsMu sync.Mutex
-	gvSpecs   map[schema.GroupVersion]*gvSpecCache
-}
-
-// gvSpecCache holds the once-computed result of fetching a single
-// GroupVersion's OpenAPI v3 spec. We don't use sync.Map directly
-// because LoadOrStore can't carry the "still computing" state we
-// need to coalesce concurrent fetches for the same GV.
-type gvSpecCache struct {
-	done    chan struct{}
-	spec    *spec3.OpenAPI
-	err     error
-	evicted bool // leader observed ctx error and removed entry from gvSpecs
+	crdCache coalescingCache[schema.GroupVersionKind, *apiextensionsv1.CustomResourceDefinition]
+	gvSpecs  coalescingCache[schema.GroupVersion, *spec3.OpenAPI]
 }
 
 // NewClusterFetcher returns a [ClusterFetcher] that uses the supplied
-// CRD lister and OpenAPI v3 provider. Both must be non-nil — passing
+// CRD getter and OpenAPI v3 provider. Both must be non-nil — passing
 // nil for either is a programming error and panics on construction
 // rather than failing the first Fetch with an obscure nil-pointer.
-func NewClusterFetcher(crds CRDLister, openapi OpenAPIV3Provider) *ClusterFetcher {
+func NewClusterFetcher(crds CRDGetter, openapi OpenAPIV3Provider) *ClusterFetcher {
 	if crds == nil || openapi == nil {
-		panic("schemafetcher: NewClusterFetcher requires non-nil CRDLister and OpenAPIV3Provider")
+		panic("schemafetcher: NewClusterFetcher requires non-nil CRDGetter and OpenAPIV3Provider")
 	}
-	return &ClusterFetcher{
-		crds:    crds,
-		openapi: openapi,
-		gvSpecs: make(map[schema.GroupVersion]*gvSpecCache),
-	}
+	return &ClusterFetcher{crds: crds, openapi: openapi}
 }
 
 // Fetch implements [Fetcher]. Tries the CRD index first because it's
@@ -115,14 +82,14 @@ func NewClusterFetcher(crds CRDLister, openapi OpenAPIV3Provider) *ClusterFetche
 // openAPIV3Schema, including x-kubernetes-preserve-unknown-fields
 // subtrees). Falls back to the aggregated OpenAPI v3 endpoint for
 // built-ins AND for the case where the CRD path fails for any
-// reason — RBAC denial, parse failure, transient list error.
+// reason — RBAC denial, parse failure, transient read error.
 //
 // The OpenAPI v3 endpoint is readable by every authenticated user
 // on a working cluster and covers every registered CRD, so it's a
 // strict superset of the CRD path's coverage. Falling back on
 // CRD-path failures (not just NotFound) keeps typed access working
 // in security-restricted environments where the controller can't
-// list CRDs cluster-wide.
+// read CRDs.
 //
 // When both paths fail, the OpenAPI error wins as the user-facing
 // cause (it's the path with broader coverage and lower permission
@@ -142,131 +109,57 @@ func (f *ClusterFetcher) Fetch(ctx context.Context, gvk schema.GroupVersionKind)
 	}
 
 	// Both paths failed. Preserve both causes so operators can tell
-	// "CRD list denied + GV not in OpenAPI" (real RBAC + missing
-	// registration) from "CRD list denied + transient OpenAPI 502"
+	// "CRD read denied + GV not in OpenAPI" (real RBAC + missing
+	// registration) from "CRD read denied + transient OpenAPI 502"
 	// (purely RBAC + retryable). errors.Is(...) still works for the
 	// IsNotFound sentinel when either leg returned a NotFound.
 	return nil, nil, errors.Join(openAPIErr, crdErr)
 }
 
-// fetchFromCRDs looks for a CRD whose group + Kind matches the
-// requested GVK. The fetcher caches the CRD list once per
-// ClusterFetcher lifetime; iteration over the cached slice is O(N)
-// in CRD count which is small (~100 even on loaded clusters), so a
-// linear scan is fine and avoids carrying a RESTMapper through the
-// schema layer.
+// fetchFromCRDs reads the CRD serving gvk and extracts the
+// requested version's schema.
 //
 // Returns the schema if found, an *ErrSchemaNotAvailable wrapping
-// errNotFound when the CRD doesn't exist (or the underlying list
-// permission is missing), or a different *ErrSchemaNotAvailable
-// when the CRD exists but its schema doesn't (malformed CRD,
-// missing openAPIV3Schema, etc.).
+// errNotFound when no CRD serves the GVK, or a different
+// *ErrSchemaNotAvailable when the read failed or the CRD exists but
+// its schema doesn't (malformed CRD, missing openAPIV3Schema, etc.).
 func (f *ClusterFetcher) fetchFromCRDs(ctx context.Context, gvk schema.GroupVersionKind) (*spec.Schema, error) {
-	list, err := f.ensureCRDList(ctx)
+	crd, err := f.crdCache.get(ctx, gvk, func(ctx context.Context) (*apiextensionsv1.CustomResourceDefinition, error) {
+		return f.crds.GetCRD(ctx, gvk)
+	})
+	if errors.Is(err, ErrNoCRD) {
+		return nil, &ErrSchemaNotAvailable{GVK: gvk, Cause: errNotFound}
+	}
 	if err != nil {
 		return nil, &ErrSchemaNotAvailable{GVK: gvk, Cause: err}
 	}
-
-	for i := range list {
-		crd := &list[i]
-		if crd.Spec.Group != gvk.Group {
+	if crd.Spec.Group != gvk.Group || crd.Spec.Names.Kind != gvk.Kind {
+		return nil, &ErrSchemaNotAvailable{GVK: gvk, Cause: errNotFound}
+	}
+	for vi := range crd.Spec.Versions {
+		v := &crd.Spec.Versions[vi]
+		if v.Name != gvk.Version {
 			continue
 		}
-		if crd.Spec.Names.Kind != gvk.Kind {
-			continue
-		}
-		// Found the CRD. Pick the requested version.
-		for vi := range crd.Spec.Versions {
-			v := &crd.Spec.Versions[vi]
-			if v.Name != gvk.Version {
-				continue
+		if v.Schema == nil || v.Schema.OpenAPIV3Schema == nil {
+			return nil, &ErrSchemaNotAvailable{
+				GVK:   gvk,
+				Cause: fmt.Errorf("CRD %s has no openAPIV3Schema for version %s", crd.Name, gvk.Version),
 			}
-			if v.Schema == nil || v.Schema.OpenAPIV3Schema == nil {
-				return nil, &ErrSchemaNotAvailable{
-					GVK:   gvk,
-					Cause: fmt.Errorf("CRD %s has no openAPIV3Schema for version %s", crd.Name, gvk.Version),
-				}
+		}
+		sch, err := convertJSONSchemaProps(v.Schema.OpenAPIV3Schema)
+		if err != nil {
+			return nil, &ErrSchemaNotAvailable{
+				GVK:   gvk,
+				Cause: fmt.Errorf("converting %s/%s schema: %w", crd.Name, gvk.Version, err),
 			}
-			sch, err := convertJSONSchemaProps(v.Schema.OpenAPIV3Schema)
-			if err != nil {
-				return nil, &ErrSchemaNotAvailable{
-					GVK:   gvk,
-					Cause: fmt.Errorf("converting %s/%s schema: %w", crd.Name, gvk.Version, err),
-				}
-			}
-			return sch, nil
 		}
-		// CRD exists but doesn't serve the requested version.
-		return nil, &ErrSchemaNotAvailable{
-			GVK:   gvk,
-			Cause: fmt.Errorf("CRD %s does not serve version %s", crd.Name, gvk.Version),
-		}
+		return sch, nil
 	}
-
-	return nil, &ErrSchemaNotAvailable{GVK: gvk, Cause: errNotFound}
-}
-
-// ensureCRDList pulls the cluster's CRD list at most once per
-// ClusterFetcher lifetime and returns the cached slice on subsequent
-// calls. Concurrent callers coalesce onto a single API call.
-//
-// Context-scoped failures (cancellation, deadline) are NOT cached:
-// if the first caller's context expires mid-fetch, the in-flight
-// marker is evicted so the next caller retries with a fresh
-// context. This avoids the sync.Once trap where one cancelled
-// startup attempt permanently poisons every later schema lookup.
-//
-// Non-context errors (RBAC denial, parse failures, network errors
-// not tied to ctx) ARE cached — they reflect real cluster state
-// that won't change by re-asking. Callers retry by constructing a
-// new ClusterFetcher.
-func (f *ClusterFetcher) ensureCRDList(ctx context.Context) ([]apiextensionsv1.CustomResourceDefinition, error) {
-	f.crdState.mu.Lock()
-
-	if f.crdState.fetched {
-		list, err := f.crdState.list, f.crdState.err
-		f.crdState.mu.Unlock()
-		return list, err
+	return nil, &ErrSchemaNotAvailable{
+		GVK:   gvk,
+		Cause: fmt.Errorf("CRD %s does not serve version %s", crd.Name, gvk.Version),
 	}
-
-	if f.crdState.done != nil {
-		// Another goroutine is fetching. Wait for it.
-		done := f.crdState.done
-		f.crdState.mu.Unlock()
-		select {
-		case <-done:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-		f.crdState.mu.Lock()
-		list, err := f.crdState.list, f.crdState.err
-		f.crdState.mu.Unlock()
-		return list, err
-	}
-
-	// We're the first caller — initiate the fetch.
-	done := make(chan struct{})
-	f.crdState.done = done
-	f.crdState.mu.Unlock()
-
-	list, err := f.crds.ListCRDs(ctx)
-
-	f.crdState.mu.Lock()
-	defer f.crdState.mu.Unlock()
-	defer close(done)
-
-	if err != nil && ctx.Err() != nil {
-		// Context-scoped failure. Evict the in-flight marker so
-		// the next caller (with a fresh context) gets to retry.
-		f.crdState.done = nil
-		return nil, err
-	}
-	// Terminal outcome (success OR persistent error). Cache it.
-	f.crdState.list = list
-	f.crdState.err = err
-	f.crdState.fetched = true
-	f.crdState.done = nil
-	return list, err
 }
 
 // fetchFromOpenAPI resolves a GVK against the cluster's aggregated
@@ -323,58 +216,71 @@ func (f *ClusterFetcher) fetchFromOpenAPI(ctx context.Context, gvk schema.GroupV
 	return nil, nil, &ErrSchemaNotAvailable{GVK: gvk, Cause: errNotFound}
 }
 
-// gvSpec returns the cached OpenAPI v3 spec for a GroupVersion,
-// fetching it via the provider on first request. Concurrent callers
-// for the same GV coalesce on the entry's done channel so we don't
-// issue duplicate HTTP requests for the same GV.
-//
-// Context-scoped failures (cancellation, deadline) DO NOT poison
-// the cache: if the leader's context expires mid-fetch, the entry
-// is evicted so the next caller retries with a fresh context.
-// Persistent provider errors (404, parse failures, etc.) ARE
-// cached — they reflect real cluster state.
-//
-// Marker for "leader hit a context error and the entry was
-// evicted" is the `evicted` bool inside gvSpecCache: waiters
-// observing it after their wake re-enter the function to retry
-// with their own context. Using a dedicated field rather than
-// `spec == nil && err == nil` avoids a tight retry loop in the
-// legitimate "the GV genuinely has no spec" case (which is a
-// valid persistent outcome).
 func (f *ClusterFetcher) gvSpec(ctx context.Context, gv schema.GroupVersion) (*spec3.OpenAPI, error) {
-	for {
-		f.gvSpecsMu.Lock()
-		entry, ok := f.gvSpecs[gv]
-		if !ok {
-			entry = &gvSpecCache{done: make(chan struct{})}
-			f.gvSpecs[gv] = entry
-			f.gvSpecsMu.Unlock()
+	return f.gvSpecs.get(ctx, gv, func(ctx context.Context) (*spec3.OpenAPI, error) {
+		return f.openapi.GVSpec(ctx, gv)
+	})
+}
 
-			sp, err := f.openapi.GVSpec(ctx, gv)
-			if err != nil && ctx.Err() != nil {
-				// Context-scoped failure. Evict so the next
-				// caller retries with a fresh context.
-				f.gvSpecsMu.Lock()
-				delete(f.gvSpecs, gv)
-				f.gvSpecsMu.Unlock()
-				entry.evicted = true
-				close(entry.done) // wake coalescing callers; they'll re-enter
-				return nil, err
+// coalescingCache memoizes one load per key. Concurrent callers for a
+// key coalesce on the entry's done channel so only one API call is in
+// flight.
+//
+// Context-scoped failures (cancellation, deadline) DO NOT poison the
+// cache: if the leader's context expires mid-load, the entry is
+// evicted and waiters re-enter with their own context. Other errors
+// ARE cached — they reflect real cluster state. A dedicated `evicted`
+// field (rather than "zero value and nil error") avoids a retry loop
+// when a nil result is a legitimate persistent outcome.
+type coalescingCache[K comparable, V any] struct {
+	mu      sync.Mutex
+	entries map[K]*cacheEntry[V]
+}
+
+type cacheEntry[V any] struct {
+	done    chan struct{}
+	value   V
+	err     error
+	evicted bool
+}
+
+func (c *coalescingCache[K, V]) get(ctx context.Context, key K, load func(context.Context) (V, error)) (V, error) {
+	for {
+		c.mu.Lock()
+		entry, ok := c.entries[key]
+		if !ok {
+			if c.entries == nil {
+				c.entries = make(map[K]*cacheEntry[V])
 			}
-			entry.spec, entry.err = sp, err
+			entry = &cacheEntry[V]{done: make(chan struct{})}
+			c.entries[key] = entry
+			c.mu.Unlock()
+
+			value, err := load(ctx)
+			if err != nil && ctx.Err() != nil {
+				c.mu.Lock()
+				delete(c.entries, key)
+				c.mu.Unlock()
+				entry.evicted = true
+				close(entry.done)
+				var zero V
+				return zero, err
+			}
+			entry.value, entry.err = value, err
 			close(entry.done)
-			return entry.spec, entry.err
+			return value, err
 		}
-		f.gvSpecsMu.Unlock()
+		c.mu.Unlock()
 
 		select {
 		case <-entry.done:
 			if entry.evicted {
-				continue // retry through the leader path with our own ctx
+				continue
 			}
-			return entry.spec, entry.err
+			return entry.value, entry.err
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			var zero V
+			return zero, ctx.Err()
 		}
 	}
 }

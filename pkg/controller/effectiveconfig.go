@@ -16,6 +16,7 @@ import (
 
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/configchange"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/crdwatch"
+	"github.com/haproxy-haptic/HAPTIC/pkg/controller/validator"
 
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -203,9 +204,9 @@ func startCRDWatch(
 // resolveEffectiveConfig resolves the config's watched resources against live
 // discovery and returns the effective config the iteration consumes (see
 // coreconfig.ResolveEffective). RequiresFields probing goes through a FRESH
-// cluster schema fetcher per call — the fetcher caches the CRD list per
-// instance, and a stale list would blind the CRD-watch re-resolution to an
-// in-place schema upgrade. Resolution outcomes are logged: per-resource
+// cluster schema fetcher per call — the fetcher caches CRDs per instance,
+// and a stale CRD would blind the CRD-watch re-resolution to an in-place
+// schema upgrade. Resolution outcomes are logged: per-resource
 // resolved versions at debug, feature stripping at info (an operator whose
 // routing silently lost a kind must find the cause in the log).
 func resolveEffectiveConfig(ctx context.Context, cfg *coreconfig.Config, k8sClient *client.Client, logger *slog.Logger) (*coreconfig.Config, *coreconfig.Resolution, error) {
@@ -213,23 +214,23 @@ func resolveEffectiveConfig(ctx context.Context, cfg *coreconfig.Config, k8sClie
 	if err != nil {
 		return nil, nil, fmt.Errorf("constructing apiextensions client for schema probing: %w", err)
 	}
-	fetcher := schemafetcher.NewClusterFetcher(
-		newAPIExtensionsCRDLister(apiextClient),
-		newDiscoveryOpenAPIV3Provider(k8sClient.Clientset().Discovery()),
-	)
+	fetcher := NewClusterSchemaFetcher(apiextClient, k8sClient.Clientset().Discovery())
 	ctx, cancel := context.WithTimeout(ctx, effectiveResolutionTimeout)
 	defer cancel()
 
 	checker := NewDiscoveryServedChecker(ctx, k8sClient.Clientset().Discovery(), fetcher, logger)
 	effective, resolution, err := coreconfig.ResolveEffective(cfg, checker, checker)
 	if err != nil {
+		if schemaErr := (&validator.SchemaAcquisitionError{Subject: "the effective config", Err: err}); schemaErr.Transient() {
+			return nil, nil, schemaErr
+		}
 		return nil, nil, err
 	}
 	if terr := checker.TransientErr(); terr != nil {
 		// Fail the whole resolution rather than act on a partial view: an
 		// optional feature must not strip (nor a reload fire) because of an
-		// apiserver blip. The caller retries.
-		return nil, nil, fmt.Errorf("transient discovery error during resolution: %w", terr)
+		// apiserver blip. The config-change handler retries a transient error.
+		return nil, nil, &validator.SchemaAcquisitionError{Subject: "the effective config", Err: terr}
 	}
 
 	for name, version := range resolution.ResolvedVersions {

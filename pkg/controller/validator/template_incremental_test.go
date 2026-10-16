@@ -63,7 +63,7 @@ func TestValidateTemplatesRejectsAmbientIncrementalInputs(t *testing.T) {
 				},
 			}
 
-			errors := validateTemplates(t.Context(), cfg, stubTypeBootstrapper)
+			errors := validateTemplates(t.Context(), cfg, stubTypeBootstrapper).Errors
 
 			require.Len(t, errors, 1)
 			assert.Contains(t, errors[0], "now")

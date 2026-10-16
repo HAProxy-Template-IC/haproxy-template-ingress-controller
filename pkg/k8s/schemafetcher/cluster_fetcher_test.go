@@ -30,10 +30,10 @@ import (
 	"k8s.io/kube-openapi/pkg/validation/spec"
 )
 
-// stubCRDLister returns a fixed list of CRDs and records how many
-// times ListCRDs was called — the fetcher contract promises the list
-// is pulled at most once per ClusterFetcher lifetime.
-type stubCRDLister struct {
+// stubCRDGetter serves the CRD of a fixed set whose group and kind match,
+// and records how many times GetCRD was called — the fetcher contract
+// promises each GVK is read at most once per ClusterFetcher lifetime.
+type stubCRDGetter struct {
 	list  []apiextensionsv1.CustomResourceDefinition
 	err   error
 	calls atomic.Int32
@@ -41,10 +41,10 @@ type stubCRDLister struct {
 	// context-cancellation eviction tests where each successive call
 	// must surface a different outcome (first call: ctx error;
 	// second call: success).
-	hook func(ctx context.Context) ([]apiextensionsv1.CustomResourceDefinition, error)
+	hook func(ctx context.Context) (*apiextensionsv1.CustomResourceDefinition, error)
 }
 
-func (s *stubCRDLister) ListCRDs(ctx context.Context) ([]apiextensionsv1.CustomResourceDefinition, error) {
+func (s *stubCRDGetter) GetCRD(ctx context.Context, gvk schema.GroupVersionKind) (*apiextensionsv1.CustomResourceDefinition, error) {
 	s.calls.Add(1)
 	if s.hook != nil {
 		return s.hook(ctx)
@@ -52,7 +52,12 @@ func (s *stubCRDLister) ListCRDs(ctx context.Context) ([]apiextensionsv1.CustomR
 	if s.err != nil {
 		return nil, s.err
 	}
-	return s.list, nil
+	for i := range s.list {
+		if s.list[i].Spec.Group == gvk.Group && s.list[i].Spec.Names.Kind == gvk.Kind {
+			return &s.list[i], nil
+		}
+	}
+	return nil, ErrNoCRD
 }
 
 // stubOpenAPIV3Provider serves pre-baked GroupVersion specs, with the
@@ -124,7 +129,7 @@ func TestClusterFetcher_CRDPath(t *testing.T) {
 			},
 		},
 	}
-	crds := &stubCRDLister{list: []apiextensionsv1.CustomResourceDefinition{
+	crds := &stubCRDGetter{list: []apiextensionsv1.CustomResourceDefinition{
 		crdFixture(t, "gateway.networking.k8s.io", "Gateway", "gateways", "v1", gatewaySchema),
 	}}
 	openapi := newStubOpenAPI()
@@ -170,7 +175,7 @@ func TestClusterFetcher_OpenAPIFallback(t *testing.T) {
 		},
 	}
 
-	fetcher := NewClusterFetcher(&stubCRDLister{}, openapi)
+	fetcher := NewClusterFetcher(&stubCRDGetter{}, openapi)
 	got, _, err := fetcher.Fetch(t.Context(), schema.GroupVersionKind{
 		Group: "", Version: "v1", Kind: "Service",
 	})
@@ -191,7 +196,7 @@ func TestClusterFetcher_CRDPathPreferredOverOpenAPI(t *testing.T) {
 			"fromCRD": {Type: "string"},
 		},
 	}
-	crds := &stubCRDLister{list: []apiextensionsv1.CustomResourceDefinition{
+	crds := &stubCRDGetter{list: []apiextensionsv1.CustomResourceDefinition{
 		crdFixture(t, "example.com", "Widget", "widgets", "v1", crdProps),
 	}}
 	openapi := newStubOpenAPI()
@@ -236,7 +241,7 @@ func TestClusterFetcher_NotFound(t *testing.T) {
 		Components: &spec3.Components{Schemas: map[string]*spec.Schema{}},
 	}
 
-	fetcher := NewClusterFetcher(&stubCRDLister{}, openapi)
+	fetcher := NewClusterFetcher(&stubCRDGetter{}, openapi)
 	_, _, err := fetcher.Fetch(t.Context(), schema.GroupVersionKind{
 		Group: "absent.io", Version: "v1", Kind: "Ghost",
 	})
@@ -247,23 +252,23 @@ func TestClusterFetcher_NotFound(t *testing.T) {
 	assert.True(t, IsNotFound(err), "the underlying cause must be the NotFound sentinel")
 }
 
-// TestClusterFetcher_CRDListErrorTriggersOpenAPIFallback covers the
-// case where the API server is reachable but the CRD list call
+// TestClusterFetcher_CRDReadErrorTriggersOpenAPIFallback covers the
+// case where the API server is reachable but the CRD read
 // itself fails (RBAC denial, transient 503, …). The fetcher MUST
 // try OpenAPI as a fallback: the public aggregated OpenAPI v3
 // endpoint is readable by every authenticated user on a working
 // cluster and covers every registered resource, so falling back
 // keeps typed access working even when the controller's RBAC
 // doesn't include `apiextensions.k8s.io/customresourcedefinitions
-// list` (a common minimum-privilege chart configuration).
+// get` (a common minimum-privilege chart configuration).
 //
 // If OpenAPI also fails (or doesn't contain the GVK), BOTH causes
 // must be reported via errors.Join so an operator can distinguish
 // "RBAC denial + missing registration" from "RBAC denial +
 // transient 502" without losing either signal.
-func TestClusterFetcher_CRDListErrorTriggersOpenAPIFallback(t *testing.T) {
+func TestClusterFetcher_CRDReadErrorTriggersOpenAPIFallback(t *testing.T) {
 	t.Run("OpenAPI has the schema → success", func(t *testing.T) {
-		crds := &stubCRDLister{err: errors.New("forbidden")}
+		crds := &stubCRDGetter{err: errors.New("forbidden")}
 		openapi := newStubOpenAPI()
 		gv := schema.GroupVersion{Group: "g", Version: "v1"}
 		openapi.specs[gv] = &spec3.OpenAPI{
@@ -284,7 +289,7 @@ func TestClusterFetcher_CRDListErrorTriggersOpenAPIFallback(t *testing.T) {
 	})
 
 	t.Run("OpenAPI also fails → both causes surface", func(t *testing.T) {
-		crds := &stubCRDLister{err: errors.New("forbidden")}
+		crds := &stubCRDGetter{err: errors.New("forbidden")}
 		openapi := newStubOpenAPI() // empty — GV won't be found
 
 		fetcher := NewClusterFetcher(crds, openapi)
@@ -298,12 +303,12 @@ func TestClusterFetcher_CRDListErrorTriggersOpenAPIFallback(t *testing.T) {
 	})
 }
 
-// TestClusterFetcher_CRDListCachedOnce verifies the contract that
-// ListCRDs is consulted at most once per ClusterFetcher lifetime.
-// Multiple Fetch calls in flight at the same time must coalesce
-// through sync.Once, not race-and-duplicate.
-func TestClusterFetcher_CRDListCachedOnce(t *testing.T) {
-	crds := &stubCRDLister{}
+// TestClusterFetcher_CRDReadCachedPerGVK verifies the contract that
+// GetCRD is consulted at most once per GVK per ClusterFetcher lifetime.
+// Multiple Fetch calls in flight at the same time must coalesce, not
+// race-and-duplicate.
+func TestClusterFetcher_CRDReadCachedPerGVK(t *testing.T) {
+	crds := &stubCRDGetter{}
 	fetcher := NewClusterFetcher(crds, newStubOpenAPI())
 	ctx := t.Context()
 
@@ -320,25 +325,29 @@ func TestClusterFetcher_CRDListCachedOnce(t *testing.T) {
 	}
 	wg.Wait()
 	assert.EqualValues(t, 1, crds.calls.Load(),
-		"ListCRDs must be invoked exactly once across concurrent Fetches")
+		"GetCRD must be invoked exactly once across concurrent Fetches")
+
+	_, _, err := fetcher.Fetch(ctx, schema.GroupVersionKind{Group: "g", Version: "v1", Kind: "Other"})
+	require.True(t, IsNotFound(err))
+	assert.EqualValues(t, 2, crds.calls.Load(), "another GVK is read separately")
 }
 
-// TestClusterFetcher_CRDListContextCancellationDoesNotPoisonCache
-// pins the contract that a cancelled-context CRD-list failure
+// TestClusterFetcher_CRDReadContextCancellationDoesNotPoisonCache
+// pins the contract that a cancelled-context CRD-read failure
 // evicts the in-flight marker so the next caller with a fresh
 // context retries cleanly. Without this, a brief startup-time
 // context expiry would permanently disable CRD schema fetching
 // for the lifetime of the controller iteration.
-func TestClusterFetcher_CRDListContextCancellationDoesNotPoisonCache(t *testing.T) {
+func TestClusterFetcher_CRDReadContextCancellationDoesNotPoisonCache(t *testing.T) {
 	var calls atomic.Int64
-	crds := &stubCRDLister{
-		hook: func(ctx context.Context) ([]apiextensionsv1.CustomResourceDefinition, error) {
+	crds := &stubCRDGetter{
+		hook: func(ctx context.Context) (*apiextensionsv1.CustomResourceDefinition, error) {
 			calls.Add(1)
 			// First call: simulate ctx cancellation mid-flight.
 			if calls.Load() == 1 {
 				return nil, ctx.Err()
 			}
-			return nil, nil // second call: succeed with empty list
+			return nil, ErrNoCRD // second call: no CRD serves the GVK
 		},
 	}
 	fetcher := NewClusterFetcher(crds, newStubOpenAPI())
@@ -348,14 +357,14 @@ func TestClusterFetcher_CRDListContextCancellationDoesNotPoisonCache(t *testing.
 	_, _, err := fetcher.Fetch(ctx1, schema.GroupVersionKind{Group: "g", Version: "v1", Kind: "K"})
 	require.Error(t, err, "cancelled context must produce an error")
 
-	// Second caller has a fresh context — must retry the list, not
+	// Second caller has a fresh context — must retry the read, not
 	// inherit the previous caller's cancellation. We don't care
 	// about the result here; the call-count assertion below is the
 	// pin.
 	_, _, retryErr := fetcher.Fetch(context.Background(), schema.GroupVersionKind{Group: "g", Version: "v1", Kind: "K"})
 	_ = retryErr
 	assert.EqualValues(t, 2, calls.Load(),
-		"second caller must re-attempt ListCRDs — context-scoped failures must not poison the cache")
+		"second caller must re-attempt GetCRD — context-scoped failures must not poison the cache")
 }
 
 // TestClusterFetcher_GVSpecCachedPerGV verifies the per-GroupVersion
@@ -372,7 +381,7 @@ func TestClusterFetcher_GVSpecCachedPerGV(t *testing.T) {
 			},
 		},
 	}
-	fetcher := NewClusterFetcher(&stubCRDLister{}, openapi)
+	fetcher := NewClusterFetcher(&stubCRDGetter{}, openapi)
 
 	_, _, errA := fetcher.Fetch(t.Context(), schema.GroupVersionKind{Group: "g", Version: "v1", Kind: "A"})
 	_, _, errB := fetcher.Fetch(t.Context(), schema.GroupVersionKind{Group: "g", Version: "v1", Kind: "B"})

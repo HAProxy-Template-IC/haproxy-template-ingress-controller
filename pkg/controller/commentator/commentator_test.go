@@ -80,6 +80,11 @@ func TestEventCommentator_DetermineLogLevel(t *testing.T) {
 			event: mockEvent{eventType: events.EventTypeConfigInvalid},
 			want:  slog.LevelError,
 		},
+		{
+			name:  "config validation inconclusive is warn",
+			event: mockEvent{eventType: events.EventTypeConfigValidationInconclusive},
+			want:  slog.LevelWarn,
+		},
 
 		// Warn level events
 		{

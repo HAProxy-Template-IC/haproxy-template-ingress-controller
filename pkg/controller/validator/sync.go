@@ -42,17 +42,16 @@ func ValidateConfigSync(
 	if errs := validateBasic(cfg); len(errs) > 0 {
 		failures[ValidatorNameBasic] = errs
 	}
-	if errs := validateTemplates(ctx, cfg, bootstrap); len(errs) > 0 {
-		failures[ValidatorNameTemplate] = errs
+	if verdict := validateTemplates(ctx, cfg, bootstrap); !verdict.Valid {
+		failures[ValidatorNameTemplate] = verdict.Errors
 	}
 	if errs := validateJSONPaths(cfg); len(errs) > 0 {
 		failures[ValidatorNameJSONPath] = errs
 	}
 
 	result, err := RunValidationTestsSync(ctx, cfg, bootstrap, runTimeout, logger)
-	valid, errors := validationTestsVerdict(result, err, "validationTests did not complete within the suite timeout")
-	if !valid {
-		failures[ValidatorNameValidationTests] = errors
+	if verdict := validationTestsVerdict(result, err, "validationTests did not complete within the suite timeout"); !verdict.Valid {
+		failures[ValidatorNameValidationTests] = verdict.Errors
 	}
 	return failures
 }

@@ -36,13 +36,13 @@ func NewBasicValidator(eventBus *busevents.EventBus, logger *slog.Logger) *Basic
 }
 
 // Validate implements ValidationHandler.
-func (v *BasicValidator) Validate(_ context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
+func (v *BasicValidator) Validate(_ context.Context, cfg *coreconfig.Config, version string) Verdict {
 	start := time.Now()
 	v.Logger().Debug("Validating basic structure", "version", version)
 
-	errors = validateBasic(cfg)
+	errors := validateBasic(cfg)
 
-	valid = len(errors) == 0
+	valid := len(errors) == 0
 	duration := time.Since(start)
 	if valid {
 		v.Logger().Debug("Basic validation successful",
@@ -54,7 +54,7 @@ func (v *BasicValidator) Validate(_ context.Context, cfg *coreconfig.Config, ver
 			"duration_ms", duration.Milliseconds(),
 			"error_count", len(errors))
 	}
-	return valid, errors
+	return Verdict{Valid: valid, Errors: errors}
 }
 
 func validateBasic(cfg *coreconfig.Config) []string {

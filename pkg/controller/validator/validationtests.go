@@ -156,11 +156,11 @@ func NewValidationTestsValidator(eventBus *busevents.EventBus, logger *slog.Logg
 }
 
 // Validate implements ValidationHandler.
-func (v *ValidationTestsValidator) Validate(ctx context.Context, cfg *coreconfig.Config, version string) (valid bool, errors []string) {
+func (v *ValidationTestsValidator) Validate(ctx context.Context, cfg *coreconfig.Config, version string) Verdict {
 	start := time.Now()
 
 	if len(cfg.ValidationTests) == 0 {
-		return true, nil
+		return Verdict{Valid: true}
 	}
 
 	budget := v.budgetFor(len(cfg.ValidationTests))
@@ -170,26 +170,29 @@ func (v *ValidationTestsValidator) Validate(ctx context.Context, cfg *coreconfig
 	result, err := RunValidationTestsSync(ctx, cfg, v.bootstrap, budget, v.Logger())
 	if ctx.Err() == context.Canceled {
 		v.Logger().Debug("ValidationTests canceled", "version", version)
-		return false, []string{context.Cause(ctx).Error()}
+		return Verdict{Errors: []string{context.Cause(ctx).Error()}}
 	}
-	valid, errors = validationTestsVerdict(result, err, fmt.Sprintf(
+	verdict := validationTestsVerdict(result, err, fmt.Sprintf(
 		"validationTests did not complete within %s — config rejected to avoid accepting a partially-validated config", budget))
 	duration := time.Since(start)
 	switch {
+	case verdict.Inconclusive:
+		v.Logger().Warn("ValidationTests could not run yet",
+			"version", version, "error", err)
 	case err != nil:
 		v.Logger().Error("ValidationTests could not run",
 			"version", version, "error", err)
 	case result.Incomplete:
 		v.Logger().Error("ValidationTests did not complete in time",
 			"version", version, "run_budget", budget, "duration_ms", duration.Milliseconds())
-	case valid:
+	case verdict.Valid:
 		v.Logger().Debug("ValidationTests passed",
 			"version", version, "duration_ms", duration.Milliseconds())
 	default:
 		v.Logger().Error("ValidationTests failed",
 			"version", version, "duration_ms", duration.Milliseconds(), "failures", result.Failures)
 	}
-	return valid, errors
+	return verdict
 }
 
 // RunValidationTestsSync resolves typed schemas, builds a throwaway engine, and
@@ -216,7 +219,7 @@ func RunValidationTestsSync(ctx context.Context, cfg *coreconfig.Config, bootstr
 	defer cancel()
 	bootstrapResult, err := bootstrap(bootstrapCtx, cfg)
 	if err != nil {
-		return configtest.Result{}, fmt.Errorf("schema acquisition failed (typed validationTests cannot run without real schemas): %w", err)
+		return configtest.Result{}, &SchemaAcquisitionError{Subject: "typed validationTests", Err: err}
 	}
 
 	engine, err := helpers.NewEngineFromConfigWithOptions(
@@ -231,15 +234,15 @@ func RunValidationTestsSync(ctx context.Context, cfg *coreconfig.Config, bootstr
 	return configtest.RunValidationTests(ctx, cfg, engine, bootstrapResult.Types, runTimeout, logger)
 }
 
-func validationTestsVerdict(result configtest.Result, err error, incompleteMessage string) (valid bool, errors []string) {
+func validationTestsVerdict(result configtest.Result, err error, incompleteMessage string) Verdict {
 	switch {
 	case err != nil:
-		return false, []string{err.Error()}
+		return verdictFromError(err)
 	case result.Incomplete:
-		return false, []string{incompleteMessage}
+		return Verdict{Errors: []string{incompleteMessage}}
 	case result.Passed:
-		return true, nil
+		return Verdict{Valid: true}
 	default:
-		return false, result.Failures
+		return Verdict{Errors: result.Failures}
 	}
 }

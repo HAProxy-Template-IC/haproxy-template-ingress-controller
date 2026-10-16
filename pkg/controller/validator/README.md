@@ -39,7 +39,9 @@ go jp.Start(ctx)
 
 - `ConfigValidationResponse` — one per validator, per request
 
-`ConfigValidatedEvent` and `ConfigInvalidEvent` are published by the orchestrator (`configchange.ConfigChangeHandler`) after collecting all four responses, not by these validators directly.
+A response with `Inconclusive` set reports that the validator couldn't judge the config (schemas transiently unavailable); it is never `Valid`.
+
+`ConfigValidatedEvent`, `ConfigInvalidEvent`, and `ConfigValidationInconclusiveEvent` are published by the orchestrator (`configchange.ConfigChangeHandler`) after collecting all four responses, not by these validators directly.
 
 ## License
 

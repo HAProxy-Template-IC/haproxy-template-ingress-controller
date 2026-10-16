@@ -63,13 +63,14 @@ package events
 
 const (
 	// Configuration event types.
-	EventTypeConfigParsed             = "config.parsed"
-	EventTypeConfigValidationRequest  = "config.validation.request"
-	EventTypeConfigValidationResponse = "config.validation.response"
-	EventTypeConfigValidated          = "config.validated"
-	EventTypeConfigInvalid            = "config.invalid"
-	EventTypeConfigResourceChanged    = "config.resource.changed"
-	EventTypeLibrarySetChanged        = "snippets.set.changed"
+	EventTypeConfigParsed                 = "config.parsed"
+	EventTypeConfigValidationRequest      = "config.validation.request"
+	EventTypeConfigValidationResponse     = "config.validation.response"
+	EventTypeConfigValidated              = "config.validated"
+	EventTypeConfigInvalid                = "config.invalid"
+	EventTypeConfigValidationInconclusive = "config.validation.inconclusive"
+	EventTypeConfigResourceChanged        = "config.resource.changed"
+	EventTypeLibrarySetChanged            = "snippets.set.changed"
 
 	// Resource event types.
 	EventTypeWatchedInputsRejected = "resource.input.rejected"

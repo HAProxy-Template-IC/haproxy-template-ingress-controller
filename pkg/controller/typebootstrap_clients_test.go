@@ -25,10 +25,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextensionsfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	restfake "k8s.io/client-go/rest/fake"
+
+	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
 )
 
 func TestDiscoveryOpenAPIV3ProviderHonorsCancellation(t *testing.T) {
@@ -110,4 +115,53 @@ func jsonResponse(body string) *http.Response {
 		Header:     http.Header{"Content-Type": []string{runtime.ContentTypeJSON}},
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
+}
+
+func TestAPIExtensionsCRDGetterReadsTheServingCRDByName(t *testing.T) {
+	widgets := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "widgets.example.com"},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "example.com",
+			Names: apiextensionsv1.CustomResourceDefinitionNames{Kind: "Widget", Plural: "widgets"},
+		},
+	}
+	discoveryRequests := 0
+	client := newOpenAPITestClient(func(req *http.Request) (*http.Response, error) {
+		discoveryRequests++
+		switch req.URL.Path {
+		case "/apis/example.com/v1":
+			return jsonResponse(`{"groupVersion":"example.com/v1","resources":[` +
+				`{"name":"widgets/status","kind":"Widget"},` +
+				`{"name":"widgets","kind":"Widget"},` +
+				`{"name":"gadgets","kind":"Gadget"}]}`), nil
+		case "/apis/absent.example.com/v1":
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Header:     http.Header{"Content-Type": []string{runtime.ContentTypeJSON}},
+				Body:       io.NopCloser(strings.NewReader(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404}`)),
+			}, nil
+		default:
+			return nil, fmt.Errorf("unexpected request path %q", req.URL.Path)
+		}
+	})
+	getter := &apiextensionsCRDGetter{clientset: apiextensionsfake.NewClientset(widgets), restClient: client}
+
+	got, err := getter.GetCRD(t.Context(), schema.GroupVersionKind{Group: "example.com", Version: "v1", Kind: "Widget"})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "widgets.example.com", got.Name)
+
+	for _, gvk := range []schema.GroupVersionKind{
+		{Group: "example.com", Version: "v1", Kind: "Gadget"},
+		{Group: "example.com", Version: "v1", Kind: "Unknown"},
+		{Group: "absent.example.com", Version: "v1", Kind: "Widget"},
+	} {
+		_, err := getter.GetCRD(t.Context(), gvk)
+		require.ErrorIs(t, err, schemafetcher.ErrNoCRD, gvk)
+	}
+
+	requests := discoveryRequests
+	_, err = getter.GetCRD(t.Context(), schema.GroupVersionKind{Version: "v1", Kind: "Service"})
+	require.ErrorIs(t, err, schemafetcher.ErrNoCRD)
+	assert.Equal(t, requests, discoveryRequests, "no CRD serves the core group, so nothing is requested")
 }

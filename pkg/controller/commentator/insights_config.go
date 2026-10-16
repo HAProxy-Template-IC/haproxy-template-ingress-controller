@@ -50,7 +50,11 @@ func (ec *EventCommentator) configInsight(event busevents.Event, attrs []any) (i
 		// Show real-time validator results with performance metrics
 		statusSymbol := "✓"
 		statusText := "OK"
-		if !e.Valid {
+		switch {
+		case e.Inconclusive:
+			statusSymbol = "?"
+			statusText = "INCONCLUSIVE"
+		case !e.Valid:
 			statusSymbol = "✗"
 			statusText = statusFailed
 		}

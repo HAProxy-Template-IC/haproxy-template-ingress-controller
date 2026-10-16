@@ -2,6 +2,7 @@ package configchange
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -51,13 +52,21 @@ const DefaultReinitDebounceInterval = 2 * time.Second
 // here so a future rename can't desync the checks.
 const syntheticBootstrapVersion = "initial"
 
+// An inconclusive validation is retried after validationRetryInitialBackoff,
+// doubling up to validationRetryMaxBackoff, until it yields a verdict.
+const (
+	validationRetryInitialBackoff = time.Second
+	validationRetryMaxBackoff     = 30 * time.Second
+)
+
 // ConfigChangeHandler coordinates configuration validation and detects config changes.
 //
 // This component has two main responsibilities:
 //
 //  1. Validation Coordination: Subscribes to ConfigParsedEvent, sends ConfigValidationRequest,
 //     collects responses from validators using scatter-gather pattern, and publishes
-//     ConfigValidatedEvent or ConfigInvalidEvent.
+//     ConfigValidatedEvent or ConfigInvalidEvent. When validators cannot judge
+//     the config, it publishes ConfigValidationInconclusiveEvent and retries.
 //
 //  2. Change Detection: Subscribes to ConfigValidatedEvent and signals the controller to
 //     reinitialize via the configChangeCh channel with debouncing to coalesce rapid changes.
@@ -119,8 +128,13 @@ type ConfigChangeHandler struct {
 	effectiveReloadDue  bool
 	validationDone      chan validationOutcome
 	candidateGeneration uint64
-	startupReplay       chan struct{}
-	effectiveReload     chan struct{}
+	// retryCandidate waits on retryTimer after an inconclusive validation;
+	// retryBackoff is the delay that armed it, zero after a verdict.
+	retryCandidate  *validationCandidate
+	retryTimer      timers.SafeTimer
+	retryBackoff    time.Duration
+	startupReplay   chan struct{}
+	effectiveReload chan struct{}
 
 	// Mutex for initialConfigVersion and reinitializationEnabled
 	mu sync.RWMutex
@@ -176,10 +190,13 @@ type validationCandidate struct {
 }
 
 type validationOutcome struct {
-	candidate        *validationCandidate
-	rawConfig        *coreconfig.Config
-	resolved         *ResolvedConfig
-	valid            bool
+	candidate *validationCandidate
+	rawConfig *coreconfig.Config
+	resolved  *ResolvedConfig
+	valid     bool
+	// inconclusive means no validator rejected the config but at least one
+	// could not judge it; validationErrors then holds the reasons.
+	inconclusive     bool
 	validationErrors map[string][]string
 }
 
@@ -363,6 +380,10 @@ func (h *ConfigChangeHandler) Start(ctx context.Context) error {
 			h.drainQueuedEvents()
 			h.sendPendingReload()
 			h.startQueuedValidation(ctx)
+		case <-h.retryTimer.Chan():
+			h.retryTimer.Fired()
+			h.drainQueuedEvents()
+			h.startValidationRetry(ctx)
 		case outcome := <-h.validationDone:
 			h.validationInFlight = false
 			h.inFlight = nil
@@ -427,6 +448,7 @@ func (h *ConfigChangeHandler) publishRunningVersionValidated(parsed *events.Conf
 func (h *ConfigChangeHandler) cleanup() {
 	h.debounceTimer.Stop()
 	h.pendingReload = nil
+	h.clearValidationRetry()
 }
 
 // isRunningVersion reports whether a parsed config is the one this iteration
@@ -446,6 +468,7 @@ func (h *ConfigChangeHandler) isRunningVersion(version string) bool {
 // by an older candidate. The newest parked candidate wins.
 func (h *ConfigChangeHandler) recordParsed(event *events.ConfigParsedEvent) {
 	h.candidateGeneration++
+	h.clearValidationRetry()
 	h.mu.Lock()
 	retiredCandidate := h.acceptedCandidate != nil
 	h.acceptedCandidate = nil
@@ -493,6 +516,7 @@ func (h *ConfigChangeHandler) startEffectiveValidation(ctx context.Context) {
 	canValidate := h.effectiveResolver != nil && len(h.validators) > 0 && h.reinitializationEnabled
 	h.mu.RUnlock()
 	base := h.newestRawConfigEvent()
+	h.clearValidationRetry()
 	if !canValidate || base == nil {
 		h.sendEffectiveReload()
 		return
@@ -504,14 +528,17 @@ func (h *ConfigChangeHandler) startEffectiveValidation(ctx context.Context) {
 }
 
 // newestRawConfigEvent returns the newest raw configuration the handler knows:
-// a parked candidate, then the one being validated, then the accepted one,
-// then the running one.
+// a parked candidate, then the one being validated or awaiting a retry, then
+// the accepted one, then the running one.
 func (h *ConfigChangeHandler) newestRawConfigEvent() *events.ConfigParsedEvent {
 	if h.queuedParsed != nil {
 		return h.queuedParsed.event
 	}
 	if h.inFlight != nil {
 		return h.inFlight.event
+	}
+	if h.retryCandidate != nil {
+		return h.retryCandidate.event
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -572,6 +599,9 @@ func (h *ConfigChangeHandler) validateCandidate(ctx context.Context, candidate *
 			outcome.validationErrors = map[string][]string{
 				"effective-config": {err.Error()},
 			}
+			// An apiserver that couldn't answer says nothing about the config.
+			var transient interface{ Transient() bool }
+			outcome.inconclusive = errors.As(err, &transient) && transient.Transient()
 			return outcome
 		}
 		if resolved == nil || resolved.Config == nil {
@@ -628,9 +658,16 @@ func (h *ConfigChangeHandler) validateCandidate(ctx context.Context, candidate *
 		return outcome
 	}
 
-	// Collect validation errors
+	h.applyResponses(&outcome, result)
+	return outcome
+}
+
+// applyResponses folds the validators' responses into outcome. The config is
+// inconclusive only when no validator rejected it and every responder answered.
+func (h *ConfigChangeHandler) applyResponses(outcome *validationOutcome, result *busevents.RequestResult) {
 	validationErrors := make(map[string][]string)
 	allValid := true
+	rejected := false
 
 	for _, resp := range result.Responses {
 		validationResp, ok := resp.(*events.ConfigValidationResponse)
@@ -642,6 +679,7 @@ func (h *ConfigChangeHandler) validateCandidate(ctx context.Context, candidate *
 
 		if !validationResp.Valid {
 			allValid = false
+			rejected = rejected || !validationResp.Inconclusive
 			validationErrors[validationResp.ValidatorName] = validationResp.Errors
 		}
 	}
@@ -649,15 +687,16 @@ func (h *ConfigChangeHandler) validateCandidate(ctx context.Context, candidate *
 	// Check for missing responders
 	if len(result.Errors) > 0 {
 		allValid = false
+		rejected = true
 		validationErrors["coordinator"] = result.Errors
 	}
 
 	if allValid {
 		outcome.valid = true
-		return outcome
+		return
 	}
+	outcome.inconclusive = !rejected
 	outcome.validationErrors = validationErrors
-	return outcome
 }
 
 // drainQueuedEvents observes parsed candidates that were already delivered
@@ -689,6 +728,11 @@ func (h *ConfigChangeHandler) applyValidationOutcome(outcome validationOutcome) 
 		return
 	}
 	event := outcome.candidate.event
+	if outcome.inconclusive {
+		h.scheduleValidationRetry(outcome)
+		return
+	}
+	h.retryBackoff = 0
 	if !outcome.valid {
 		h.logger.Error("Config validation failed",
 			"version", event.Version,
@@ -735,6 +779,43 @@ func (h *ConfigChangeHandler) applyValidationOutcome(outcome validationOutcome) 
 		return
 	}
 	h.acceptValidatedSnapshot(snapshot)
+}
+
+// scheduleValidationRetry keeps the running config and validates the same
+// candidate again after a bounded backoff: an inconclusive outcome is no
+// verdict, so it can neither accept nor reject the config.
+func (h *ConfigChangeHandler) scheduleValidationRetry(outcome validationOutcome) {
+	h.retryBackoff = min(max(2*h.retryBackoff, validationRetryInitialBackoff), validationRetryMaxBackoff)
+	h.retryCandidate = outcome.candidate
+	h.retryTimer.Reset(h.retryBackoff)
+
+	event := outcome.candidate.event
+	h.logger.Warn("Config validation inconclusive; keeping the running config and retrying",
+		"version", event.Version,
+		"retry_in", h.retryBackoff,
+		"reasons", outcome.validationErrors)
+	inconclusive := events.NewConfigValidationInconclusiveEvent(
+		event.Version, event.TemplateConfig, outcome.validationErrors, h.retryBackoff)
+	inconclusive.Sources = event.Sources
+	h.eventBus.Publish(inconclusive)
+}
+
+// startValidationRetry re-validates the candidate whose validation was
+// inconclusive, unless a newer candidate superseded it meanwhile.
+func (h *ConfigChangeHandler) startValidationRetry(ctx context.Context) {
+	candidate := h.retryCandidate
+	h.retryCandidate = nil
+	if candidate == nil || candidate.generation != h.candidateGeneration || h.queuedParsed != nil {
+		return
+	}
+	h.queuedParsed = candidate
+	h.startQueuedValidation(ctx)
+}
+
+func (h *ConfigChangeHandler) clearValidationRetry() {
+	h.retryTimer.Stop()
+	h.retryCandidate = nil
+	h.retryBackoff = 0
 }
 
 // acceptEffectiveSnapshot restarts with a snapshot validated against a fresh

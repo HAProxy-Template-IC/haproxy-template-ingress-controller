@@ -15,7 +15,7 @@
 package controller
 
 // This file holds the adapters that bridge HAPTIC's concrete K8s
-// clients to pkg/k8s/schemafetcher's CRDLister and
+// clients to pkg/k8s/schemafetcher's CRDGetter and
 // OpenAPIV3Provider interfaces. Putting them in the controller
 // package is the natural fit per arch-go Rule 1 ("controller can
 // import everything"): they exist solely to compose the iteration's
@@ -33,6 +33,7 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -44,44 +45,66 @@ import (
 	"github.com/haproxy-haptic/HAPTIC/pkg/k8s/schemafetcher"
 )
 
-// NewClusterSchemaFetcher composes the apiextensions CRD lister and the
+// NewClusterSchemaFetcher composes the apiextensions CRD getter and the
 // discovery-backed OpenAPI v3 provider into the live-cluster schema
 // fetcher. The controller's iteration wiring and the CLI commands that reach
 // a live cluster both build their schema access through this entry point.
 func NewClusterSchemaFetcher(apiext apiextensionsclientset.Interface, d discovery.DiscoveryInterface) schemafetcher.Fetcher {
 	return schemafetcher.NewClusterFetcher(
-		newAPIExtensionsCRDLister(apiext),
+		newAPIExtensionsCRDGetter(apiext, d),
 		newDiscoveryOpenAPIV3Provider(d),
 	)
 }
 
-// apiextensionsCRDLister implements [schemafetcher.CRDLister] by
-// listing CRDs through the apiextensions clientset.
-type apiextensionsCRDLister struct {
-	clientset apiextensionsclientset.Interface
+// apiextensionsCRDGetter implements [schemafetcher.CRDGetter] with a
+// discovery lookup of the GVK's plural and a GET of the CRD named
+// <plural>.<group>: a consistent LIST of every CRD took 3.5 s on a k3s
+// apiserver where the GET took 5 ms (#329).
+type apiextensionsCRDGetter struct {
+	clientset  apiextensionsclientset.Interface
+	restClient rest.Interface
 }
 
-// newAPIExtensionsCRDLister wires the apiextensions clientset to
-// schemafetcher's CRDLister interface. The clientset is constructed
-// from the controller's rest.Config — see setupReconciliation
-// where this is called.
-func newAPIExtensionsCRDLister(clientset apiextensionsclientset.Interface) schemafetcher.CRDLister {
-	return &apiextensionsCRDLister{clientset: clientset}
+func newAPIExtensionsCRDGetter(clientset apiextensionsclientset.Interface, d discovery.DiscoveryInterface) schemafetcher.CRDGetter {
+	return &apiextensionsCRDGetter{clientset: clientset, restClient: d.RESTClient()}
 }
 
-// ListCRDs returns every CRD in the cluster. We list all (rather
-// than filtering by group / name) because schemafetcher caches the
-// result for the lifetime of one ClusterFetcher — and the typical
-// HAPTIC deployment watches resources spread across half a dozen
-// API groups, so the in-cluster list is the right granularity.
-// Field-selector filtering wouldn't help; the LIST call's cost is
-// dominated by the per-CRD body size, not the count.
-func (l *apiextensionsCRDLister) ListCRDs(ctx context.Context) ([]apiextensionsv1.CustomResourceDefinition, error) {
-	list, err := l.clientset.ApiextensionsV1().CustomResourceDefinitions().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("listing CRDs: %w", err)
+// GetCRD returns schemafetcher.ErrNoCRD for the core group, a group/version
+// discovery does not serve, or a kind with no CRD of that name.
+func (g *apiextensionsCRDGetter) GetCRD(ctx context.Context, gvk schema.GroupVersionKind) (*apiextensionsv1.CustomResourceDefinition, error) {
+	if gvk.Group == "" {
+		return nil, schemafetcher.ErrNoCRD
 	}
-	return list.Items, nil
+	if g.restClient == nil {
+		return nil, errors.New("discovery REST client is unavailable")
+	}
+	data, err := g.restClient.Get().AbsPath("/apis", gvk.Group, gvk.Version).Do(ctx).Raw()
+	if apierrors.IsNotFound(err) {
+		return nil, schemafetcher.ErrNoCRD
+	}
+	if err != nil {
+		return nil, fmt.Errorf("discovering resources of %s: %w", gvk.GroupVersion(), err)
+	}
+	var resources metav1.APIResourceList
+	if err := json.Unmarshal(data, &resources); err != nil {
+		return nil, fmt.Errorf("decoding resources of %s: %w", gvk.GroupVersion(), err)
+	}
+	for i := range resources.APIResources {
+		resource := &resources.APIResources[i]
+		if resource.Kind != gvk.Kind || strings.Contains(resource.Name, "/") {
+			continue
+		}
+		name := resource.Name + "." + gvk.Group
+		crd, err := g.clientset.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil, schemafetcher.ErrNoCRD
+		}
+		if err != nil {
+			return nil, fmt.Errorf("getting CRD %s: %w", name, err)
+		}
+		return crd, nil
+	}
+	return nil, schemafetcher.ErrNoCRD
 }
 
 type discoveryOpenAPIV3Provider struct {
