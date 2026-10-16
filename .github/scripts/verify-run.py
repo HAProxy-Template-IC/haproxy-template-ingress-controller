@@ -66,6 +66,30 @@ def api(path):
         time.sleep(delay)
 
 
+def job_inventory(base, attempt):
+    jobs = []
+    page = 1
+    while True:
+        response = api(f"{base}/attempts/{attempt}/jobs?per_page=50&page={page}")
+        jobs.extend(response["jobs"])
+        if len(jobs) >= response["total_count"]:
+            return jobs
+        if not response["jobs"]:
+            raise ValueError("Incomplete workflow job inventory")
+        page += 1
+
+
+def settled_jobs(fetch, required, delays=(5, 10, 20, 40, 60), sleep=time.sleep):
+    """Re-read jobs this one needs while the API still reports them unfinished; it lags the job graph (#360)."""
+    jobs = fetch()
+    for delay in delays:
+        if all(job["status"] == "completed" for job in jobs if job["name"] in required):
+            break
+        sleep(delay)
+        jobs = fetch()
+    return jobs
+
+
 def required_jobs(manifest, profile):
     if profile == "full":
         return manifest["required_jobs"]
@@ -168,20 +192,12 @@ def main():
         raise ValueError("Workflow belongs to a different trigger")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     identity = checkout_identity(event_name, event, repository, sha)
-    jobs = []
-    page = 1
-    while True:
-        response = api(f"{base}/attempts/{attempt}/jobs?per_page=50&page={page}")
-        jobs.extend(response["jobs"])
-        if len(jobs) >= response["total_count"]:
-            break
-        if not response["jobs"]:
-            raise ValueError("Incomplete workflow job inventory")
-        page += 1
     manifest_path = Path(".github/ci-verification.json")
     manifest = json.loads(manifest_path.read_text())
     prefix = os.environ.get("CI_JOB_PREFIX", "")
     profile = os.environ.get("CI_VERIFICATION_PROFILE", "full")
+    jobs = settled_jobs(lambda: job_inventory(base, attempt),
+                        {prefix + name for name in required_jobs(manifest, profile)})
     selected = {"profile": profile}
     if profile == "prose":
         selected = selection(manifest, event_name, event, identity, sha=sha)
