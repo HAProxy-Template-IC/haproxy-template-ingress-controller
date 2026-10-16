@@ -207,7 +207,7 @@ func TestPublishConfig_StaleCleanupCannotDeleteNewPublication(t *testing.T) {
 	_, err = publisher.PublishConfig(ctx, &newRequest)
 	require.NoError(t, err)
 
-	err = publisher.pruneAuxiliaryFiles(ctx, staleRuntimeConfig, staleResult)
+	err = publisher.pruneAuxiliaryFiles(ctx, staleRuntimeConfig, staleResult, newChildListing("default", runtimeConfigSelector(staleRuntimeConfig.Name)))
 	require.ErrorContains(t, err, "publication was superseded; publish the current output")
 	_, err = crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
 		Get(ctx, initialResult.MapFileNames[1], metav1.GetOptions{})
@@ -235,7 +235,7 @@ func TestPublishConfig_StaleCleanupCannotDeleteNewNameForSameAuxiliarySet(t *tes
 	_, err = configs.UpdateStatus(ctx, current, metav1.UpdateOptions{})
 	require.NoError(t, err)
 
-	err = publisher.pruneAuxiliaryFiles(ctx, staleRuntimeConfig, staleResult)
+	err = publisher.pruneAuxiliaryFiles(ctx, staleRuntimeConfig, staleResult, newChildListing("default", runtimeConfigSelector(staleRuntimeConfig.Name)))
 	require.ErrorContains(t, err, "no longer owns the committed auxiliary references")
 	_, err = maps.Get(ctx, replacement.Name, metav1.GetOptions{})
 	require.NoError(t, err)

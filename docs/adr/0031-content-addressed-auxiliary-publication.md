@@ -28,6 +28,12 @@ deletion, the new claim changes the resource version; cleanup must not adopt
 that claim when retrying a conflict. If deletion wins first, publication must
 create the child again before committing its references.
 
+Each publication reads its children with one live, label-selected list per
+kind before the first write. That list answers each child's first read and
+supplies the deletion candidates; a conflict or `AlreadyExists` retry reads the
+child live. A child created after the list is pruned by the next publication
+(issue #356).
+
 This closes the A-to-B-to-A reuse race without updating every unchanged child.
 Status-only writes can still be retried because they preserve the claim. A
 terminating child cannot satisfy publication. Owner checks and stamp-cache
@@ -42,6 +48,11 @@ name instead of only matching a set annotation. Missing children, malformed
 content, identity mismatches, and certificate/CA aliasing still reject the
 whole candidate snapshot. Readers retain the previous complete snapshot while
 a replacement is incomplete.
+
+The publisher's up-to-date, ownership, and deletion-state checks run on listed
+objects. A list without a `resourceVersion` is a quorum read like a GET and
+returns the same fields, including Secret data, so those checks keep their
+strength.
 
 After accepting the new format, a reader rejects a downgrade to older identity
 rules until a new-format publication arrives or that reader restarts. During a

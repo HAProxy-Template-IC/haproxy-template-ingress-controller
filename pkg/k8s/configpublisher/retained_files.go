@@ -24,7 +24,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
 	v1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
@@ -51,25 +50,31 @@ func ownedByRetainedTemplate(obj metav1.Object, name string, uid types.UID) bool
 	return obj.GetLabels()[retainedLabel] == string(uid) && ownedByTemplate(obj, name, uid)
 }
 
+func retainedSelector(uid types.UID) string {
+	return retainedLabel + "=" + string(uid)
+}
+
 // pruneRetainedFiles deletes shared children that no checkpoint references.
-func (p *Publisher) pruneRetainedFiles(ctx context.Context, req *PublishRequest) error {
-	selector := retainedLabel + "=" + string(req.TemplateConfigUID)
-	referenced, committed, err := p.retainedFileReferences(ctx, req, selector)
+// Children listed before the references were read are safe to judge against
+// them; ones created later are judged by the next prune.
+func (p *Publisher) pruneRetainedFiles(ctx context.Context, req *PublishRequest, listing *childListing) error {
+	referenced, committed, err := p.retainedFileReferences(ctx, req, retainedSelector(req.TemplateConfigUID))
 	if err != nil || !committed {
 		return err
 	}
-	candidates, err := p.retainedFileCandidates(ctx, req.TemplateConfigNamespace, selector, retainedFileKinds)
-	if err != nil {
+	if err := p.listInto(ctx, listing, auxiliaryChildKinds); err != nil {
 		return err
 	}
-	for _, candidate := range candidates {
-		if referenced[candidate.kind+"/"+candidate.obj.GetName()] ||
-			!ownedByRetainedTemplate(candidate.obj, req.TemplateConfigName, req.TemplateConfigUID) {
-			continue
-		}
-		err := candidate.remove(ctx, candidate.obj.GetName(), deletionOptions(candidate.obj))
-		if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
-			return err
+	for _, kind := range auxiliaryChildKinds {
+		for _, child := range listing.byKind[kind] {
+			if referenced[kind+"/"+child.obj.GetName()] ||
+				!ownedByRetainedTemplate(child.obj, req.TemplateConfigName, req.TemplateConfigUID) {
+				continue
+			}
+			err := child.remove(ctx, child.obj.GetName(), deletionOptions(child.obj))
+			if err != nil && !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+				return err
+			}
 		}
 	}
 	return nil
@@ -101,115 +106,6 @@ func (p *Publisher) retainedFileReferences(ctx context.Context, req *PublishRequ
 	return referenced, true, nil
 }
 
-type retainedFileCandidate struct {
-	kind   string
-	obj    metav1.Object
-	remove func(context.Context, string, metav1.DeleteOptions) error
-}
-
-var retainedFileKinds = []string{kindMapFile, kindGeneralFile, kindCRTListFile, kindSecret}
-
-func (p *Publisher) retainedFileCandidates(ctx context.Context, namespace, selector string, kinds []string) ([]retainedFileCandidate, error) {
-	var candidates []retainedFileCandidate
-	for _, kind := range kinds {
-		objects, remove, err := p.listRetainedKind(ctx, namespace, kind, selector)
-		if err != nil {
-			return nil, err
-		}
-		for _, obj := range objects {
-			candidates = append(candidates, retainedFileCandidate{kind, obj, remove})
-		}
-	}
-	return candidates, nil
-}
-
-func (p *Publisher) listRetainedKind(ctx context.Context, namespace, kind, selector string) ([]metav1.Object, func(context.Context, string, metav1.DeleteOptions) error, error) {
-	crd := p.crdClient.HaproxyTemplateICV1alpha1()
-	options := metav1.ListOptions{LabelSelector: selector}
-	switch kind {
-	case kindMapFile:
-		items, err := crd.HAProxyMapFiles(namespace).List(ctx, options)
-		if err != nil {
-			return nil, nil, err
-		}
-		return objectsOf(items.Items), crd.HAProxyMapFiles(namespace).Delete, nil
-	case kindGeneralFile:
-		items, err := crd.HAProxyGeneralFiles(namespace).List(ctx, options)
-		if err != nil {
-			return nil, nil, err
-		}
-		return objectsOf(items.Items), crd.HAProxyGeneralFiles(namespace).Delete, nil
-	case kindCRTListFile:
-		items, err := crd.HAProxyCRTListFiles(namespace).List(ctx, options)
-		if err != nil {
-			return nil, nil, err
-		}
-		return objectsOf(items.Items), crd.HAProxyCRTListFiles(namespace).Delete, nil
-	case kindSecret:
-		items, err := p.k8sClient.CoreV1().Secrets(namespace).List(ctx, options)
-		if err != nil {
-			return nil, nil, err
-		}
-		return objectsOf(items.Items), p.k8sClient.CoreV1().Secrets(namespace).Delete, nil
-	default:
-		return nil, nil, fmt.Errorf("unsupported retained auxiliary kind %q", kind)
-	}
-}
-
-func objectsOf[E any, P interface {
-	*E
-	metav1.Object
-}](items []E) []metav1.Object {
-	objects := make([]metav1.Object, len(items))
-	for i := range items {
-		objects[i] = P(&items[i])
-	}
-	return objects
-}
-
-// retainedListing holds a template's shared checkpoint children by kind/name.
-// Its LISTs set no resourceVersion, so it is as current as one GET per child.
-type retainedListing map[string]metav1.Object
-
-func (p *Publisher) listRetainedChildren(ctx context.Context, namespace string, uid types.UID, kinds []string) (retainedListing, error) {
-	candidates, err := p.retainedFileCandidates(ctx, namespace, retainedLabel+"="+string(uid), kinds)
-	if err != nil {
-		return nil, fmt.Errorf("listing shared retained auxiliary files: %w", err)
-	}
-	listing := make(retainedListing, len(candidates))
-	for _, candidate := range candidates {
-		listing[candidate.kind+"/"+candidate.obj.GetName()] = candidate.obj
-	}
-	return listing, nil
-}
-
-// listedOrGet reads a child from the listing; children it lacks, such as those
-// owned by checkpoints published before sharing, are read live.
-func listedOrGet[T metav1.Object](ctx context.Context, listing retainedListing, kind, name string, get func(context.Context, string, metav1.GetOptions) (T, error)) (T, error) {
-	if item, found := listing[kind+"/"+name].(T); found {
-		return item, nil
-	}
-	return get(ctx, name, metav1.GetOptions{})
-}
-
-// listedFirst answers a publication's first read of a shared child from the
-// listing taken at its start; a child absent from it did not exist then.
-// Retries read live, so a racing writer is seen as with a GET.
-func listedFirst[T metav1.Object](listing retainedListing, kind, name string, get func(context.Context, string, metav1.GetOptions) (T, error)) func(context.Context) (T, error) {
-	first := listing != nil
-	return func(ctx context.Context) (T, error) {
-		if !first {
-			return get(ctx, name, metav1.GetOptions{})
-		}
-		first = false
-		if item, found := listing[kind+"/"+name].(T); found {
-			return item, nil
-		}
-		var absent T
-		return absent, apierrors.NewNotFound(schema.GroupResource{Resource: kind}, name)
-	}
-}
-
 type retainedFileKey struct {
 	family renderartifact.Family
 	path   string
@@ -225,36 +121,27 @@ type retainedFile struct {
 	empty      bool
 }
 
-func (p *Publisher) readRetainedFiles(ctx context.Context, owner *v1.HAProxyCfg) (map[retainedFileKey]retainedFile, error) {
+type retainedFileGroup struct {
+	kind   string
+	family renderartifact.Family
+	refs   []v1.ResourceReference
+}
+
+func (p *Publisher) readRetainedFiles(ctx context.Context, owner *v1.HAProxyCfg, listing *childListing) (map[retainedFileKey]retainedFile, error) {
 	refs := owner.Status.AuxiliaryFiles
 	if refs == nil || !UsesContentIdentity(refs.SetID) {
 		return nil, errors.New("retained configuration has no committed content-addressed auxiliary set")
 	}
-	groups := []struct {
-		kind   string
-		family renderartifact.Family
-		refs   []v1.ResourceReference
-	}{
+	groups := []retainedFileGroup{
 		{kindMapFile, renderartifact.Map, refs.MapFiles},
 		{kindGeneralFile, renderartifact.General, refs.GeneralFiles},
 		{kindCRTListFile, renderartifact.CRTList, refs.CRTListFiles},
 		{kindSecret, renderartifact.Certificate, refs.SSLCertificates},
 		{kindSecret, renderartifact.CA, refs.SSLCaFiles},
 	}
-	var shared []string
-	for _, group := range groups {
-		if !slices.Contains(shared, group.kind) && slices.ContainsFunc(group.refs, func(ref v1.ResourceReference) bool {
-			return strings.HasSuffix(ref.Name, retainedChildSuffix)
-		}) {
-			shared = append(shared, group.kind)
-		}
-	}
-	var listing retainedListing
-	if parent := metav1.GetControllerOf(owner); parent != nil && len(shared) > 0 {
-		var err error
-		if listing, err = p.listRetainedChildren(ctx, owner.Namespace, parent.UID, shared); err != nil {
-			return nil, err
-		}
+	listing, err := p.listSharedRetainedFiles(ctx, owner, groups, listing)
+	if err != nil {
+		return nil, err
 	}
 	files := make(map[retainedFileKey]retainedFile)
 	seen := make(map[string]bool)
@@ -273,7 +160,32 @@ func (p *Publisher) readRetainedFiles(ctx context.Context, owner *v1.HAProxyCfg)
 	return files, nil
 }
 
-func (p *Publisher) readRetainedReference(ctx context.Context, owner *v1.HAProxyCfg, ref v1.ResourceReference, kind string, family renderartifact.Family, seen map[string]bool, listing retainedListing) (retainedFile, error) {
+// listSharedRetainedFiles lists the kinds owner references by shared name
+// into listing, which a nil or differently selected listing replaces.
+func (p *Publisher) listSharedRetainedFiles(ctx context.Context, owner *v1.HAProxyCfg, groups []retainedFileGroup, listing *childListing) (*childListing, error) {
+	var shared []string
+	for _, group := range groups {
+		if !slices.Contains(shared, group.kind) && slices.ContainsFunc(group.refs, func(ref v1.ResourceReference) bool {
+			return strings.HasSuffix(ref.Name, retainedChildSuffix)
+		}) {
+			shared = append(shared, group.kind)
+		}
+	}
+	parent := metav1.GetControllerOf(owner)
+	if parent == nil || len(shared) == 0 {
+		return newChildListing(owner.Namespace, ""), nil
+	}
+	selector := retainedSelector(parent.UID)
+	if listing == nil || listing.namespace != owner.Namespace || listing.selector != selector {
+		listing = newChildListing(owner.Namespace, selector)
+	}
+	if err := p.listInto(ctx, listing, shared); err != nil {
+		return nil, fmt.Errorf("listing shared retained auxiliary files: %w", err)
+	}
+	return listing, nil
+}
+
+func (p *Publisher) readRetainedReference(ctx context.Context, owner *v1.HAProxyCfg, ref v1.ResourceReference, kind string, family renderartifact.Family, seen map[string]bool, listing *childListing) (retainedFile, error) {
 	if ref.Kind != kind || ref.Name == "" || ref.Namespace != owner.Namespace {
 		return retainedFile{}, errors.New("retained auxiliary reference has a foreign kind or namespace")
 	}
@@ -291,7 +203,7 @@ func (p *Publisher) readRetainedReference(ctx context.Context, owner *v1.HAProxy
 	return file, nil
 }
 
-func (p *Publisher) readRetainedFile(ctx context.Context, ref v1.ResourceReference, family renderartifact.Family, listing retainedListing) (retainedFile, error) {
+func (p *Publisher) readRetainedFile(ctx context.Context, ref v1.ResourceReference, family renderartifact.Family, listing *childListing) (retainedFile, error) {
 	client := p.crdClient.HaproxyTemplateICV1alpha1()
 	switch family {
 	case renderartifact.Map:

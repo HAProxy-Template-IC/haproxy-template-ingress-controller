@@ -192,7 +192,7 @@ func TestRetainedReceiptSurvivesPodRetirement(t *testing.T) {
 				func([]v1.PodDeploymentStatus) ([]v1.PodDeploymentStatus, bool) {
 					return []v1.PodDeploymentStatus{stamp}, true
 				}))
-			filesBefore, err := publisher.readRetainedFiles(ctx, checkpoint)
+			filesBefore, err := publisher.readRetainedFiles(ctx, checkpoint, nil)
 			require.NoError(t, err)
 			if discovered {
 				err = publisher.ReconcileDeployedToPods(ctx, req.TemplateConfigNamespace, nil)
@@ -205,7 +205,7 @@ func TestRetainedReceiptSurvivesPodRetirement(t *testing.T) {
 			after, err := client.Get(ctx, checkpoint.Name, metav1.GetOptions{})
 			require.NoError(t, err)
 			assert.Equal(t, checkpoint, after)
-			filesAfter, err := publisher.readRetainedFiles(ctx, after)
+			filesAfter, err := publisher.readRetainedFiles(ctx, after, nil)
 			require.NoError(t, err)
 			assert.Equal(t, filesBefore, filesAfter)
 			current, err = client.Get(ctx, current.Name, metav1.GetOptions{})

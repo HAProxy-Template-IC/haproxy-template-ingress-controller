@@ -213,9 +213,9 @@ func (p *Publisher) auxFileGroupsFor(auxFiles *haproxyv1alpha1.AuxiliaryFileRefe
 		return nil
 	}
 	return []auxFileGroup{
-		{auxFiles.MapFiles, "map file", p.mapFileHandle, p.cachedMapFileStatus},
-		{auxFiles.GeneralFiles, "general file", p.generalFileHandle, p.cachedGeneralFileStatus},
-		{auxFiles.CRTListFiles, "crt-list file", p.crtListFileHandle, p.cachedCRTListFileStatus},
+		{auxFiles.MapFiles, mapFileDescription, p.mapFileHandle, p.cachedMapFileStatus},
+		{auxFiles.GeneralFiles, generalFileDescription, p.generalFileHandle, p.cachedGeneralFileStatus},
+		{auxFiles.CRTListFiles, crtListFileDescription, p.crtListFileHandle, p.cachedCRTListFileStatus},
 	}
 }
 

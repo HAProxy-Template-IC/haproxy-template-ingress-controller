@@ -55,7 +55,9 @@ still appear in pod deployment status. Garbage collection follows pointer promot
 and removes only unreferenced checkpoints belonging to this template UID. The
 publisher then deletes, with UID and resource-version preconditions, shared
 children that no remaining checkpoint references; it skips this while any
-checkpoint's references are uncommitted. Children of checkpoints published before
+checkpoint's references are uncommitted. Deletion candidates come from the
+verification list, taken before the references are read; a child created after
+it is judged by the next deletion (issue #356). Children of checkpoints published before
 sharing stay owned by their checkpoint and are read and cleaned up as before.
 Stale pod status can retain extra storage.
 

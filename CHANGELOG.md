@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Publishing a recovery checkpoint reads its shared auxiliary files with one list per kind instead of reading every file twice, removing most of the controller's API requests under steady deployment churn.
+- Publishing the configuration reads its auxiliary files with one list per kind instead of reading every map, file, and certificate Secret on each publication, and checkpoint cleanup reuses the checkpoint's verification list.
 - A replica that had been standby longer than 1.5 × `driftPreventionInterval` failed liveness as soon as it became leader, so the kubelet restarted it whenever it couldn't deploy right away, for example while a critical `http.Fetch` source was down.
 - `/livez` and `/readyz` now say why a component is unhealthy instead of reporting it with no reason.
 - A schema fetch timeout during config validation no longer rejects a valid HAProxyTemplateConfig change for good: the change shows `Validated=Unknown` (`ValidationInconclusive`) and is validated again with backoff, and schema reads fetch only the watched CRDs instead of listing every CRD, which took seconds on k3s.
