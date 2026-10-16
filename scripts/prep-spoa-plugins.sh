@@ -3,6 +3,9 @@
 # named in versions-spoa.env, stage them into ./plugins/<arch>/<libname>.so
 # for the build-spoa-image job to consume via --build-context.
 #
+# Release files are kept in .cache/spoa-plugins and reused;
+# every run verifies each one, whether cached or downloaded.
+#
 # Verification (per file):
 #   1. SHA256 against the upstream-published `SHA256SUMS` manifest
 #   2. cosign verify-blob against the upstream project's tag identity
@@ -50,14 +53,15 @@ declare -A LIB_NAMES=(
 )
 
 ARCHES=(amd64 arm64 armv7)
+CACHE_DIR="${REPO_ROOT}/.cache/spoa-plugins"
 
 fetch() {
     local target="$1" url="$2" headers
     headers="$(mktemp "${WORKDIR}/headers.XXXXXX")"
-    # Idempotent GET behind cosign verification: outlast a registry that answers
-    # 409 for a single file for more than the ten seconds five retries cover (#217).
+    # Exponential backoff over five minutes: only a cache miss downloads, and
+    # release assets have answered 500 for longer than a fixed 45-second window.
     if ! curl --fail --silent --show-error --location \
-        --retry 8 --retry-delay 5 --retry-max-time 120 --retry-all-errors \
+        --retry 9 --retry-max-time 300 --retry-all-errors \
         --dump-header "${headers}" \
         --output "${target}" "${url}"; then
         echo "  ERROR: download failed: ${url}" >&2
@@ -76,11 +80,70 @@ fetch() {
     fi
 }
 
-mkdir -p plugins
+# Sets REPLY to the cached copy, or downloads the file into staging.
+release_file() {
+    local name="$1"
+    if [ -f "${release}/${name}" ]; then
+        REPLY="${release}/${name}"
+        reused=$((reused + 1))
+    else
+        REPLY="${staging}/${name}"
+        fetch "${REPLY}" "${pkg_base}/${name}"
+        downloaded=$((downloaded + 1))
+    fi
+}
+
+reject() {
+    echo "  ERROR: $1" >&2
+    if [ -d "${release}" ]; then
+        echo "  Cached files in ${release} failed verification; delete that directory to download them again." >&2
+    fi
+    exit 1
+}
+
+mkdir -p plugins "${CACHE_DIR}"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "${WORKDIR}"' EXIT
 
-verified=0
+# Drop unpinned releases so a cache restored from an older pin set stays bounded.
+for cached in "${CACHE_DIR}"/*/*; do
+    [ -d "${cached}" ] || continue
+    cached_plugin="$(basename "$(dirname "${cached}")")"
+    [ "${PLUGINS[${cached_plugin}]:-}" = "$(basename "${cached}")" ] || rm -rf "${cached}"
+done
+
+# Retries while cosign fails to fetch Sigstore's TUF metadata; any verdict returns at once.
+verify_signature() {
+    local identity="$1" issuer="$2" trust=() delay
+    # Only protobuf bundles accept --trusted-root; legacy ones refresh TUF online per call.
+    if grep -q '"mediaType" *: *"application/vnd.dev.sigstore.bundle' "${bundle}"; then
+        trust=(--trusted-root "${trusted_root}")
+    fi
+    for delay in 1 2 4 8 16 32 64 0; do
+        if REPLY="$(cosign verify-blob "${so}" --bundle "${bundle}" "${trust[@]}" \
+                --certificate-identity "${identity}" --certificate-oidc-issuer "${issuer}" 2>&1 > /dev/null)"; then
+            return 0
+        fi
+        [[ "${delay}" -gt 0 && "${REPLY,,}" == *tuf* ]] || return 1
+        sleep "${delay}"
+    done
+}
+
+# One TUF refresh per run, into a fresh root, since a TUF client trusts the root it finds on disk.
+export TUF_ROOT="${WORKDIR}/tuf"
+trusted_root="${TUF_ROOT}/tuf-repo-cdn.sigstore.dev/targets/trusted_root.json"
+for delay in 1 2 4 8 16 32 64 0; do
+    if cosign initialize > /dev/null 2>&1 && [ -s "${trusted_root}" ]; then
+        break
+    fi
+    if [ "${delay}" -eq 0 ]; then
+        echo "ERROR: cosign initialize did not produce ${trusted_root}, so no plugin can be verified. Retry once tuf-repo-cdn.sigstore.dev is reachable." >&2
+        exit 1
+    fi
+    sleep "${delay}"
+done
+
+verified=0 reused=0 downloaded=0
 for plugin in "${!PLUGINS[@]}"; do
     version="${PLUGINS[${plugin}]}"
     lib_name="${LIB_NAMES[${plugin}]}"
@@ -88,56 +151,52 @@ for plugin in "${!PLUGINS[@]}"; do
     pkg_base="https://github.com/${project_path}/releases/download/${version}"
     github_identity="https://github.com/${project_path}/.github/workflows/release.yml@refs/tags/${version}"
     gitlab_identity="https://gitlab.com/${project_path}//.gitlab-ci.yml@refs/tags/${version}"
+    release="${CACHE_DIR}/${plugin}/${version}"
+    staging="${WORKDIR}/${plugin}"
+    mkdir -p "${staging}"
 
     echo "==> ${plugin} ${version}"
 
     # Pull the SHA256SUMS manifest as the authoritative file list for this
     # plugin/version. Each line is "<sha256>  <filename>".
-    sums="${WORKDIR}/${plugin}-SHA256SUMS"
-    fetch "${sums}" "${pkg_base}/SHA256SUMS"
+    release_file SHA256SUMS
+    sums="${REPLY}"
 
     for arch in "${ARCHES[@]}"; do
         suffixed="${lib_name}-${arch}-glibc${SPOA_PLUGIN_GLIBC_VERSION}.so"
 
-        # Confirm this arch is in the manifest before downloading.
         if ! grep -q "  ${suffixed}\$" "${sums}"; then
-            echo "  ERROR: ${suffixed} not present in upstream SHA256SUMS" >&2
-            exit 1
+            reject "${suffixed} not present in upstream SHA256SUMS"
         fi
 
-        archdir="plugins/${arch}"
-        mkdir -p "${archdir}"
-        target_so="${archdir}/${lib_name}.so"
-        bundle="${WORKDIR}/${suffixed}.cosign.bundle"
+        release_file "${suffixed}"
+        so="${REPLY}"
+        release_file "${suffixed}.cosign.bundle"
+        bundle="${REPLY}"
 
-        fetch "${target_so}" "${pkg_base}/${suffixed}"
-        fetch "${bundle}" "${pkg_base}/${suffixed}.cosign.bundle"
-
-        # SHA256 check: compare expected line from manifest against the
-        # downloaded file. We strip the arch+glibc suffix locally, so
-        # `sha256sum -c` directly is awkward — recompute and compare.
         expected=$(awk -v f="${suffixed}" '$2 == f {print $1}' "${sums}")
-        actual=$(sha256sum "${target_so}" | awk '{print $1}')
+        actual=$(sha256sum "${so}" | awk '{print $1}')
         if [ "${expected}" != "${actual}" ]; then
-            echo "  ERROR: SHA256 mismatch for ${suffixed}" >&2
-            echo "    expected: ${expected}" >&2
-            echo "    actual:   ${actual}" >&2
-            exit 1
+            reject "SHA256 mismatch for ${suffixed} (expected ${expected}, actual ${actual})"
         fi
 
         # Cosign keyless verification anchored to this plugin's project tag.
-        if ! cosign verify-blob "${target_so}" --bundle "${bundle}" \
-                --certificate-identity "${github_identity}" \
-                --certificate-oidc-issuer "${GITHUB_ISSUER}" > /dev/null 2>&1; then
-            cosign verify-blob "${target_so}" --bundle "${bundle}" \
-                --certificate-identity "${gitlab_identity}" \
-                --certificate-oidc-issuer "${GITLAB_ISSUER}" > /dev/null
+        if ! verify_signature "${github_identity}" "${GITHUB_ISSUER}" &&
+            ! verify_signature "${gitlab_identity}" "${GITLAB_ISSUER}"; then
+            echo "${REPLY}" >&2
+            reject "cosign rejected the signature of ${suffixed}"
         fi
 
+        mkdir -p "plugins/${arch}"
+        cp "${so}" "plugins/${arch}/${lib_name}.so"
         verified=$((verified + 1))
         echo "  ${arch}: verified ${suffixed}"
     done
+
+    # Only files that passed verification enter the cache.
+    mkdir -p "${release}"
+    find "${staging}" -type f -exec mv -t "${release}" {} +
 done
 
 echo
-echo "OK: verified ${verified} plugin .so files across ${#PLUGINS[@]} plugins x ${#ARCHES[@]} architectures."
+echo "OK: verified ${verified} plugin .so files across ${#PLUGINS[@]} plugins x ${#ARCHES[@]} architectures (${reused} cached files reused, ${downloaded} downloaded)."
