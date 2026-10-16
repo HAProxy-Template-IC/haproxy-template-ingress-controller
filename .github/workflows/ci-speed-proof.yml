@@ -103,6 +103,20 @@ jobs:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
         key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
           }}-rest
+    - name: Restore and maintain SPOA plugin downloads
+      if: fromJSON(env.CI_SUITE).suite == 'spoa'
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: .cache/spoa-plugins
+        key: spoa-plugins-${{ hashFiles('versions-spoa.env', 'scripts/prep-spoa-plugins.sh') }}
+        restore-keys: spoa-plugins-
+    - name: Restore SPOA plugin downloads
+      if: fromJSON(env.CI_SUITE).runner == 'ubuntu-24.04-arm' || contains(fromJSON('["defaults", "plain"]'), fromJSON(env.CI_SUITE).suite)
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: .cache/spoa-plugins
+        key: spoa-plugins-${{ hashFiles('versions-spoa.env', 'scripts/prep-spoa-plugins.sh') }}
+        restore-keys: spoa-plugins-
     - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       if: fromJSON(env.CI_SUITE).suite == 'snapshot' || fromJSON(env.CI_SUITE).suite == 'spoa'
       with:
@@ -414,6 +428,12 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore SPOA plugin downloads
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: .cache/spoa-plugins
+        key: spoa-plugins-${{ hashFiles('versions-spoa.env', 'scripts/prep-spoa-plugins.sh') }}
+        restore-keys: spoa-plugins-
     - name: Select native compiler cache
       run: 'mkdir -p .pilot
 
@@ -1918,6 +1938,12 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore SPOA plugin downloads
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: .cache/spoa-plugins
+        key: spoa-plugins-${{ hashFiles('versions-spoa.env', 'scripts/prep-spoa-plugins.sh') }}
+        restore-keys: spoa-plugins-
     - name: Select native compiler cache
       run: 'mkdir -p .pilot
 
@@ -2776,6 +2802,12 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore SPOA plugin downloads
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: .cache/spoa-plugins
+        key: spoa-plugins-${{ hashFiles('versions-spoa.env', 'scripts/prep-spoa-plugins.sh') }}
+        restore-keys: spoa-plugins-
     - name: Select native compiler cache
       run: 'mkdir -p .pilot
 
@@ -2837,6 +2869,12 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore SPOA plugin downloads
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: .cache/spoa-plugins
+        key: spoa-plugins-${{ hashFiles('versions-spoa.env', 'scripts/prep-spoa-plugins.sh') }}
+        restore-keys: spoa-plugins-
     - name: Select native compiler cache
       run: 'mkdir -p .pilot
 
@@ -2898,6 +2936,12 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore SPOA plugin downloads
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: .cache/spoa-plugins
+        key: spoa-plugins-${{ hashFiles('versions-spoa.env', 'scripts/prep-spoa-plugins.sh') }}
+        restore-keys: spoa-plugins-
     - name: Select native compiler cache
       run: 'mkdir -p .pilot
 
@@ -3824,6 +3868,12 @@ jobs:
       with:
         fetch-depth: 0
         persist-credentials: false
+    - name: Restore SPOA plugin downloads
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+      with:
+        path: .cache/spoa-plugins
+        key: spoa-plugins-${{ hashFiles('versions-spoa.env', 'scripts/prep-spoa-plugins.sh') }}
+        restore-keys: spoa-plugins-
     - name: Select native compiler cache
       run: 'mkdir -p .pilot
 

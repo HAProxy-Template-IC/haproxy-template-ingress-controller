@@ -24,7 +24,10 @@ cluster job runs `.github/scripts/spoa-test-image.sh`, which points the chart at
 `haptic-spoa:test` and builds it with `make spoa-hub-image` alongside the
 controller image. E2e and lifecycle suites load a local chart image into Kind
 and pull a published one. Upgrade baselines install the released chart and keep
-its released SPOA image. To run the commit's bundle locally, set the same chart
+its released SPOA image. `make spoa-prep` keeps the plugin release files in
+`.cache/spoa-plugins` and verifies every file on every run, cached or not. CI
+restores that directory in each hub-building job; only the `spoa` job saves it.
+To run the commit's bundle locally, set the same chart
 values and build it with `make spoa-hub-image SPOA_DEV_IMAGE=haptic-spoa:test`.
 The benchmark compares every running hub and validator's executable and plugin
 hashes with the chart image before and after measurement.
