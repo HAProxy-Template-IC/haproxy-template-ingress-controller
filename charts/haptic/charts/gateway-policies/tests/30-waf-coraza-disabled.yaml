@@ -1,0 +1,53 @@
+_fx:
+  corazaDisabledRoute: &corazaDisabledRoute
+    gateways:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: Gateway
+      metadata: {namespace: default, name: policy-gateway, generation: 1}
+      spec:
+        gatewayClassName: haptic
+        listeners: [{name: http, port: 80, protocol: HTTP}]
+    services:
+    - {apiVersion: v1, kind: Service, metadata: {namespace: default, name: echo}, spec: {ports: [{port: 80, targetPort: 8080}]}}
+    routepolicies:
+    - apiVersion: haproxy-haptic.org/v1alpha1
+      kind: HAProxyRoutePolicy
+      metadata: {namespace: default, name: waf}
+      spec: {waf: {policy: strict}}
+    httproutes:
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      metadata: {namespace: default, name: waf-route, generation: 1}
+      spec:
+        parentRefs: [{name: policy-gateway}]
+        hostnames: [waf-route.example.com]
+        rules:
+        - backendRefs: [{name: echo, port: 80}]
+          filters:
+          - type: ExtensionRef
+            extensionRef: {group: haproxy-haptic.org, kind: HAProxyRoutePolicy, name: waf}
+  corazaDisabledContext: &corazaDisabledContext
+    spoaHub: {plugins: []}
+    waf:
+      ingressPermissions: {allowPolicySelection: true}
+      policies: {defaultPolicy: "", inline: {__replace__: true, strict: {}}, configMapRefs: {__replace__: true}}
+validationTests:
+  test-gateway-policy-waf-coraza-disabled:
+    description: A rule selecting a WAF policy while the coraza plugin is off is denied with 503, not served uninspected.
+    requires: [httproutes, routepolicies]
+    extraContext: *corazaDisabledContext
+    fixtures: *corazaDisabledRoute
+    assertions:
+    - type: haproxy_valid
+    - {type: contains, target: "map:gw-policy-errors.map", pattern: "(?m)^gateway/h_default_waf-route_0 invalid$"}
+    - {type: contains, target: events, pattern: "Warning RoutePolicyInvalid .*HTTPRoute default/waf-route:.*coraza plugin is not enabled.*Requests for this rule are denied"}
+
+  test-gateway-policy-waf-coraza-disabled-admission:
+    description: Under admission, a rule selecting a WAF policy while the coraza plugin is off is rejected.
+    requires: [httproutes, routepolicies]
+    extraContext:
+      <<: *corazaDisabledContext
+      renderMode: admission
+    fixtures: *corazaDisabledRoute
+    assertions:
+    - {type: contains, target: rendering_error, pattern: "HTTPRoute default/waf-route: The WAF policy can't be enforced because the spoaHub coraza plugin is not enabled"}

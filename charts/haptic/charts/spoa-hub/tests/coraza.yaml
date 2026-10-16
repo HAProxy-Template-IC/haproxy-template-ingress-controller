@@ -688,6 +688,57 @@ validationTests:
       - type: haproxy_valid
       - {type: contains, target: map:coraza-disabled.map, pattern: '(?m)^default/opted-out 1$'}
 
+  test-coraza-dispatch-enable-modsecurity-true-opt-in:
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
+    description: Under opt-in dispatch, enable-modsecurity "true" alone sends the route to Coraza in deny mode.
+    extraContext:
+      <<: *extracontextCoraza
+      waf: {dispatch: {mode: opt-in}}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: opted-in
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: opted-in.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: contains, target: map:haproxy-ingress-waf.map, pattern: '(?m)^default/opted-in deny$'}
+      - type: contains
+        target: haproxy.cfg
+        pattern: 'set-var\(txn\.coraza_active\) bool\(true\) if \{ var\(txn\.coraza_app\) -m found \} \|\| \{ var\(txn\.coraza_mode\) -m found \}'
+
+  test-coraza-dispatch-enable-modsecurity-true-default-on:
+    _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
+    description: Under default-on dispatch, enable-modsecurity "true" adds no mode entry, so waf.dispatch.defaultEnforcement applies.
+    extraContext:
+      <<: *extracontextCoraza
+      waf: {dispatch: {mode: default-on, defaultEnforcement: detect}}
+    fixtures:
+      ingresses:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: opted-in
+            namespace: default
+            annotations:
+              nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+          spec:
+            ingressClassName: haproxy
+            rules:
+              - host: opted-in.example.com
+                http: *httpRoot
+    assertions:
+      - type: haproxy_valid
+      - {type: not_contains, target: map:haproxy-ingress-waf.map, pattern: 'default/opted-in'}
+
   test-coraza-dispatch-enable-modsecurity-bogus-rejected:
     # Skip on HAProxy <3.1 (mode spop) OR when nginx-ingress is disabled: the
     # fixture's nginx.ingress.kubernetes.io/* annotations are scanned only by

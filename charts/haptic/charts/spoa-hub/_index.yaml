@@ -69,7 +69,7 @@ maps:
   haproxy-ingress-waf.map:
     template: |
       # Coraza WAF per-Ingress enforcement mode: <ns>/<name> → deny (block) | detect (shadow).
-      # Populated by haproxy-ingress map-haproxy-ingress-waf-* (/waf + /waf-mode); read into
+      # Populated by map-haproxy-ingress-waf-* snippets; read into
       # txn.coraza_mode (empty → no opt-in; request skips the WAF SPOE roundtrip).
       # See https://haproxy-haptic.org/docs/latest/operations/spoa-hub/
       {{ render_glob "map-haproxy-ingress-waf-*" -}}
