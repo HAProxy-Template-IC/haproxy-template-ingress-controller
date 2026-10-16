@@ -48,11 +48,8 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 // is 360 KB on every read.
 func (s *Server) stateResponse(verify, withPlan bool) (api.State, error) {
 	if verify {
-		if err := s.refreshTree(); err != nil {
+		if err := s.reobserve(); err != nil {
 			return api.State{}, err
-		}
-		if err := s.checkWorker(); err != nil {
-			s.logger.Warn("state verify: worker check", "error", err)
 		}
 	}
 	s.mu.Lock()
@@ -93,6 +90,20 @@ func (s *Server) stateResponse(verify, withPlan bool) (api.State, error) {
 		out.ReloadPendingAt = s.state.ReloadPendingAt.UTC().Format(time.RFC3339Nano)
 	}
 	return out, nil
+}
+
+// reobserve runs between applies: a re-hash that overlaps one installs the
+// file set from before it, and the apply then trips disk_is_the_desired_set.
+func (s *Server) reobserve() error {
+	s.apply.Lock()
+	defer s.apply.Unlock()
+	if err := s.refreshTree(); err != nil {
+		return err
+	}
+	if err := s.checkWorker(); err != nil {
+		s.logger.Warn("state verify: worker check", "error", err)
+	}
+	return nil
 }
 
 // refreshTree re-hashes the ownership set so the reported digests are an

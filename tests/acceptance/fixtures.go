@@ -573,7 +573,7 @@ func NewRole(namespace, name string) *rbacv1.Role {
 			{
 				APIGroups: []string{"haproxy-haptic.org"},
 				Resources: []string{"haproxycfgs"},
-				Verbs:     []string{verbGet, verbList, verbWatch, verbCreate, verbUpdate, verbPatch},
+				Verbs:     []string{verbGet, verbList, verbWatch, verbCreate, verbUpdate, verbPatch, verbDelete},
 			},
 			{
 				APIGroups: []string{"haproxy-haptic.org"},

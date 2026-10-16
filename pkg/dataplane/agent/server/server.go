@@ -91,7 +91,8 @@ type Server struct {
 	metrics   *Metrics
 	states    *stateStore
 
-	// apply serialises the state machine: at most one apply is ever in flight.
+	// apply serialises the state machine and every re-observation of disk:
+	// at most one apply is ever in flight.
 	apply sync.Mutex
 	// A verified read must not adopt the worker an owned reload is still adopting.
 	workerObservation sync.Mutex
