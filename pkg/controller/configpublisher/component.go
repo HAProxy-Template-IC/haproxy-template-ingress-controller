@@ -419,17 +419,7 @@ func (c *Component) Start(ctx context.Context) error {
 			c.handleEvent(ctx, event)
 
 		case request := <-c.drainRequests:
-			// A new term starts only after the previous term's context ended.
-			if err := request.ctx.Err(); err != nil {
-				request.done <- err
-				continue
-			}
-			c.handleDeliveredEvents(ctx)
-			select {
-			case c.drainWork <- request:
-			default:
-				request.done <- errors.New("a checkpoint flush is already pending")
-			}
+			c.acceptDrain(ctx, request)
 
 		case <-ctx.Done():
 			c.logger.Info("Config publisher shutting down", "reason", ctx.Err())
@@ -453,6 +443,20 @@ func (c *Component) Drain(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (c *Component) acceptDrain(ctx context.Context, request drainRequest) {
+	// A new term starts only after the previous term's context ended.
+	if err := request.ctx.Err(); err != nil {
+		request.done <- err
+		return
+	}
+	c.handleDeliveredEvents(ctx)
+	select {
+	case c.drainWork <- request:
+	default:
+		request.done <- errors.New("a checkpoint flush is already pending")
 	}
 }
 

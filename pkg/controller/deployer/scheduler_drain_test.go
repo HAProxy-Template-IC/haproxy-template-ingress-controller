@@ -34,7 +34,6 @@ func TestSchedulerDrainFollowsUpThePendingReloadAndDispatchesNoNewerPlan(t *test
 	bus.Start()
 
 	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 20*time.Millisecond, 30*time.Second)
-	s.drainProgress = make(chan struct{}, 1)
 	intended := primeRendered(s, "render-1", "checksum-1", "plan-1")
 	s.mu.Lock()
 	s.currentEndpoints = oneEndpoint()
@@ -88,7 +87,6 @@ func TestSchedulerDrainAdmitsTheLastDispatchedPlanEvenIfItTimedOut(t *testing.T)
 	bus.Start()
 
 	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 20*time.Millisecond, 30*time.Second)
-	s.drainProgress = make(chan struct{}, 1)
 	older := primeRendered(s, "render-1", "checksum-1", "plan-1")
 	s.mu.Lock()
 	s.currentEndpoints = oneEndpoint()
@@ -125,7 +123,6 @@ func TestSchedulerDrainAdmitsTheLastDispatchedPlanEvenIfItTimedOut(t *testing.T)
 
 func TestSchedulerDrainOfAnEndedTermLeavesTheSchedulerUndrained(t *testing.T) {
 	s := newDeploymentScheduler(testutil.NewTestBus(), testutil.NewTestLogger(), 20*time.Millisecond, 30*time.Second)
-	s.drainProgress = make(chan struct{}, 1)
 	ended, cancel := context.WithCancel(context.Background())
 	cancel()
 

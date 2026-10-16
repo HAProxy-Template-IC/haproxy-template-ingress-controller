@@ -42,13 +42,12 @@ func (s *DeploymentScheduler) Drain(ctx context.Context) error {
 	for {
 		s.schedulerMutex.Lock()
 		settled := !s.dispatching && s.state.pending == nil && !s.followUpArmed
-		progress := s.drainProgress
 		s.schedulerMutex.Unlock()
 		if settled {
 			return nil
 		}
 		select {
-		case <-progress:
+		case <-s.drainProgress:
 		case <-ctx.Done():
 			return ctx.Err()
 		}

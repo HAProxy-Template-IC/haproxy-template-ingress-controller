@@ -70,8 +70,8 @@ func (c *Component) beginDeployment(ctx context.Context, deploymentID, correlati
 // published its receipt, provided the term still holds the Lease.
 func (c *Component) Drain(ctx context.Context) error {
 	c.cancelMu.Lock()
-	// Under the lock Start resets draining with: an ended term's drain must
-	// not stop the next term's deployments.
+	// Checked under the lock Start resets draining with, so an ended term's
+	// drain cannot stop the next term's deployments.
 	if err := ctx.Err(); err != nil {
 		c.cancelMu.Unlock()
 		return err

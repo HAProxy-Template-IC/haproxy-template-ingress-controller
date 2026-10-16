@@ -39,12 +39,11 @@ use the same checks.
 A leader that stops gracefully, for example on `kubectl delete pod`, a rollout,
 or an eviction, starts no further deployment, waits for the one in progress and
 any HAProxy reload it scheduled, and saves its checkpoint before it releases the
-Lease. It saves nothing if another
-replica has already taken the Lease. A leader that stops without that
-step, for example after a crash, an out-of-memory kill, or node loss, can leave its
-last deployment without a checkpoint for up to `configPublishInterval` (10 seconds
-by default). The next leader then can't start replacement pods until rendering
-recovers.
+Lease. It saves nothing if another replica has already taken the Lease. A leader
+that stops without that step, for example after a crash, an out-of-memory kill,
+or node loss, can leave its last deployment without a checkpoint for up to
+`configPublishInterval` (10 seconds by default). The next leader then can't start
+replacement pods until rendering recovers.
 
 `RetainedConfigActive` Warning events identify the checksum and render failure.
 The leader reports `haptic_retained_config_active = 1` while using this recovery
