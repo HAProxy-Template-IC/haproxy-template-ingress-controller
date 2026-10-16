@@ -297,6 +297,15 @@ spoa-hub library contributes.
 {{- end -}}
 
 {{/*
+"true" when the named plugin will not run: off itself, or the hub is off.
+Args: dict "root" $ "name" <plugin name>
+*/}}
+{{- define "haptic.spoaHub.pluginUnavailable" -}}
+{{- $plugin := index (.root.Values.spoaHub.plugins | default dict) .name -}}
+{{- if or (include "haptic.spoaHub.disabled" .root) (not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" $plugin "root" .root "name" .name))) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 ConfigMap name for the SPOA hub's config.toml. Used by
 templates/spoa-hub-configmap.yaml (metadata.name) and by
 templates/haproxy-deployment.yaml (volumes.configMap.name).

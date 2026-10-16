@@ -1,6 +1,6 @@
 validationTests:
   test-gateway-policy-waf-trusted-missing:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes
@@ -191,7 +191,7 @@ validationTests:
       target: map:coraza-app.map
       pattern: gateway/h_default_same-name_0
   test-gateway-policy-waf-trusted-malformed:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes
@@ -390,7 +390,7 @@ validationTests:
       target: map:coraza-app.map
       pattern: gateway/h_default_same-name_0
   test-gateway-policy-waf-trusted-empty:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes
@@ -589,7 +589,7 @@ validationTests:
       target: map:coraza-app.map
       pattern: gateway/h_default_same-name_0
   test-gateway-policy-waf-trusted-invalid-policy:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes
@@ -788,7 +788,7 @@ validationTests:
       target: map:coraza-app.map
       pattern: gateway/h_default_same-name_0
   test-gateway-policy-waf-trusted-composite-policy:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes
@@ -987,7 +987,7 @@ validationTests:
       target: map:coraza-app.map
       pattern: gateway/h_default_same-name_0
   test-gateway-policy-waf-trusted-partial:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes
@@ -1186,7 +1186,7 @@ validationTests:
       target: map:coraza-app.map
       pattern: gateway/h_default_same-name_0
   test-gateway-policy-waf-trusted-collision:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes
@@ -1950,7 +1950,7 @@ validationTests:
       target: rendering_error
       pattern: requestBody.mode
   test-gateway-policy-waf-trusted-missing-no-tenant-fallback:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes
@@ -2152,7 +2152,7 @@ validationTests:
       target: map:coraza-app.map
       pattern: gateway/h_default_same-name_0
   test-gateway-policy-waf-trusted-missing-default:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - httproutes
     - grpcroutes

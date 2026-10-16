@@ -1127,4 +1127,32 @@ if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
     fi
     rm -f "$COMPRESSION_CONFIG"
 fi
+# Opt-out profiles. `_helm_load` drops snippets and libraries by release
+# values, so every test asserting on them must be absent with them (#331).
+if [[ $FULL_RC -eq 0 ]] && ! single_test_requested "$@"; then
+    OPT_OUT_CONFIG=$(mktemp /tmp/haptic-opt-out-config-XXXXXX.yaml)
+    for OPT_OUT in \
+        "vector.enabled=false,spoaHub.enabled=false" \
+        "vector.requestMetrics.enabled=false,spoaHub.plugins.mirror.enabled=false,spoaHub.plugins.coraza.enabled=true"; do
+        echo -e "${YELLOW}Opt-out profile ${OPT_OUT}: full validation pass...${NC}" >&2
+        if ! helm template "$CHART_DIR" \
+            --namespace default \
+            $HAPROXY_VERSION_ARG \
+            --set controller.templateLibraries.gateway.experimentalChannel=true \
+            --set controller.templateLibraries.haproxytech.enabled=true \
+            --set controller.templateLibraries.haproxyIngress.enabled=true \
+            --set controller.templateLibraries.nginxIngress.enabled=true \
+            --set "$OPT_OUT" \
+            | yq 'select(.kind == "HAProxyTemplateConfig" or .kind == "HAProxyTemplateLibrary")' \
+            > "$OPT_OUT_CONFIG"; then
+            rm -f "$OPT_OUT_CONFIG"
+            echo -e "${RED}Failed to render opt-out profile ${OPT_OUT}${NC}" >&2
+            exit 1
+        fi
+        if ! "$CONTROLLER_BIN" validate --file "$OPT_OUT_CONFIG" "${SCHEMA_DIR_ARGS[@]}" "$@"; then
+            FULL_RC=1
+        fi
+    done
+    rm -f "$OPT_OUT_CONFIG"
+fi
 exit $FULL_RC

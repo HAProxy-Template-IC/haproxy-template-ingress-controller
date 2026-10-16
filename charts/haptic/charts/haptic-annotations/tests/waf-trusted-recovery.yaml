@@ -1,6 +1,6 @@
 validationTests:
   test-haptic-waf-trusted-missing-no-tenant-fallback:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - ingresses
     fixtures:
@@ -151,7 +151,7 @@ validationTests:
       target: map:coraza-app.map
       pattern: (?m)^default/inline-policy policy:inline-safe$
   test-haptic-waf-trusted-missing-default:
-    _helm_skip_test: '{{ if not .Values.spoaHub.plugins.coraza.enabled }}true{{ end }}'
+    _helm_skip_test: '{{ if or (not .Values.spoaHub.plugins.coraza.enabled) (include "haptic.spoaHub.disabled" .) }}true{{ end }}'
     requires:
     - ingresses
     fixtures:

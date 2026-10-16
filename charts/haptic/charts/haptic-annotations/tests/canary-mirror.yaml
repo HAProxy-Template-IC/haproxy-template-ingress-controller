@@ -202,7 +202,7 @@ validationTests:
       - {type: contains, target: "map:ing-canary-weight-backend.map", pattern: '(?m)^canary-weight\.example\.com default_canary-weight-ingress_svc_canary-service_80$'}
 
   test-haptic-mirror-buffer-honours-per-route-optout:
-    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" . "name" "mirror")) }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.pluginUnavailable" (dict "root" . "name" "mirror") }}'
     description: >-
       A route that opts out with request-buffering=off is not re-buffered by a
       SIBLING route's mirror-target on the same shared frontend. The mirror
@@ -273,7 +273,7 @@ validationTests:
         pattern: "wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\}\n"
 
   test-haptic-mirror-target:
-    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" . "name" "mirror")) }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.pluginUnavailable" (dict "root" . "name" "mirror") }}'
     description: haproxy-haptic.org mirror-target buffers the body and fires the SPOE mirror group
     fixtures:
       services:
@@ -332,7 +332,7 @@ validationTests:
   # mirror targets never grows spoe.conf or the hub TOML (so it never reloads
   # the hub), and never fails the render.
   test-haptic-mirror-target-static-spoe-config:
-    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" . "name" "mirror")) }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.pluginUnavailable" (dict "root" . "name" "mirror") }}'
     description: "Five mirror-target Ingresses each append a target entry; the SPOE config remains one static mirror message + mirror-group (no per-Ingress slots, no fail)."
     fixtures:
       services:

@@ -1551,7 +1551,7 @@ validationTests:
         pattern: "default_uh-ingress_svc_uh-svc_80 keep-alive"
 
   test-nginx-ingress-mirror-target:
-    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.pluginUnavailable" (dict "root" . "name" "mirror") }}'
     description: "mirror-target mirrors the Ingress's requests to the spoa-hub mirror plugin — a host-gated append to txn.gw_mirror_targets + the single send-spoe-group mirror-group, plus a Content-Length-gated http-request wait-for-body. Only the authority of the nginx URL template is used as the target."
     fixtures:
       services:
@@ -1591,7 +1591,7 @@ validationTests:
         pattern: "http-request wait-for-body time 10s if \\{ req\\.hdr\\(content-length\\) -m found \\} !\\{ var\\(txn\\.backend_name\\),map\\(.*request-buffering\\.map,on\\) -m str off \\}"
 
   test-nginx-ingress-mirror-target-same-host-both-mirror:
-    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.pluginUnavailable" (dict "root" . "name" "mirror") }}'
     description: "Two mirror-target Ingresses sharing a host share one map row carrying both entries, so a request to that host mirrors to both targets from the single NOTIFY."
     fixtures:
       services:
@@ -1635,7 +1635,7 @@ validationTests:
       - {type: not_contains, target: haproxy.cfg, pattern: "mirror-2-group"}
 
   test-nginx-ingress-mirror-target-hostless-rejected:
-    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.pluginUnavailable" (dict "root" . "name" "mirror") }}'
     description: "mirror-target on a host-less Ingress is rejected (no host to gate on)."
     extraContext: {renderMode: admission}
     fixtures:
@@ -1665,7 +1665,7 @@ validationTests:
         pattern: "host-less / default-backend mirroring is not supported"
 
   test-nginx-ingress-mirror-target-bad-port-rejected:
-    _helm_skip_test: '{{ if not (include "haptic.spoaHub.pluginEnabled" (dict "plugin" .Values.spoaHub.plugins.mirror "root" .)) }}true{{ end }}'
+    _helm_skip_test: '{{ include "haptic.spoaHub.pluginUnavailable" (dict "root" . "name" "mirror") }}'
     description: "mirror-target with an out-of-range port is rejected at render time."
     fixtures:
       services:
