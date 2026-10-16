@@ -5,7 +5,8 @@ import unittest
 
 import yaml
 
-from scripts.ci.github_schedule import PINNED_ACTION, keep_version_comments, lanes, schedule
+from scripts.ci.github_schedule import (PINNED_ACTION, keep_version_comments, lanes, longest_lane_seconds,
+                                       record, schedule)
 
 
 ROOT = Path(__file__).parents[2]
@@ -15,6 +16,7 @@ class ScheduleTests(unittest.TestCase):
     def test_long_suites_start_first_and_short_suites_fill_free_capacity(self):
         self.assertEqual(lanes({"a": 30, "b": 20, "c": 10}, 2), [["a"], ["b", "c"]])
         self.assertEqual(lanes({"a": 30, "b": 20}, 2, early=["b"]), [["b"], ["a"]])
+        self.assertEqual(longest_lane_seconds(lanes({"a": 30, "b": 20, "c": 10}, 2), {"a": 30, "b": 20, "c": 10}), 38)
 
     def test_invalid_durations_and_unknown_coverage_fail(self):
         for durations, count in (({}, 2), ({"a": 0}, 2), ({"a": 1}, 0)):
@@ -66,6 +68,37 @@ class ScheduleTests(unittest.TestCase):
         del weights["jobs"][selected[0][0]]
         with self.assertRaises(ValueError):
             schedule(rebuilt, weights)
+
+    def test_checked_in_lanes_start_their_longest_unconstrained_suite_first(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci-speed-proof.yml").read_text())
+        weights = json.loads((ROOT / ".github/job-duration-weights.json").read_text())
+        durations = {name: row["seconds"] for name, row in weights["jobs"].items()}
+        selected = schedule(copy.deepcopy(workflow), weights)
+        constrained = set(weights["early_jobs"]) | {name for chain in weights["cache_reuse_chains"] for name in chain}
+        constrained |= {workflow["jobs"][key]["name"] for key in [*workflow["jobs"]["coverage"]["needs"], "coverage"]}
+        for lane in selected:
+            free = [durations[name] for name in lane if name not in constrained]
+            self.assertEqual(free, sorted(free, reverse=True), lane)
+        self.assertTrue(weights["source_runs"])
+
+    def test_recorded_weights_use_the_upper_quartile_of_successful_jobs(self):
+        def job(name, seconds, conclusion="success"):
+            return {"name": name, "conclusion": conclusion, "started_at": "2026-10-16T10:00:00Z",
+                    "completed_at": f"2026-10-16T10:{seconds // 60:02d}:{seconds % 60:02d}Z"}
+        runs = [({"id": index, "conclusion": "success"},
+                 [job("full / long", seconds), job("full / failed", 1, "failure"), job("selection", 5)])
+                for index, seconds in enumerate((100, 300, 200, 500, 400))]
+        weights = {"jobs": {"long": {"seconds": 1, "run_id": 7}, "failed": {"seconds": 9, "run_id": 7}}}
+        self.assertEqual(record(weights, runs), {
+            "jobs": {"long": {"seconds": 400}, "failed": {"seconds": 9, "run_id": 7}}, "source_runs": [0, 1, 2, 3, 4]})
+        runs[1][1][0]["conclusion"] = "failure"
+        sparse = {"jobs": {"long": {"seconds": 1, "run_id": 7}}}
+        self.assertEqual(record(sparse, runs)["jobs"]["long"], {"seconds": 1, "run_id": 7})
+        runs[1][0]["conclusion"] = "failure"
+        with self.assertRaises(ValueError):
+            record(weights, runs)
+        with self.assertRaises(ValueError):
+            record(weights, runs[:4])
 
     def test_coverage_reuses_a_producer_lane_and_keeps_all_input_dependencies(self):
         jobs = {name: {"name": name, "env": {"CI_SUITE": "{}"}}

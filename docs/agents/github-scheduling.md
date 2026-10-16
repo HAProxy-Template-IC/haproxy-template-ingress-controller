@@ -6,9 +6,13 @@ eight common checks. No workflow runs on a schedule. Only the upstream Gateway
 API canary may fail; a missing, skipped, or cancelled job fails the verification
 receipt, which binds all jobs to the same source and run attempt.
 
-`.github/job-duration-weights.json` records runner durations and their source run
-IDs. `make schedule-github-verification` places long suites first and fills all
-60 execution lanes with shorter suites. Coverage aggregation takes over the lane
+`.github/job-duration-weights.json` records each job's upper-quartile runner
+duration across the successful CI runs in `source_runs`. Re-measure it when suite
+durations drift with `make schedule-github-verification RECORD_RUNS="<run-id> ..."`,
+passing at least five recent successful runs; stale weights put a long suite behind
+another in one lane, which sets the wall clock. `make schedule-github-verification`
+places long suites first and fills all 60 execution lanes with shorter suites, and
+prints the longest planned lane. Coverage aggregation takes over the lane
 of its longest measured producer and still waits for all seven inputs. Coverage
 producers start immediately, alongside the command and general unit-test cache
 producers. Command shards run sequentially on fresh runners, and support tests

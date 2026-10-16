@@ -32,6 +32,22 @@ class VerifyRunTests(unittest.TestCase):
             with self.subTest(jobs=jobs), self.assertRaises(ValueError):
                 self.check(jobs)
 
+    def test_rereads_jobs_the_api_still_reports_unfinished(self):
+        pending = dict(self.job, status="in_progress", conclusion=None, completed_at=None)
+        reads = [[pending, dict(self.job, name="other", status="in_progress")], [self.job]]
+        sleeps = []
+        jobs = VERIFY.settled_jobs(lambda: reads.pop(0), {"unit"}, sleep=sleeps.append)
+        self.assertEqual(self.check(jobs), [{"name": "unit", "id": 123}])
+        self.assertEqual(len(sleeps), 1)
+        sleeps.clear()
+        jobs = VERIFY.settled_jobs(lambda: [pending], {"unit"}, delays=(1, 2), sleep=sleeps.append)
+        self.assertEqual(sleeps, [1, 2])
+        with self.assertRaises(ValueError):
+            self.check(jobs)
+        unrelated = VERIFY.settled_jobs(lambda: [self.job, dict(pending, name="other")], {"unit"},
+                                        sleep=sleeps.append)
+        self.assertEqual(len(unrelated), 2)
+
     def test_provenance_cannot_cross_revision_repository_run_or_attempt(self):
         for key, value in (("head_sha", "stale"), ("run_attempt", 1), ("repository", {"full_name": "another/repo"})):
             run = copy.deepcopy(self.run)

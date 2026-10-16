@@ -384,8 +384,8 @@ check-chart-upgrade-baselines: ## Require every published baseline in the active
 	./scripts/check-chart-upgrade-baselines.sh
 
 .PHONY: schedule-github-verification
-schedule-github-verification: ## Balance GitHub jobs using the recorded runner durations
-	python3 -m scripts.ci.github_schedule
+schedule-github-verification: ## Balance GitHub jobs using the recorded runner durations (RECORD_RUNS="<run-id>..." re-measures them first)
+	$(if $(RECORD_RUNS),GH_TOKEN="$${GH_TOKEN:-$$(gh auth token)}") python3 -m scripts.ci.github_schedule $(if $(RECORD_RUNS),--record $(RECORD_RUNS))
 
 .PHONY: test-github-toolchain-update
 test-github-toolchain-update: ## Verify Dockerfile changes reach the selected GitHub toolchain
