@@ -25,7 +25,7 @@ mkdir -p .publication
 }
 
 digest_of() {
-    docker buildx imagetools inspect "$1" --format '{{json .Manifest.Digest}}' |
+    bash scripts/retry.sh docker buildx imagetools inspect "$1" --format '{{json .Manifest.Digest}}' |
         jq -er 'select(test("^sha256:[0-9a-f]{64}$"))'
 }
 

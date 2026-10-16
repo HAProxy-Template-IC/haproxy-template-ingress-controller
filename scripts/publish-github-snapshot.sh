@@ -42,7 +42,7 @@ case "$phase" in
         # shellcheck source=../versions-spoa.env
         source versions-spoa.env
         upstream="ghcr.io/haproxy-haptic/haproxy-spoa-hub:${SPOA_HUB_VERSION#v}"
-        digest="$(docker buildx imagetools inspect "$upstream" --format '{{json .Manifest.Digest}}' |
+        digest="$(bash scripts/retry.sh docker buildx imagetools inspect "$upstream" --format '{{json .Manifest.Digest}}' |
             jq -er 'select(test("^sha256:[0-9a-f]{64}$"))')"
         docker buildx build --platform "$platforms" \
             --build-arg "SPOA_HUB_VERSION=${SPOA_HUB_VERSION#v}@${digest}" \

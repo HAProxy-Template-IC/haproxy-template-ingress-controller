@@ -74,7 +74,8 @@ class SPOAReleaseImageTests(unittest.TestCase):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content)
             (repo / "scripts").mkdir()
-            shutil.copyfile(ROOT / "scripts/spoa-release-image.sh", repo / "scripts/spoa-release-image.sh")
+            for script in ("spoa-release-image.sh", "retry.sh"):
+                shutil.copyfile(ROOT / "scripts" / script, repo / "scripts" / script)
             (repo / "bin").mkdir()
             docker = repo / "bin/docker"
             docker.write_text(f"#!{sys.executable}\n" + DOCKER_STUB)
