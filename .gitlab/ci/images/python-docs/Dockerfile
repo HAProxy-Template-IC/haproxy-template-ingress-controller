@@ -12,7 +12,11 @@ RUN . /etc/os-release \
        "${DEBIAN_SNAPSHOT}" "${VERSION_CODENAME}" >/etc/apt/sources.list \
     && echo 'Acquire::Retries "8";' >/etc/apt/apt.conf.d/80-snapshot-retries \
     && apt-get -o Acquire::Check-Valid-Until=false update \
-    && apt-get install -y --no-install-recommends git curl jq unzip \
+    # Acquire::Retries does not retry a TLS connection reset (#348); a failed fetch aborts before dpkg runs.
+    && for attempt in 1 2 3 4 5; do \
+         apt-get install -y --no-install-recommends git curl jq unzip && break; \
+         [ "$attempt" -lt 5 ] || exit 1; sleep $((attempt * 15)); \
+       done \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.lock /tmp/requirements.lock

@@ -68,10 +68,15 @@ RUN . /etc/os-release \
        "${DEBIAN_SNAPSHOT}" "${VERSION_CODENAME}" >/etc/apt/sources.list \
     && echo 'Acquire::Retries "8";' >/etc/apt/apt.conf.d/80-snapshot-retries \
     && apt-get -o Acquire::Check-Valid-Until=false update \
-    && apt-get install -y --no-install-recommends \
-       ca-certificates curl gnupg git make ripgrep \
-       jq python3-pip libstdc++6 libatomic1 \
-       brotli gzip \
+    # Acquire::Retries does not retry a TLS connection reset (#348); a failed fetch aborts before dpkg runs.
+    && for attempt in 1 2 3 4 5; do \
+         apt-get install -y --no-install-recommends \
+           ca-certificates curl gnupg git make ripgrep \
+           jq python3-pip libstdc++6 libatomic1 \
+           brotli gzip \
+         && break; \
+         [ "$attempt" -lt 5 ] || exit 1; sleep $((attempt * 15)); \
+       done \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL --retry 7 --retry-all-errors -o /tmp/docker.tgz \
