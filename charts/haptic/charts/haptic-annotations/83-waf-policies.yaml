@@ -253,7 +253,7 @@ templateSnippets:
             // ingress-annotations-compat library, which renders before these
             // map files — so no policy-scoped check is needed here.
             if active && !corazaEnabled {
-              fail("Ingress " + resourceID + " sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled. Enable spoaHub.plugins.coraza or remove the annotations.")
+              fail("Ingress " + resourceID + " sets HAPTIC WAF annotations but the spoaHub coraza plugin is not enabled, so its traffic can't be inspected. Enable spoaHub.plugins.coraza and leave spoaHub.enabled unset or true, or remove the annotations.")
             }
             if !allowEnforcementOverride && mode != "" {
               rejectRoute("WafPermissionDenied", "Ingress " + resourceID + " sets waf-mode, but the HAPTIC administrator disabled Ingress enforcement overrides with extraContext.waf.ingressPermissions.allowEnforcementOverride=false.")

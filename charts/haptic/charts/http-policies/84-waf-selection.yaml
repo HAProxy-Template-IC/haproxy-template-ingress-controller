@@ -11,7 +11,7 @@ templateSnippets:
           var broken = to_str_map(catalog["selfServiceBrokenPolicy"])
           var brokenCatalogs = to_str_map(catalog["selfServiceBrokenCatalog"])
           if catalog["corazaEnabled"] != true {
-            result["error"] = "WAF enforcement is unavailable. Enable spoaHub.plugins.coraza."
+            result["error"] = "The WAF policy can't be enforced because the spoaHub coraza plugin is not enabled. Enable spoaHub.plugins.coraza and leave spoaHub.enabled unset or true."
           } else if catalog["allowPolicySelection"] != true {
             result["error"] = "WAF policy selection is disabled. Ask the administrator to enable waf.ingressPermissions.allowPolicySelection."
           } else if !regex_search(requested, "^[a-z0-9][a-z0-9._-]{0,62}$") {

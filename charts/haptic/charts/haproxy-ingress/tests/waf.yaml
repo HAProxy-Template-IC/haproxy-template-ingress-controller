@@ -128,7 +128,6 @@ validationTests:
         pattern: "set-var\\(txn.coraza_detect_only\\) bool\\(true\\) if \\{ var\\(txn.coraza_active\\) -m bool \\} \\{ var\\(txn.coraza_mode\\) -m str detect \\}"
 
   test-haproxy-ingress-waf-invalid-value-rejected:
-    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "Ingress with /waf set to anything other than \"modsecurity\" must fail-loud at render time. Only \"modsecurity\" is supported by the bundled coraza plugin; silent ignore would hide an operator typo."
     extraContext: *extracontextCoraza2
     fixtures:
@@ -152,7 +151,6 @@ validationTests:
       - {type: contains, target: rendering_error, pattern: "default/hi-bad-waf"}
 
   test-haproxy-ingress-waf-mode-invalid-value-rejected:
-    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "/waf-mode set to anything other than \"deny\" or \"detect\" must fail-loud. Quietly defaulting to \"deny\" would mask a typo (\"detec\" / \"detct\" → silent enforcement when the operator intended shadow mode)."
     extraContext: *extracontextCoraza2
     fixtures:
@@ -177,7 +175,6 @@ validationTests:
       - {type: contains, target: rendering_error, pattern: "default/hi-bad-mode"}
 
   test-haproxy-ingress-waf-mode-without-waf-rejected:
-    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: "/waf-mode set without /waf is an operator error (no-op upstream) and must fail-loud. Silently ignoring would let an operator who meant to enable WAF in detect mode silently run with no WAF at all."
     extraContext: *extracontextCoraza2
     fixtures:
@@ -278,7 +275,6 @@ validationTests:
         pattern: "set-var\\(txn.coraza_detect_only\\) bool\\(true\\) if \\{ var\\(txn.coraza_active\\) -m bool \\} \\{ var\\(txn.coraza_mode\\) -m str detect \\}"
 
   test-haproxy-ingress-waf-without-coraza-fails:
-    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: Ingress with haproxy-ingress.github.io/waf set while the spoaHub coraza plugin is NOT enabled fails the render with an explicit diagnostic.
     extraContext:
       spoaHub:

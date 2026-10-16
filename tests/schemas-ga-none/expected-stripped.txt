@@ -299,6 +299,8 @@ test-gateway-policy-private-cache
 test-gateway-policy-waf
 test-gateway-policy-waf-baseline
 test-gateway-policy-waf-catalogs
+test-gateway-policy-waf-coraza-disabled
+test-gateway-policy-waf-coraza-disabled-admission
 test-gateway-policy-waf-invalid
 test-gateway-policy-unavailable-watch
 test-gateway-policy-waf-mutable-catalog

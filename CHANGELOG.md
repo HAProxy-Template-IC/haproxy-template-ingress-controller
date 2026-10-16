@@ -69,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TLS Gateways use isolated service addresses and pod ports to prevent routing to another Gateway's TLSRoutes.
 - Gateway API: TLSRoutes retain their original hostname specificity after listener intersection, with older routes winning ties.
 - Pre-rollout validation and the controller's load gate no longer fail with `vector.enabled=false`, `vector.requestMetrics` features off, `spoaHub.enabled=false`, or the mirror plugin off; bundled tests now run only when the release includes the feature they test.
+- haproxy-ingress: an Ingress with `haproxy-ingress.github.io/waf` or `waf-mode` fails the render when `spoaHub.enabled=false`, instead of being served without WAF inspection.
+- nginx-ingress: `nginx.ingress.kubernetes.io/enable-modsecurity: "true"` sends the route to the Coraza WAF in detect mode, like ingress-nginx's detection-only default, under the default opt-in dispatch; it was ignored, leaving the route uninspected.
 
 ## [0.5.0] - 2026-10-08
 

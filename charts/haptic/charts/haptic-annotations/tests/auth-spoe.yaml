@@ -785,7 +785,6 @@ validationTests:
   # WAF (Coraza via SPOA hub) — waf-policy / waf-mode
   # ============================================================================
   test-haptic-waf-without-coraza-rejected:
-    _helm_skip_test: '{{ include "haptic.spoaHub.disabled" . }}'
     description: >-
       haproxy-haptic.org/waf-policy set while the spoaHub coraza plugin is NOT
       enabled fails the render with an explicit diagnostic.

@@ -551,7 +551,8 @@ templateSnippets:
   #   nginx.ingress.kubernetes.io/enable-modsecurity: "false"
   #     → entry in coraza-disabled.map; the resource_key is excluded from the
   #       unconditional default-on dispatch in frontend-spoe-filters-050-coraza.
-  #     "true" is accepted as a no-op (modsecurity-snippet already implies opt-in).
+  #   nginx.ingress.kubernetes.io/enable-modsecurity: "true"
+  #     → under opt-in dispatch, entry in haproxy-ingress-waf.map (detect).
   #
   # Validation (route-scoped, like the native library's rejectRoute):
   #   - modsec-snippet contains TOML triple-quote (injection vector — TOML
@@ -638,6 +639,7 @@ templateSnippets:
           // version — exactly what the dryrun-validator should be checking.
           var byKey = map[string]any{}
           var disabledKeys = []any{}
+          var enabledKeys = map[string]bool{}
           var brokenRoutes = []any{}
           var rejectedKeys = map[string]bool{}
           var firstAnnotationKey = ""
@@ -713,12 +715,7 @@ templateSnippets:
                 anyAnnotation = true
               }
             } else if v == "true" {
-              // No map entry — `enable-modsecurity: "true"` is a no-op
-              // because opt-in is already implied by modsecurity-snippet
-              // (rule customisation) and by haproxy-ingress.github.io's
-              // `waf: modsecurity` annotation. We still surface the
-              // annotation for the plugin-enabled check so a "true" alone
-              // doesn't silently pass when coraza is disabled.
+              enabledKeys[key] = true
               if !anyAnnotation {
                 firstAnnotationKey = key
                 firstAnnotationName = "nginx.ingress.kubernetes.io/enable-modsecurity"
@@ -730,7 +727,7 @@ templateSnippets:
           }
 
           if anyAnnotation && !corazaEnabled {
-            fail("Ingress " + firstAnnotationKey + " sets annotation '" + firstAnnotationName + "' but the spoaHub coraza plugin is not enabled. Either enable spoaHub.plugins.coraza or remove the annotation.")
+            fail("Ingress " + firstAnnotationKey + " sets annotation '" + firstAnnotationName + "' but the spoaHub coraza plugin is not enabled, so its traffic can't be inspected. Enable spoaHub.plugins.coraza and leave spoaHub.enabled unset or true, or remove the annotation.")
           }
 
           // Reduce the map back to a deterministic-order slice so the
@@ -748,6 +745,12 @@ templateSnippets:
           }
           gf["sphCorazaApps"] = modsecApps
           gf["sphCorazaDisabledKeys"] = disabledKeys
+          var enabled = []any{}
+          for _, k := range keys(enabledKeys) {
+            if !rejectedKeys[k] { enabled = append(enabled, k) }
+          }
+          gf["sphNginxEnabledKeys"] = enabled
+          gf["sphNginxDispatchMode"] = gov["dispatchMode"]
           gf["sphNginxBrokenRoutes"] = brokenRoutes
           return true
         })
@@ -791,6 +794,19 @@ templateSnippets:
         {%- var aName = a | dig_string("", "name") -%}
         {%- if aNs != "" && aName != "" -%}
       {{ "\n" }}{{ aNs }}/{{ aName }} {{ aNs }}/{{ aName }}
+        {%- end -%}
+      {%- end -%}
+
+  # Opt-in dispatch: `enable-modsecurity: "true"` puts the route under the
+  # base ruleset in detect mode, as ingress-nginx's detection-only default does.
+  # Default-on already dispatches every route.
+  map-haproxy-ingress-waf-500-nginx-ingress:
+    template: |-
+      {%- var _ = render "util-nginx-ingress-coraza-scan" -%}
+      {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
+      {%- if gf["sphNginxDispatchMode"] == "opt-in" -%}
+        {%- for _, key := range gf["sphNginxEnabledKeys"].([]any) -%}
+      {{ "\n" }}{{ key.(string) }} detect
         {%- end -%}
       {%- end -%}
 
