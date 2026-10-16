@@ -5,8 +5,8 @@ log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 for attempt in 1 2 3; do
     result=0
-    "$@" > >(tee "$log") 2>&1 || result=$?
-    wait
+    # A `> >(tee)` substitution can still be writing when the log is read; a pipeline cannot.
+    "$@" 2>&1 | tee "$log" || result=${PIPESTATUS[0]}
     [[ "$result" != 0 ]] || exit 0
     if [[ "$attempt" == 3 ]] || ! grep -Eq \
         'ERROR:.*(failed to resolve|failed to fetch|unexpected status from (HEAD|GET) request).*https://[^ /]+/(v2/|token).*(429 Too Many Requests|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout)' "$log"; then
