@@ -298,6 +298,15 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 		CRTListFileNames:       []string{},
 	}
 
+	// One LIST per kind serves both each child's first read and the prune.
+	if req.RetainedPlan == "" {
+		req.listedChildren = newChildListing(runtimeConfig.Namespace, runtimeConfigSelector(runtimeConfig.Name))
+		if err := p.listInto(ctx, req.listedChildren, auxiliaryChildKinds); err != nil {
+			p.forgetPublished(req)
+			return result, incompletePublicationError(PublicationStageAuxiliary, runtimeConfig.Namespace, runtimeConfig.Name,
+				"AuxiliaryFiles", runtimeConfig.Name, err)
+		}
+	}
 	if req.AuxiliaryFiles != nil {
 		if err := p.publishAuxiliaryFiles(ctx, req, runtimeConfig, result); err != nil {
 			p.forgetPublished(req)
@@ -318,7 +327,7 @@ func (p *Publisher) PublishConfig(ctx context.Context, req *PublishRequest) (*Pu
 	}
 	// Checkpoint children are shared and pruned with the checkpoints (pruneRetained).
 	if req.RetainedPlan == "" {
-		if err := p.pruneAuxiliaryFiles(ctx, runtimeConfig, result); err != nil {
+		if err := p.pruneAuxiliaryFiles(ctx, runtimeConfig, result, req.listedChildren); err != nil {
 			p.forgetPublished(req)
 			return result, err
 		}
@@ -508,8 +517,10 @@ func (p *Publisher) publishAuxiliaryFiles(
 	var err error
 	if req.RetainedPlan != "" {
 		suffix, scope = retainedChildSuffix, req.TemplateConfigName+"\x00"+string(req.TemplateConfigUID)
-		if req.retainedChildren, err = p.listRetainedChildren(ctx, req.TemplateConfigNamespace, req.TemplateConfigUID, files.kinds()); err != nil {
-			return incompletePublicationError(PublicationStageAuxiliary, runtimeConfig.Namespace, runtimeConfig.Name, "AuxiliaryFiles", runtimeConfig.Name, err)
+		req.listedChildren = newChildListing(req.TemplateConfigNamespace, retainedSelector(req.TemplateConfigUID))
+		if err = p.listInto(ctx, req.listedChildren, files.kinds()); err != nil {
+			return incompletePublicationError(PublicationStageAuxiliary, runtimeConfig.Namespace, runtimeConfig.Name, "AuxiliaryFiles", runtimeConfig.Name,
+				fmt.Errorf("listing shared retained auxiliary files: %w", err))
 		}
 	}
 	if result.MapFileNames, err = publishAuxiliaryKind(ctx, runtimeConfig, kindMapFile, suffix, scope, files.MapFiles,

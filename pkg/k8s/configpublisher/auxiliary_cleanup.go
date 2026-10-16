@@ -17,10 +17,10 @@ package configpublisher
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	haproxyv1alpha1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -64,24 +64,28 @@ func ownedByRuntimeConfig(obj metav1.Object, runtimeConfig *haproxyv1alpha1.HAPr
 		referencesRuntimeConfig(obj, runtimeConfig)
 }
 
-func pruneOwnedResources[T any](
+func (p *Publisher) pruneOwnedResources(
 	ctx context.Context,
 	runtimeConfig *haproxyv1alpha1.HAProxyCfg,
 	kind, description string,
 	desiredNames []string,
-	items []T,
-	metadata func(*T) metav1.Object,
+	children []listedChild,
 	publicationCurrent func(context.Context) error,
-	getResource func(context.Context, string) (metav1.Object, error),
-	deleteResource func(context.Context, string, metav1.DeleteOptions) error,
 ) error {
 	desired := desiredResourceNames(desiredNames)
-	for i := range items {
-		obj := metadata(&items[i])
+	for _, child := range children {
+		obj := child.obj
 		if _, keep := desired[obj.GetName()]; keep || !ownedByRuntimeConfig(obj, runtimeConfig) {
 			continue
 		}
-		if err := deleteOwnedResource(ctx, runtimeConfig, obj, publicationCurrent, getResource, deleteResource); err != nil {
+		remove := func(ctx context.Context, name string, options metav1.DeleteOptions) error {
+			err := child.remove(ctx, name, options)
+			if kind != kindSecret {
+				p.forgetAuxFileStampOnDelete(err, kind, runtimeConfig.Namespace, name)
+			}
+			return err
+		}
+		if err := deleteOwnedResource(ctx, runtimeConfig, obj, publicationCurrent, child.get, remove); err != nil {
 			return cleanupError(runtimeConfig, kind, obj.GetName(), fmt.Errorf("deleting stale %s: %w", description, err))
 		}
 	}
@@ -200,102 +204,41 @@ func (f *publicationFence) check(ctx context.Context) error {
 	return nil
 }
 
-func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, result *PublishResult) error {
-	namespace := runtimeConfig.Namespace
-	ownerName := runtimeConfig.Name
+func runtimeConfigSelector(runtimeConfigName string) string {
+	return labels.Set{runtimeConfigLabelKey: runtimeConfigLabelValue(runtimeConfigName)}.AsSelector().String()
+}
+
+// pruneAuxiliaryFiles deletes owned children that the committed references
+// left out. Children are judged from the listing taken before publication;
+// one created after it is judged by the next publication.
+func (p *Publisher) pruneAuxiliaryFiles(ctx context.Context, runtimeConfig *haproxyv1alpha1.HAProxyCfg, result *PublishResult, listing *childListing) error {
 	expectedReferences := buildAuxiliaryFileReferences(
-		namespace,
+		runtimeConfig.Namespace,
 		result,
 		runtimeConfig.Annotations[AuxiliarySetIDAnnotationKey],
 	)
 	fence := &publicationFence{publisher: p, runtimeConfig: runtimeConfig, expected: expectedReferences}
-	publicationCurrent := fence.check
-	if err := publicationCurrent(ctx); err != nil {
-		return cleanupError(runtimeConfig, runtimeConfigKind, ownerName, err)
+	if err := fence.check(ctx); err != nil {
+		return cleanupError(runtimeConfig, runtimeConfigKind, runtimeConfig.Name, err)
 	}
-	listOptions := metav1.ListOptions{LabelSelector: labels.Set{
-		runtimeConfigLabelKey: runtimeConfigLabelValue(ownerName),
-	}.AsSelector().String()}
-
-	mapFiles, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace).
-		List(ctx, listOptions)
-	if err != nil {
-		return cleanupError(runtimeConfig, kindMapFile, ownerName, fmt.Errorf("listing map files: %w", err))
+	if err := p.listInto(ctx, listing, auxiliaryChildKinds); err != nil {
+		return cleanupError(runtimeConfig, runtimeConfigKind, runtimeConfig.Name, err)
 	}
-	if err := pruneOwnedResources(ctx, runtimeConfig, kindMapFile, "map file", result.MapFileNames, mapFiles.Items,
-		func(file *haproxyv1alpha1.HAProxyMapFile) metav1.Object { return file },
-		publicationCurrent,
-		func(ctx context.Context, name string) (metav1.Object, error) {
-			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace).Get(ctx, name, metav1.GetOptions{})
-		},
-		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
-			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(namespace).
-				Delete(ctx, name, options)
-			p.forgetAuxFileStampOnDelete(err, kindMapFile, namespace, name)
+	stale := []struct {
+		kind, description string
+		desired           []string
+	}{
+		{kindMapFile, mapFileDescription, result.MapFileNames},
+		{kindSecret, "SSL file Secret", slices.Concat(result.SecretNames, result.SSLCaFileNames)},
+		{kindGeneralFile, generalFileDescription, result.GeneralFileNames},
+		{kindCRTListFile, crtListFileDescription, result.CRTListFileNames},
+	}
+	for _, group := range stale {
+		if err := p.pruneOwnedResources(ctx, runtimeConfig, group.kind, group.description, group.desired,
+			listing.byKind[group.kind], fence.check); err != nil {
 			return err
-		}); err != nil {
-		return err
+		}
 	}
-
-	secrets, err := p.k8sClient.CoreV1().Secrets(namespace).List(ctx, listOptions)
-	if err != nil {
-		return cleanupError(runtimeConfig, "Secret", ownerName, fmt.Errorf("listing SSL file Secrets: %w", err))
-	}
-	secretNames := make([]string, 0, len(result.SecretNames)+len(result.SSLCaFileNames))
-	secretNames = append(secretNames, result.SecretNames...)
-	secretNames = append(secretNames, result.SSLCaFileNames...)
-	if err := pruneOwnedResources(ctx, runtimeConfig, "Secret", "SSL file Secret", secretNames, secrets.Items,
-		func(secret *corev1.Secret) metav1.Object { return secret },
-		publicationCurrent,
-		func(ctx context.Context, name string) (metav1.Object, error) {
-			return p.k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-		},
-		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
-			return p.k8sClient.CoreV1().Secrets(namespace).Delete(ctx, name, options)
-		}); err != nil {
-		return err
-	}
-
-	generalFiles, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(namespace).
-		List(ctx, listOptions)
-	if err != nil {
-		return cleanupError(runtimeConfig, kindGeneralFile, ownerName, fmt.Errorf("listing general files: %w", err))
-	}
-	if err := pruneOwnedResources(ctx, runtimeConfig, kindGeneralFile, "general file", result.GeneralFileNames, generalFiles.Items,
-		func(file *haproxyv1alpha1.HAProxyGeneralFile) metav1.Object { return file },
-		publicationCurrent,
-		func(ctx context.Context, name string) (metav1.Object, error) {
-			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(namespace).Get(ctx, name, metav1.GetOptions{})
-		},
-		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
-			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(namespace).
-				Delete(ctx, name, options)
-			p.forgetAuxFileStampOnDelete(err, kindGeneralFile, namespace, name)
-			return err
-		}); err != nil {
-		return err
-	}
-
-	crtListFiles, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).
-		List(ctx, listOptions)
-	if err != nil {
-		return cleanupError(runtimeConfig, kindCRTListFile, ownerName, fmt.Errorf("listing crt-list files: %w", err))
-	}
-	if err := pruneOwnedResources(ctx, runtimeConfig, kindCRTListFile, "crt-list file", result.CRTListFileNames, crtListFiles.Items,
-		func(file *haproxyv1alpha1.HAProxyCRTListFile) metav1.Object { return file },
-		publicationCurrent,
-		func(ctx context.Context, name string) (metav1.Object, error) {
-			return p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).Get(ctx, name, metav1.GetOptions{})
-		},
-		func(ctx context.Context, name string, options metav1.DeleteOptions) error {
-			err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(namespace).
-				Delete(ctx, name, options)
-			p.forgetAuxFileStampOnDelete(err, kindCRTListFile, namespace, name)
-			return err
-		}); err != nil {
-		return err
-	}
-
 	return nil
 }
 

@@ -50,7 +50,7 @@ func TestPublishConfig_InterruptedAuxiliaryWriteIsAnError(t *testing.T) {
 	_, _, crdClient, publisher := newTestPublisher(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	crdClient.PrependReactor("get", "haproxymapfiles", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+	crdClient.PrependReactor("create", "haproxymapfiles", func(_ k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, context.Canceled
 	})
 

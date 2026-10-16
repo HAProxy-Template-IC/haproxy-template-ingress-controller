@@ -243,9 +243,9 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 	labels, annotations, ownerReferences := ownership.labels, ownership.annotations, ownership.ownerReferences
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles(req.TemplateConfigNamespace)
 
-	read := listedFirst(req.retainedChildren, kindMapFile, name, client.Get)
+	read := listedFirst(req.listedChildren, kindMapFile, name, client.Get)
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyMapFile]{
-		kind: "map file",
+		kind: mapFileDescription,
 		get: func(ctx context.Context) (*haproxyv1alpha1.HAProxyMapFile, error) {
 			existing, err := read(ctx)
 			if err == nil {
@@ -314,7 +314,7 @@ func (p *Publisher) createOrUpdateSSLFileSecret(
 	}
 	client := p.k8sClient.CoreV1().Secrets(req.TemplateConfigNamespace)
 
-	read := listedFirst(req.retainedChildren, kindSecret, name, client.Get)
+	read := listedFirst(req.listedChildren, kindSecret, name, client.Get)
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*corev1.Secret]{
 		kind: "secret",
 		get: func(ctx context.Context) (*corev1.Secret, error) {
@@ -374,9 +374,9 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 	labels, annotations, ownerReferences := ownership.labels, ownership.annotations, ownership.ownerReferences
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles(req.TemplateConfigNamespace)
 
-	read := listedFirst(req.retainedChildren, kindGeneralFile, name, client.Get)
+	read := listedFirst(req.listedChildren, kindGeneralFile, name, client.Get)
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyGeneralFile]{
-		kind: "general file",
+		kind: generalFileDescription,
 		get: func(ctx context.Context) (*haproxyv1alpha1.HAProxyGeneralFile, error) {
 			existing, err := read(ctx)
 			if err == nil {
@@ -433,9 +433,9 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 	labels, annotations, ownerReferences := ownership.labels, ownership.annotations, ownership.ownerReferences
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles(req.TemplateConfigNamespace)
 
-	read := listedFirst(req.retainedChildren, kindCRTListFile, name, client.Get)
+	read := listedFirst(req.listedChildren, kindCRTListFile, name, client.Get)
 	return createOrUpdateAuxResource(ctx, auxResourceOps[*haproxyv1alpha1.HAProxyCRTListFile]{
-		kind: "crt-list file",
+		kind: crtListFileDescription,
 		get: func(ctx context.Context) (*haproxyv1alpha1.HAProxyCRTListFile, error) {
 			existing, err := read(ctx)
 			if err == nil {

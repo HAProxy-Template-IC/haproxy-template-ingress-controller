@@ -48,6 +48,10 @@ const (
 	kindGeneralFile = "HAProxyGeneralFile"
 	kindCRTListFile = "HAProxyCRTListFile"
 	kindSecret      = "Secret"
+
+	mapFileDescription     = "map file"
+	generalFileDescription = "general file"
+	crtListFileDescription = "crt-list file"
 )
 
 // apiVersionV1Alpha1 is the CRD API version used in SSA payloads. Hard-coded

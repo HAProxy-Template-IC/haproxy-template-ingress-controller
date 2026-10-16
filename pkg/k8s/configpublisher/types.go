@@ -128,8 +128,8 @@ type PublishRequest struct {
 
 	auxiliarySetID string
 	auxiliaryClaim string
-	// retainedChildren is nil outside a checkpoint publication.
-	retainedChildren retainedListing
+	// listedChildren answers each child's first read; nil reads it live.
+	listedChildren *childListing
 }
 
 // PublishResult contains the result of publishing configuration resources.

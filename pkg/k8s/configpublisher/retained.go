@@ -127,7 +127,8 @@ func (p *Publisher) PublishRetained(ctx context.Context, req *PublishRequest) er
 		return err
 	}
 	ref := v1.RetainedConfigReference{Name: checkpoint.Name, UID: string(checkpoint.UID), Checksum: checksum}
-	if _, err := p.loadRetained(ctx, req.TemplateConfigNamespace, req.TemplateConfigName, req.TemplateConfigUID, ref); err != nil {
+	listing := newChildListing(req.TemplateConfigNamespace, retainedSelector(req.TemplateConfigUID))
+	if _, err := p.loadRetained(ctx, req.TemplateConfigNamespace, req.TemplateConfigName, req.TemplateConfigUID, ref, listing); err != nil {
 		return fmt.Errorf("verifying retained publication: %w", err)
 	}
 	var committed []v1.RetainedConfigReference
@@ -150,7 +151,7 @@ func (p *Publisher) PublishRetained(ctx context.Context, req *PublishRequest) er
 	if err != nil {
 		return err
 	}
-	return p.pruneRetained(ctx, req, committed)
+	return p.pruneRetained(ctx, req, committed, listing)
 }
 
 func retainedReferences(newest v1.RetainedConfigReference, status *v1.HAProxyCfgStatus) []v1.RetainedConfigReference {
@@ -182,9 +183,9 @@ func ownedByTemplate(obj metav1.Object, name string, uid types.UID) bool {
 		owner.Kind == kindTemplateConfig && owner.Name == name && owner.UID == uid
 }
 
-func (p *Publisher) pruneRetained(ctx context.Context, req *PublishRequest, keep []v1.RetainedConfigReference) error {
+func (p *Publisher) pruneRetained(ctx context.Context, req *PublishRequest, keep []v1.RetainedConfigReference, listing *childListing) error {
 	client := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(req.TemplateConfigNamespace)
-	items, err := client.List(ctx, metav1.ListOptions{LabelSelector: retainedLabel + "=" + string(req.TemplateConfigUID)})
+	items, err := client.List(ctx, metav1.ListOptions{LabelSelector: retainedSelector(req.TemplateConfigUID)})
 	if err != nil {
 		return err
 	}
@@ -209,7 +210,7 @@ func (p *Publisher) pruneRetained(ctx context.Context, req *PublishRequest, keep
 	if !deleted {
 		return nil
 	}
-	return p.pruneRetainedFiles(ctx, req)
+	return p.pruneRetainedFiles(ctx, req, listing)
 }
 
 // LoadRetained reads only checkpoints explicitly committed by this template owner.
@@ -227,7 +228,7 @@ func (p *Publisher) LoadRetained(ctx context.Context, namespace, name string, ui
 	}
 	result := make([]RetainedConfig, 0, len(current.Status.RetainedConfigs))
 	for _, ref := range current.Status.RetainedConfigs {
-		config, err := p.loadRetained(ctx, namespace, name, uid, ref)
+		config, err := p.loadRetained(ctx, namespace, name, uid, ref, nil)
 		if err != nil {
 			return nil, fmt.Errorf("HAProxyCfg %s/%s: %w", namespace, ref.Name, err)
 		}
@@ -243,7 +244,7 @@ func (p *Publisher) LoadRetained(ctx context.Context, namespace, name string, ui
 	return result, nil
 }
 
-func (p *Publisher) loadRetained(ctx context.Context, namespace, name string, uid types.UID, ref v1.RetainedConfigReference) (*RetainedConfig, error) {
+func (p *Publisher) loadRetained(ctx context.Context, namespace, name string, uid types.UID, ref v1.RetainedConfigReference, listing *childListing) (*RetainedConfig, error) {
 	item, err := p.crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
@@ -259,7 +260,7 @@ func (p *Publisher) loadRetained(ctx context.Context, namespace, name string, ui
 	if err != nil {
 		return nil, err
 	}
-	output, authority, err := p.readRetainedOutput(ctx, item, config)
+	output, authority, err := p.readRetainedOutput(ctx, item, config, listing)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +332,7 @@ func sealRetainedOutput(config string, payload *retainedPayload, files map[retai
 	return output, outputAuthority, err
 }
 
-func (p *Publisher) readRetainedOutput(ctx context.Context, item *v1.HAProxyCfg, config string) (*renderoutput.Snapshot, *renderoutput.Authority, error) {
+func (p *Publisher) readRetainedOutput(ctx context.Context, item *v1.HAProxyCfg, config string, listing *childListing) (*renderoutput.Snapshot, *renderoutput.Authority, error) {
 	data, err := compression.Decompress(item.Spec.RetainedPlan)
 	if err != nil {
 		return nil, nil, err
@@ -340,7 +341,7 @@ func (p *Publisher) readRetainedOutput(ctx context.Context, item *v1.HAProxyCfg,
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
 		return nil, nil, err
 	}
-	files, err := p.readRetainedFiles(ctx, item)
+	files, err := p.readRetainedFiles(ctx, item, listing)
 	if err != nil {
 		return nil, nil, err
 	}
