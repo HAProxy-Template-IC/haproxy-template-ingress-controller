@@ -474,7 +474,7 @@ _migrationCoverage:
         note: SecRule directives are enforced per-Ingress by the bundled Coraza WAF (ModSecurity-compatible) via the SPOA hub; requires the coraza plugin (auto-enabled with this library), otherwise the render fails.
       nginx.ingress.kubernetes.io/enable-modsecurity:
         status: different
-        note: '"false" opts the route out of the WAF; "true" sends the route to the Coraza WAF in deny mode (under `default-on` dispatch every route is already inspected); other values fail the render.'
+        note: '"false" opts the route out of the WAF; "true" sends the route to the Coraza WAF in detect mode, like the detection-only ingress-nginx default (under `default-on` dispatch every route is already inspected); other values fail the render.'
         doc: annotation-support
       nginx.ingress.kubernetes.io/enable-owasp-core-rules:
         status: dropped

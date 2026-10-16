@@ -985,7 +985,7 @@ annotations:
 
 ## Web application firewall (`modsecurity`)
 
-`nginx.ingress.kubernetes.io/modsecurity-snippet` and `enable-modsecurity` **are** supported, via the bundled SPOA hub **Coraza** WAF plugin (auto-enabled when the nginx-ingress or haproxy-ingress library is on). The `modsecurity-snippet` body (ModSecurity `SecRule` directives) is scanned into a per-Ingress `coraza-app.map` entry; `enable-modsecurity: "true"` sends the route to the WAF in deny mode under the default opt-in dispatch; `enable-modsecurity: "false"` adds the route to `coraza-disabled.map` so the WAF skips it. See the [SPOA Hub operations guide](../operations/spoa-hub.md) for the Coraza plugin's full configuration surface.
+`nginx.ingress.kubernetes.io/modsecurity-snippet` and `enable-modsecurity` **are** supported, via the bundled SPOA hub **Coraza** WAF plugin (auto-enabled when the nginx-ingress or haproxy-ingress library is on). The `modsecurity-snippet` body (ModSecurity `SecRule` directives) is scanned into a per-Ingress `coraza-app.map` entry; `enable-modsecurity: "true"` sends the route to the WAF in detect mode, like ingress-nginx's detection-only default under the default opt-in dispatch; `enable-modsecurity: "false"` adds the route to `coraza-disabled.map` so the WAF skips it. See the [SPOA Hub operations guide](../operations/spoa-hub.md) for the Coraza plugin's full configuration surface.
 
 ## Request mirroring
 

@@ -798,14 +798,15 @@ templateSnippets:
       {%- end -%}
 
   # Opt-in dispatch: `enable-modsecurity: "true"` puts the route under the
-  # base ruleset in deny mode. Default-on already dispatches every route.
+  # base ruleset in detect mode, as ingress-nginx's detection-only default does.
+  # Default-on already dispatches every route.
   map-haproxy-ingress-waf-500-nginx-ingress:
     template: |-
       {%- var _ = render "util-nginx-ingress-coraza-scan" -%}
       {%- var gf = shared.Get("globalFeatures").(map[string]any) -%}
       {%- if gf["sphNginxDispatchMode"] == "opt-in" -%}
         {%- for _, key := range gf["sphNginxEnabledKeys"].([]any) -%}
-      {{ "\n" }}{{ key.(string) }} deny
+      {{ "\n" }}{{ key.(string) }} detect
         {%- end -%}
       {%- end -%}
 

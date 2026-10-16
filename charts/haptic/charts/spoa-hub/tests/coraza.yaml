@@ -690,7 +690,7 @@ validationTests:
 
   test-coraza-dispatch-enable-modsecurity-true-opt-in:
     _helm_skip_test: '{{ if or (semverCompare "<3.1" .Values.haproxyVersion) (include "haptic.nginxIngress.disabled" .) }}true{{ else }}false{{ end }}'
-    description: Under opt-in dispatch, enable-modsecurity "true" alone sends the route to Coraza in deny mode.
+    description: Under opt-in dispatch, enable-modsecurity "true" alone sends the route to Coraza in detect mode, matching ingress-nginx.
     extraContext:
       <<: *extracontextCoraza
       waf: {dispatch: {mode: opt-in}}
@@ -710,7 +710,7 @@ validationTests:
                 http: *httpRoot
     assertions:
       - type: haproxy_valid
-      - {type: contains, target: map:haproxy-ingress-waf.map, pattern: '(?m)^default/opted-in deny$'}
+      - {type: contains, target: map:haproxy-ingress-waf.map, pattern: '(?m)^default/opted-in detect$'}
       - type: contains
         target: haproxy.cfg
         pattern: 'set-var\(txn\.coraza_active\) bool\(true\) if \{ var\(txn\.coraza_app\) -m found \} \|\| \{ var\(txn\.coraza_mode\) -m found \}'
