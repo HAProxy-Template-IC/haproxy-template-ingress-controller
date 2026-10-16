@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Update Go to 1.27.2 and its HTTP/2 dependency to fix HTTP, TLS, and filesystem vulnerabilities.
+- Bundle the Coraza SPOA plugin v0.10.1, built against Coraza v3.8.1, to fix WAF bypass and crash vulnerabilities (GHSA-6gcq-wc29-5xf2, GHSA-6r3q-mjv7-xr8m, and ten Medium advisories). It also stops a memory leak each time the validator rechecks an invalid WAF policy.
 
 ### Helm chart
 
