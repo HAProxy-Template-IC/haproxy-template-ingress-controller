@@ -82,6 +82,7 @@ func (p *deferredCandidate) fetch() {
 	defer p.cancel()
 	source := p.input.source
 	snapshot, candidate, err := p.component.store.PrepareStagedSnapshot(p.ctx, source)
+	p.component.observeInitialFetch(p.ctx, source, err)
 	if snapshot.URL == "" {
 		snapshot.URL = source.URL()
 		snapshot.Descriptor = source.Descriptor()

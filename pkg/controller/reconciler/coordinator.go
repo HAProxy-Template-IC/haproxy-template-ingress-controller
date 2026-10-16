@@ -87,14 +87,18 @@ type Coordinator struct {
 	currentFiles  CurrentFilesAuthority
 	acceptance    HTTPContentAcceptance
 	ledger        *acceptanceLedger
+	graphWarm     func() bool
 	metrics       *metrics.Metrics
 	logger        *slog.Logger
 
-	// lastStatusPatches caches the most recent successful render's status patches.
-	// Used by StatusApplier (via events) to apply failure variants (renderFailed,
-	// deployFailed) when a subsequent pipeline execution fails.
-	lastStatusPatches       []templating.StatusPatch
+	// lastStatusPatchSnapshot caches the most recent successful render's status
+	// patches. StatusApplier (via events) applies failure variants (renderFailed,
+	// deployFailed) against it when a subsequent pipeline execution fails.
 	lastStatusPatchSnapshot *templating.StatusPatchSnapshot
+
+	// criticalFailureReported is set once this term reported a failure on
+	// unavailable critical content; held renders then stay quiet.
+	criticalFailureReported bool
 }
 
 // CoordinatorConfig contains configuration for creating a Coordinator.
@@ -115,6 +119,10 @@ type CoordinatorConfig struct {
 	// HTTPAcceptance is the HTTP store's reversible content acceptance; nil
 	// without an HTTP store.
 	HTTPAcceptance HTTPContentAcceptance
+
+	// GraphWarm reports whether the render service holds a committed graph;
+	// it labels failed renders. Nil counts them as warm.
+	GraphWarm func() bool
 
 	// Metrics receives one render count per reconcile; optional.
 	Metrics *metrics.Metrics
@@ -149,6 +157,7 @@ func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 		currentFiles:  cfg.CurrentFiles,
 		acceptance:    cfg.HTTPAcceptance,
 		ledger:        newAcceptanceLedger(),
+		graphWarm:     cfg.GraphWarm,
 		metrics:       cfg.Metrics,
 		logger:        logger.With("component", CoordinatorComponentName),
 	}
@@ -177,6 +186,7 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		defer c.currentFiles.EndTerm(generation)
 	}
 	c.ledger = newAcceptanceLedger()
+	c.criticalFailureReported = false
 	defer c.ledger.attempts.Wait()
 	defer cancel()
 
@@ -298,6 +308,14 @@ func (c *Coordinator) handleReconciliationTriggered(ctx context.Context, event *
 			"correlation_id", correlationID)
 		return nil
 	}
+	if pipeline.RenderHeld(err) && c.criticalFailureReported {
+		c.logger.Debug("Reconciliation skipped while rendering is paused", "error", err, "correlation_id", correlationID)
+		return nil
+	}
+	c.criticalFailureReported = pipeline.CriticalContentUnavailable(err)
+	if err != nil {
+		c.recordRender(nil, err)
+	}
 	if pipeline.WaitsForCriticalContent(err) {
 		if failure := c.ledger.criticalContentFailure(); failure != nil {
 			c.handlePipelineFailure(ctx, failure, event, startTime)
@@ -392,7 +410,6 @@ func (c *Coordinator) handlePipelineSuccess(
 		}, triggerEvent, startTime)
 		return nil
 	}
-	c.lastStatusPatches = nil
 	c.lastStatusPatchSnapshot = statusSnapshot
 
 	templateEvent, err := events.NewTemplateRenderedEventWithCycle(
@@ -440,9 +457,7 @@ func (c *Coordinator) handlePipelineSuccess(
 		c.logger.Warn("Rendered output validator warning",
 			"warning", warning, "correlation_id", triggerEvent.CorrelationID())
 	}
-	if c.metrics != nil {
-		c.metrics.RecordRender(result.CacheState)
-	}
+	c.recordRender(result, nil)
 	c.eventBus.Publish(completed)
 
 	c.logger.Debug("Reconciliation completed",
@@ -453,6 +468,17 @@ func (c *Coordinator) handlePipelineSuccess(
 		"cache_state", result.CacheState,
 		"cache_build_ms", result.CacheBuildMs)
 	return occurrence
+}
+
+// recordRender counts a render that ran; a held reconcile rendered nothing.
+func (c *Coordinator) recordRender(result *pipeline.PipelineResult, err error) {
+	switch {
+	case c.metrics == nil || pipeline.RenderHeld(err):
+	case err != nil:
+		c.metrics.RecordRenderFailure(c.graphWarm == nil || c.graphWarm())
+	case result != nil:
+		c.metrics.RecordRender(result.CacheState)
+	}
 }
 
 // handlePipelineFailure publishes phase-specific failure events followed by ReconciliationFailedEvent.
@@ -516,13 +542,7 @@ func (c *Coordinator) handlePipelineFailure(
 	if context.Cause(ctx) != nil {
 		return
 	}
-	if c.lastStatusPatchSnapshot != nil {
-		c.eventBus.Publish(events.NewReconciliationFailedEventWithStatusSnapshot(
-			err.Error(), phase, c.lastStatusPatchSnapshot,
-		))
-	} else {
-		c.eventBus.Publish(events.NewReconciliationFailedEvent(
-			err.Error(), phase, c.lastStatusPatches,
-		))
-	}
+	c.eventBus.Publish(events.NewReconciliationFailedEventWithStatusSnapshot(
+		err.Error(), phase, duration, c.lastStatusPatchSnapshot,
+	))
 }

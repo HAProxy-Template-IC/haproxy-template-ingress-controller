@@ -78,6 +78,10 @@ var errHTTPStorePublicationPoisoned = errors.New("HTTP store is unavailable afte
 // without a trigger, because acceptance raises no watch event.
 var ErrInputsMoved = errors.New("changed while the render was running")
 
+// ErrCriticalFetch marks a critical source whose fetch failed, as opposed to a
+// render that must retry because its source authority moved.
+var ErrCriticalFetch = errors.New("critical HTTP fetch failed")
+
 func (s *HTTPStore) publicationErrorLocked() error {
 	if s == nil || s.publicationPoisoned.Load() {
 		return errHTTPStorePublicationPoisoned
@@ -217,7 +221,7 @@ func (s *HTTPStore) Fetch(ctx context.Context, url string, opts FetchOptions, au
 	}
 	if err != nil {
 		if snapshot.options.Critical {
-			return "", fmt.Errorf("critical HTTP fetch failed for %s: %w", RedactURL(url), err)
+			return "", fmt.Errorf("%w for %s: %w", ErrCriticalFetch, RedactURL(url), err)
 		}
 		s.logger.Warn("HTTP fetch failed, returning empty content",
 			"url", RedactURL(url),

@@ -17,6 +17,7 @@ package warmer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -215,7 +216,34 @@ func TestWarmerSurvivesAFailedRender(t *testing.T) {
 	h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
 	h.waitForRender(t)
 	testutil.AssertNoEvent[busevents.Event](t, h.published, testutil.NoEventTimeout)
-	assert.Equal(t, 0.0, promtestutil.ToFloat64(h.metrics.RenderTotal.WithLabelValues("warm")))
+	assert.Equal(t, 2.0, promtestutil.ToFloat64(h.metrics.RenderTotal.WithLabelValues("warm")))
+	assert.Equal(t, 2.0, promtestutil.ToFloat64(h.metrics.RenderErrors.WithLabelValues("warm")))
+}
+
+func TestWarmerCountsFailedRendersByTheGraphTheyRanFrom(t *testing.T) {
+	p := &recordingPipeline{err: errors.New("render exploded"), ran: make(chan struct{}, 8)}
+	h := newHarness(t, p)
+	h.graphWarm.Store(false)
+
+	h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	h.waitForRender(t)
+	require.Eventually(t, func() bool {
+		return promtestutil.ToFloat64(h.metrics.RenderErrors.WithLabelValues("cold")) == 1
+	}, testutil.EventTimeout, 5*time.Millisecond)
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(h.metrics.RenderTotal.WithLabelValues("cold")))
+}
+
+func TestWarmerDoesNotCountAHeldRender(t *testing.T) {
+	p := &recordingPipeline{err: fmt.Errorf("%w: source down", pipeline.ErrRenderHeld), ran: make(chan struct{}, 8)}
+	h := newHarness(t, p)
+
+	h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	h.waitForRender(t)
+	h.bus.Publish(events.NewReconciliationTriggeredEvent("resource_change", true))
+	h.waitForRender(t)
+	testutil.AssertNoEvent[busevents.Event](t, h.published, testutil.NoEventTimeout)
+	assert.Equal(t, 0, promtestutil.CollectAndCount(h.metrics.RenderTotal))
+	assert.Equal(t, 0, promtestutil.CollectAndCount(h.metrics.RenderErrors))
 }
 
 // The production sequence on the replica that wins the first election: the

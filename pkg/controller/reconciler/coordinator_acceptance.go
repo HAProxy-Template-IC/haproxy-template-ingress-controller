@@ -20,7 +20,6 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
-	"time"
 	"weak"
 
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
@@ -178,61 +177,51 @@ func (c *Coordinator) requestAcceptanceAttempt(ctx context.Context, generation u
 func (c *Coordinator) runAcceptanceAttempts(ctx context.Context, generation uint64) {
 	defer c.ledger.attempts.Done()
 	for {
-		retryAfter := c.attemptAcceptance(ctx, generation)
+		c.attemptAcceptance(ctx, generation)
 		c.ledger.attempted.Add(1)
-		if !c.ledger.awaitRetry(ctx, retryAfter) {
+		if !c.ledger.anotherAttempt(ctx) {
 			return
 		}
 	}
 }
 
-func (l *acceptanceLedger) awaitRetry(ctx context.Context, retryAfter time.Duration) bool {
+// An unavailable critical source is refetched by the HTTP store, whose
+// recovery triggers the render that requests the next attempt.
+func (l *acceptanceLedger) anotherAttempt(ctx context.Context) bool {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	if ctx.Err() == nil {
 		select {
 		case <-l.requested:
-			l.mu.Unlock()
 			return true
 		default:
 		}
 	}
-	if retryAfter <= 0 || ctx.Err() != nil {
-		l.attempting = false
-		l.mu.Unlock()
-		return false
-	}
-	l.mu.Unlock()
-	timer := time.NewTimer(retryAfter)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		l.mu.Lock()
-		l.attempting = false
-		l.mu.Unlock()
-		return false
-	case <-l.requested:
-	case <-timer.C:
-	}
-	return true
+	l.attempting = false
+	return false
 }
 
 // Acceptance output is discarded; a new deploying render reads the accepted content.
-func (c *Coordinator) attemptAcceptance(ctx context.Context, generation uint64) time.Duration {
+func (c *Coordinator) attemptAcceptance(ctx context.Context, generation uint64) {
 	opts, err := c.renderOptions(generation)
 	if err != nil {
 		c.logger.Debug("HTTP content acceptance attempt skipped", "error", err)
-		return 0
+		return
 	}
 	before := c.acceptance.AcceptanceSequence()
 	attemptCtx := pipeline.WithRefusedOutputs(ctx, c.ledger.isRefused)
-	if _, err := c.pipeline.Execute(attemptCtx, c.storeProvider, rendercontext.RenderModeReconcile, opts...); err != nil {
+	result, err := c.pipeline.Execute(attemptCtx, c.storeProvider, rendercontext.RenderModeReconcile, opts...)
+	if ctx.Err() == nil {
+		c.recordRender(result, err)
+	}
+	if err != nil {
 		if ctx.Err() == nil {
 			c.reportPendingContent(err)
 			if c.ledger.updateCriticalContentFailure(err) {
 				c.eventBus.Publish(events.NewReconciliationTriggeredEvent("critical_http_content_unavailable", true, events.WithNewCorrelation()))
 			}
 		}
-		return pipeline.CriticalContentRetryInterval(err)
+		return
 	}
 	c.ledger.mu.Lock()
 	c.ledger.lastRefusal = ""
@@ -241,7 +230,6 @@ func (c *Coordinator) attemptAcceptance(ctx context.Context, generation uint64) 
 	if c.acceptance.AcceptanceSequence() != before {
 		c.eventBus.Publish(events.NewReconciliationTriggeredEvent("http_content_accepted", true, events.WithNewCorrelation()))
 	}
-	return 0
 }
 
 func (l *acceptanceLedger) criticalContentFailure() error {

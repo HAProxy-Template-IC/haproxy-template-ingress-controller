@@ -39,7 +39,7 @@ func TestStatusPatchSnapshotConstructorsPreserveExactIdentity(t *testing.T) {
 	)
 	completed := NewReconciliationCompletedEventWithStatusSnapshot(0, plan.ID, nil, snapshot)
 	resources := NewResourcesAppliedEventWithStatusSnapshot(snapshot)
-	failed := NewReconciliationFailedEventWithStatusSnapshot("failure", "render", snapshot)
+	failed := NewReconciliationFailedEventWithStatusSnapshot("failure", "render", 0, snapshot)
 	scheduled := NewDeploymentScheduledEventWithStatusSnapshot(
 		"cfg", nil, nil, "", "", "test", "checksum", plan, plan.ID,
 		rendered.RenderProof, snapshot, true,

@@ -155,7 +155,7 @@ func (c *Component) handleEvent(event busevents.Event) {
 		c.handleReconciliationCompleted(e)
 	case *events.ReconciliationFailedEvent:
 		delete(c.triggeredAt, e.CorrelationID()) // cleanup to prevent map growth
-		c.metrics.RecordReconciliation(0, false)
+		c.metrics.RecordReconciliation(msToSeconds(e.DurationMs), false)
 	case *events.DeploymentCompletedEvent:
 		c.metrics.RecordDeployment(msToSeconds(e.DurationMs), e.Succeeded > 0 || e.PendingReloads > 0)
 		c.metrics.RecordDeploymentReloads(e.ReloadsTriggered)

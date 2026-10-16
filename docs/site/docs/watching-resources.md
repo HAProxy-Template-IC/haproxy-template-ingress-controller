@@ -331,6 +331,14 @@ before. It records an `HTTPContentRevoked` Warning Event on the
 `HAProxyTemplateConfig`. Content that still produces the refused configuration stays pending. Fix the
 source content or the template that uses it.
 
+If a `critical: true` source without accepted content can't be fetched, the
+replica stops rendering instead of rendering the whole configuration again on
+every change. It fetches the source again every `interval`, or every 30 seconds
+without one, and renders as soon as a fetch succeeds. Changes that arrive in
+the meantime are rendered once after each failed fetch, so a change that no
+longer needs the source still deploys. `haptic_render_errors_total` counts the
+failed renders.
+
 ### Fetch parameters
 
 The second argument is an options map. All keys are optional:

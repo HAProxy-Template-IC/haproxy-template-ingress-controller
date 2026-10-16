@@ -182,6 +182,9 @@ type Metrics struct {
 	// incremental graph warm for the next leadership change.
 	RenderTotal *prometheus.CounterVec
 
+	// RenderErrors counts the reconcile renders in RenderTotal that produced no output.
+	RenderErrors *prometheus.CounterVec
+
 	// Build info metric
 	BuildInfo *prometheus.GaugeVec
 }
@@ -470,7 +473,14 @@ func NewMetrics(registry prometheus.Registerer) *Metrics {
 		RenderTotal: pkgmetrics.NewCounterVec(
 			registry,
 			"haptic_render_total",
-			"Reconcile renders by cache_state: cold re-evaluated every template, warm reused the incremental graph, replay reused the previous output unchanged. Counts on every replica, since followers render to keep their graph warm for a leadership change; a replica that keeps counting cold pays full render cost on each change.",
+			"Reconcile renders, failed ones included, by cache_state: cold re-evaluated every template, warm reused the incremental graph, replay reused the previous output unchanged. Counts on every replica, since followers render to keep their graph warm for a leadership change; a replica that keeps counting cold pays full render cost on each change.",
+			[]string{"cache_state"},
+		),
+
+		RenderErrors: pkgmetrics.NewCounterVec(
+			registry,
+			"haptic_render_errors_total",
+			"Reconcile renders that failed, by the cache_state they ran from; each also counts in haptic_render_total. Counts on every replica.",
 			[]string{"cache_state"},
 		),
 
@@ -708,6 +718,17 @@ func (m *Metrics) SetRenderWarnings(counts map[string]int) {
 // RecordRender records one reconcile render by the cache state it ran from.
 func (m *Metrics) RecordRender(cacheState string) {
 	m.RenderTotal.WithLabelValues(cacheState).Inc()
+}
+
+// RecordRenderFailure records a reconcile render that produced no output;
+// graphWarm is whether it had a committed graph to build on.
+func (m *Metrics) RecordRenderFailure(graphWarm bool) {
+	cacheState := "cold"
+	if graphWarm {
+		cacheState = "warm"
+	}
+	m.RenderTotal.WithLabelValues(cacheState).Inc()
+	m.RenderErrors.WithLabelValues(cacheState).Inc()
 }
 
 // SetConfigPinned sets whether the render gate is holding renders.

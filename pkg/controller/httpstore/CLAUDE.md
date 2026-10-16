@@ -173,6 +173,16 @@ pending bytes a periodic HTTP refresh asks the proposal pipeline to validate. A 
 overlay from another source identity fails the render instead of mixing source
 declarations. Initial candidates never enter this asynchronous pending flow.
 
+### Unavailable critical sources (`critical_outage.go`)
+
+A critical source without accepted content whose fetch fails is recorded as an
+outage and refetched outside any render (its `interval`, else
+`DefaultOutageRetryInterval`). Authoritative renders read the recorded failure
+instead of fetching. The reconcile pipeline brackets each render with
+`BeginReconcileRender` / `HoldReconcileRenders` / `ReconcileRenderCompleted`:
+after a render fails on an outage, reconcile renders return that failure
+without rendering until the outage epoch moves (ADR-0030, issue #332).
+
 ## Component Lifecycle
 
 ```go
@@ -207,6 +217,8 @@ Published events (defined in `pkg/controller/events/`):
 | `ReconciliationTriggeredEvent("http_content_validated", true)` | After a successful promotion (in `handleValidationSuccess`) | Coalescible reconciliation request so HAProxy picks up the new content |
 | `HTTPContentAcceptanceRequestedEvent` | A deploying render (`WithCandidatesWithheld`) left out an unaccepted source | The leader's coordinator runs one acceptance attempt beside the reconcile loop (ADR-0030) |
 | `HTTPContentRevokedEvent` + `ReconciliationTriggeredEvent("http_content_revoked", true)` | `RevokeAcceptances` took back content after the render gate refused a render that read it | Warning Event, metric, and the render without the content |
+| `ReconciliationTriggeredEvent("critical_http_content_available", true)` | The refetch of an unavailable critical source succeeded | Resumes held renders; the next accepting render adopts the refetched candidate |
+| `ReconciliationTriggeredEvent("critical_http_content_recheck", true)` | The refetch failed after held renders were skipped | One render re-checks whether the skipped inputs still need the source |
 
 Subscribed events:
 

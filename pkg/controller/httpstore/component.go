@@ -87,6 +87,8 @@ type Component struct {
 
 	pendingValidation      *validationBatch
 	queuedValidationSource string
+
+	outages *criticalOutages
 }
 
 type validationBatch struct {
@@ -137,6 +139,7 @@ func New(eventBus *busevents.EventBus, logger *slog.Logger, evictionMaxAge time.
 		refreshSourceGeneration: make(map[string]uint64),
 		evictionInterval:        evictionMaxAge, // Run eviction at same cadence as maxAge
 		prepareAuthority:        make(chan struct{}, 1),
+		outages:                 newCriticalOutages(),
 	}
 	result.prepareAuthority <- struct{}{}
 	return result
@@ -858,6 +861,7 @@ func (c *Component) stopAllRefreshers() {
 		cancel()
 	}
 	c.refreshCallbacks.Wait()
+	c.stopOutages()
 }
 
 func (c *Component) evictUnused() []string {

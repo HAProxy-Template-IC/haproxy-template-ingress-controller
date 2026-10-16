@@ -93,7 +93,11 @@ func NewHTTPStoreWrapperWithRetrySeed(
 	}
 	if sourceMode == SourceModeAuthoritative {
 		deferred := deferredCandidatesFromContext(ctx)
-		wrapper.transaction = newInputTransaction(component, deferred.retrySeed(retrySeed))
+		seed := deferred.retrySeed(retrySeed)
+		if !CandidatesWithheld(ctx) {
+			seed = component.withRecoveredInputs(seed)
+		}
+		wrapper.transaction = newInputTransaction(component, seed)
 		wrapper.transaction.deferredCandidates = deferred
 		wrapper.transaction.withholdCandidates = CandidatesWithheld(ctx)
 	}
@@ -308,7 +312,7 @@ func (w *HTTPStoreWrapper) FetchSnapshot(args ...any) (any, httpstore.ContentSna
 	}
 	content, snapshot, err := w.fetchSnapshot(url, opts, auth)
 	if err != nil && opts.Critical && !errors.Is(err, ErrCandidatePending) && !errors.Is(err, ErrCandidateWithheld) {
-		err = &CriticalFetchError{Cause: err, RetryInterval: opts.Delay}
+		err = &CriticalFetchError{Cause: err}
 	}
 	if err != nil && (opts.Critical || errors.Is(err, ErrCandidatePending)) {
 		w.mu.Lock()
@@ -326,10 +330,9 @@ func (w *HTTPStoreWrapper) FetchSnapshot(args ...any) (any, httpstore.ContentSna
 // ErrCriticalFetchFailed prevents resource isolation from retrying an unavailable HTTP input.
 var ErrCriticalFetchFailed = errors.New("critical http.Fetch failed")
 
-// CriticalFetchError retains the source's retry interval without accepting its content.
+// CriticalFetchError reports a critical source the render could not read.
 type CriticalFetchError struct {
-	Cause         error
-	RetryInterval time.Duration
+	Cause error
 }
 
 func (e *CriticalFetchError) Error() string { return "critical http.Fetch failed: " + e.Cause.Error() }

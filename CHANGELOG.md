@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Select several validation tests in one run by repeating `haptic validate --test`.
 - Add the `haptic_admission_render_slot_wait_seconds` metric: how long admission dry runs queue for a render slot.
 - `MUTEX_PROFILE_FRACTION` and `BLOCK_PROFILE_RATE` enable the controller's mutex and block profiles on `/debug/pprof`.
+- Add the `haptic_render_errors_total` metric: failed reconcile renders on every replica, by cache state.
 
 ### Changed
 
@@ -42,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Account for recovery plans when compressing retained configurations to prevent storage-limit publication failures.
 - Prevent a 30-second agent startup stall when HAProxy is still starting its worker.
 - Retained configuration recovery now starts after leader failover when a critical HTTP source is unavailable, including with large watched resource sets.
+- A replica without a critical `http.Fetch` source's content no longer renders the whole configuration again on every change while the source is down. It refetches the source every `interval` (30 seconds without one) and renders when the source answers.
+- Failed renders count in `haptic_render_total` on every replica, and failed reconciliations add their duration to `haptic_reconciliation_duration_seconds`. A follower logs a warning when its renders start failing instead of logging each failure at debug level.
 - Prevent queued mailbox events from delaying controller shutdown after cancellation during queue processing.
 - Keep a CPU free for each admission render while reconciliation renders, so valid changes are no longer denied with a timeout during heavy resource churn.
 

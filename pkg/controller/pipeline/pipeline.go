@@ -247,6 +247,7 @@ type Pipeline struct {
 	validator       *validation.ValidationService
 	outputValidator RenderedOutputValidator
 	commitValidator *validation.ValidationService
+	criticalContent criticalContentHold
 	logger          *slog.Logger
 }
 
@@ -291,13 +292,17 @@ func New(cfg *PipelineConfig) *Pipeline {
 		logger = slog.Default()
 	}
 
-	return &Pipeline{
+	p := &Pipeline{
 		renderer:        cfg.Renderer,
 		validator:       cfg.Validator,
 		outputValidator: cfg.OutputValidator,
 		commitValidator: cfg.CommitValidator,
 		logger:          logger,
 	}
+	if component := cfg.Renderer.HTTPStoreComponent(); component != nil {
+		p.criticalContent = component
+	}
+	return p
 }
 
 // Execute runs the render-validate pipeline.
@@ -661,6 +666,29 @@ func (p *Pipeline) executeSettlingInputConflicts(
 	mode rendercontext.RenderMode,
 	extraOpts ...rendercontext.Option,
 ) (*PipelineResult, *validation.ValidationResult, error) {
+	if mode != rendercontext.RenderModeReconcile || p.criticalContent == nil {
+		return p.executeAttempts(ctx, provider, mode, extraOpts...)
+	}
+	epoch, held := p.criticalContent.BeginReconcileRender()
+	if held != nil {
+		return nil, nil, &heldRenderError{cause: held}
+	}
+	result, validationResult, err := p.executeAttempts(ctx, provider, mode, extraOpts...)
+	switch {
+	case err != nil && ctx.Err() == nil:
+		p.criticalContent.HoldReconcileRenders(epoch, err)
+	case validationResult != nil && validationResult.Valid:
+		p.criticalContent.ReconcileRenderCompleted()
+	}
+	return result, validationResult, err
+}
+
+func (p *Pipeline) executeAttempts(
+	ctx context.Context,
+	provider stores.StoreProvider,
+	mode rendercontext.RenderMode,
+	extraOpts ...rendercontext.Option,
+) (*PipelineResult, *validation.ValidationResult, error) {
 	if mode != rendercontext.RenderModeReconcile || controllerhttpstore.CandidatesWithheld(ctx) {
 		return settleInputConflicts(ctx, p.logger, mode, func() (*PipelineResult, *validation.ValidationResult, error) {
 			return p.execute(ctx, provider, mode, extraOpts...)
@@ -702,12 +730,28 @@ func CriticalContentUnavailable(err error) bool {
 	return errors.Is(err, controllerhttpstore.ErrCriticalFetchFailed)
 }
 
-// CriticalContentRetryInterval returns the failed source's configured refresh interval.
-func CriticalContentRetryInterval(err error) time.Duration {
-	if failure, ok := errors.AsType[*controllerhttpstore.CriticalFetchError](err); ok {
-		return failure.RetryInterval
-	}
-	return 0
+// criticalContentHold skips reconcile renders that would only repeat a failure
+// on unavailable critical HTTP content (ADR-0030).
+type criticalContentHold interface {
+	BeginReconcileRender() (epoch uint64, held error)
+	HoldReconcileRenders(epoch uint64, err error)
+	ReconcileRenderCompleted()
+}
+
+// ErrRenderHeld marks a reconcile that did not render because it would only
+// repeat the previous render's failure on unavailable critical content.
+var ErrRenderHeld = errors.New("rendering is paused until the critical http.Fetch source answers")
+
+type heldRenderError struct{ cause error }
+
+func (e *heldRenderError) Error() string { return ErrRenderHeld.Error() + ": " + e.cause.Error() }
+
+func (e *heldRenderError) Unwrap() []error { return []error{ErrRenderHeld, e.cause} }
+
+// RenderHeld reports a reconcile that skipped its render; its error repeats
+// the failure of the render that started the hold.
+func RenderHeld(err error) bool {
+	return errors.Is(err, ErrRenderHeld)
 }
 
 type refusedOutputsKey struct{}

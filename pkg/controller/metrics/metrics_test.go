@@ -126,6 +126,20 @@ func TestMetrics_RecordRender(t *testing.T) {
 	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RenderTotal.WithLabelValues("replay")))
 }
 
+func TestMetrics_RecordRenderFailure(t *testing.T) {
+	metrics := NewMetrics(prometheus.NewRegistry())
+
+	metrics.RecordRenderFailure(false)
+	metrics.RecordRenderFailure(false)
+	metrics.RecordRenderFailure(true)
+	metrics.RecordRender("warm")
+
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RenderTotal.WithLabelValues("cold")), "failed renders count as renders")
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RenderErrors.WithLabelValues("cold")))
+	assert.Equal(t, 2.0, testutil.ToFloat64(metrics.RenderTotal.WithLabelValues("warm")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.RenderErrors.WithLabelValues("warm")))
+}
+
 func TestMetrics_RecordApplyRejectedAndSkew(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	metrics := NewMetrics(registry)
@@ -291,6 +305,7 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 	metrics.RecordHAProxyPodRejected("version_mismatch_older")
 	metrics.RecordConfigRejected("validationtests")
 	metrics.RecordRender("warm")
+	metrics.RecordRenderFailure(true)
 
 	metricFamilies, err := registry.Gather()
 	require.NoError(t, err)
@@ -314,6 +329,7 @@ func TestMetrics_AllMetricsRegistered(t *testing.T) {
 		"haptic_last_full_sync_timestamp_seconds",
 		"haptic_deployment_consecutive_failures",
 		"haptic_render_total",
+		"haptic_render_errors_total",
 	}
 
 	// Collect registered metric names

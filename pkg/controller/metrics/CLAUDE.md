@@ -188,7 +188,7 @@ func (c *Component) handleEvent(event pkgevents.Event) {
         c.metrics.RecordReconciliation(msToSeconds(e.DurationMs), true)
 
     case *events.ReconciliationFailedEvent:
-        c.metrics.RecordReconciliation(0, false)
+        c.metrics.RecordReconciliation(msToSeconds(e.DurationMs), false)
 
     case *events.DeploymentCompletedEvent:
         // Accepted reloads remain pending until the agent's pacing deadline.

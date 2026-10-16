@@ -80,7 +80,7 @@ func (s *HTTPStore) PrepareStagedSnapshot(
 		s.mu.Unlock()
 		if source.spec.options.Critical {
 			return ContentSnapshot{}, nil,
-				fmt.Errorf("critical HTTP fetch failed for %s: %w", RedactURL(source.url), fetchErr)
+				fmt.Errorf("%w for %s: %w", ErrCriticalFetch, RedactURL(source.url), fetchErr)
 		}
 		s.logger.Warn("HTTP fetch failed, returning empty content", "url", RedactURL(source.url), "error", fetchErr)
 		return ContentSnapshot{
@@ -260,7 +260,7 @@ func (s *HTTPStore) PrepareInitialSnapshot(
 		watermark := s.semanticRevision
 		s.mu.Unlock()
 		if snapshot.options.Critical {
-			return ContentSnapshot{}, nil, fmt.Errorf("critical HTTP fetch failed for %s: %w", RedactURL(url), fetchErr)
+			return ContentSnapshot{}, nil, fmt.Errorf("%w for %s: %w", ErrCriticalFetch, RedactURL(url), fetchErr)
 		}
 		s.logger.Warn("HTTP fetch failed, returning empty content", "url", RedactURL(url), "error", fetchErr)
 		return ContentSnapshot{
