@@ -366,15 +366,12 @@ controller:
         enabled: true
         from:  # @schema itemProperties: {ipBlock: {}, namespaceSelector: {}, podSelector: {}}
           - podSelector: {}
-      # kube-apiserver commonly runs in the host network, so selectors do not
-      # reliably match it. Tighten these catch-alls to node/apiserver CIDRs.
+      # Empty accepts the webhook port from any source: the kube-apiserver often
+      # reaches it from the host network, which selectors don't match and which
+      # Cilium doesn't match against ipBlock. List node/apiserver peers to restrict.
       webhook:
         enabled: true
-        from:  # @schema itemProperties: {ipBlock: {}, namespaceSelector: {}, podSelector: {}}
-          - ipBlock:
-              cidr: 0.0.0.0/0
-          - ipBlock:
-              cidr: "::/0"
+        from: []  # @schema item: object; itemProperties: {ipBlock: {}, namespaceSelector: {}, podSelector: {}}
       additionalRules: []
   # Template libraries. Each enabled one is rendered as its own
   # HAProxyTemplateConfig and the controller merges them in the order fixed by
