@@ -115,6 +115,7 @@ func setupRetainedFleet(ctx context.Context, t *testing.T, cfg *envconf.Config, 
 	haptic, err := hapticclient.NewForConfig(RESTConfig())
 	require.NoError(t, err)
 	f := &retainedFleet{namespace: namespace, client: client, haptic: haptic, config: config, deployment: deployment, selector: labels.SelectorFromSet(deployment.Spec.Selector.MatchLabels).String()}
+	defer f.dumpOnFailure(ctx, t)
 	f.waitReady(ctx, t, 2)
 	if watchedObjects > 0 {
 		for _, pod := range f.pods(ctx, t) {
@@ -356,4 +357,60 @@ func (f *retainedFleet) waitHealthRenderError(ctx context.Context, t *testing.T,
 		component, present := response.Components["reconciliation-coordinator"]
 		return present && component.Healthy && strings.Contains(component.Error, "Last render failed:") == failed, nil
 	}), "health response must preserve component availability and expose the last render result")
+}
+
+// dumpOnFailure logs what decides HAProxy readiness, including after a failed setup.
+func (f *retainedFleet) dumpOnFailure(ctx context.Context, t *testing.T) {
+	t.Helper()
+	if !t.Failed() {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	controllers, err := GetAllControllerPods(ctx, f.client, f.namespace)
+	if err != nil {
+		t.Logf("list controller pods: %v", err)
+	}
+	for i := range controllers {
+		f.dumpLogs(ctx, t, &controllers[i], "controller", 200)
+	}
+	pods, err := Clientset().CoreV1().Pods(f.namespace).List(ctx, metav1.ListOptions{LabelSelector: f.selector})
+	if err != nil {
+		t.Logf("list HAProxy pods: %v", err)
+		pods = &corev1.PodList{}
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		t.Logf("=== HAProxy pod %s (uid %s, deleting %t) conditions: %+v", pod.Name, pod.UID, pod.DeletionTimestamp != nil, pod.Status.Conditions)
+		for _, status := range append(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses...) {
+			t.Logf("    container %s ready=%t restarts=%d state=%+v", status.Name, status.Ready, status.RestartCount, status.State)
+		}
+		state, err := f.exec(ctx, pod.Name, "agent", "curl", "-sS", "--max-time", "5", "-u", "admin:password", "http://127.0.0.1:5555/v1/state?verify=1&plan=0")
+		t.Logf("    agent state (err %v): %s", err, state)
+		f.dumpLogs(ctx, t, pod, "agent", 50)
+	}
+	lease, err := Clientset().CoordinationV1().Leases(f.namespace).Get(ctx, "haptic-leader", metav1.GetOptions{})
+	if err == nil {
+		t.Logf("=== Lease holder %v, annotations %v", ptr.Deref(lease.Spec.HolderIdentity, ""), lease.Annotations)
+	}
+	events, err := Clientset().CoreV1().Events(f.namespace).List(ctx, metav1.ListOptions{FieldSelector: "type=Warning"})
+	if err == nil {
+		for _, event := range events.Items {
+			t.Logf("=== Event %s %s/%s x%d: %s", event.Reason, event.InvolvedObject.Kind, event.InvolvedObject.Name, event.Count, event.Message)
+		}
+	}
+}
+
+// dumpLogs logs every line above DEBUG and the last tail lines.
+func (f *retainedFleet) dumpLogs(ctx context.Context, t *testing.T, pod *corev1.Pod, container string, tail int) {
+	t.Helper()
+	logs, err := Clientset().CoreV1().Pods(f.namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: container}).DoRaw(ctx)
+	lines := strings.Split(strings.TrimRight(string(logs), "\n"), "\n")
+	recent := max(len(lines)-tail, 0)
+	var kept []string
+	for i, line := range lines {
+		if i >= recent || !strings.Contains(line, "level=DEBUG") {
+			kept = append(kept, line)
+		}
+	}
+	t.Logf("=== %s logs of %s (err %v) ===\n%s", container, pod.Name, err, strings.Join(kept, "\n"))
 }
