@@ -34,6 +34,11 @@ empty view invalid, the selector also checks the observed view with each individ
 object withheld. If no validated baseline can be established, reconciliation
 reports the failure and publishes nothing. A template or global configuration
 error that remains without the offending object is not a resource-local failure.
+When every cause of the baseline's failure also caused the observed view's failure,
+the selector reports it without withholding objects one at a time. Causes are
+HAProxy's alert messages without process IDs, line numbers, and temporary paths,
+or the complete error for any other failure. A matching cause only ends the search;
+it never accepts an input.
 
 An unavailable critical HTTP source aborts selection without rejecting watched
 resources. Removing Kubernetes objects cannot establish the missing HTTP input's

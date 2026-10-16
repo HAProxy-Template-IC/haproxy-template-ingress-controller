@@ -304,3 +304,21 @@ func TestRejectionNotificationsTrackCurrentSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, current, "repair must clear the rejection notification")
 }
+
+func TestInputIndependentRenderFailureSkipsTheInputSearch(t *testing.T) {
+	live := k8sstore.NewMemoryStore(2)
+	for index := range 100 {
+		name := fmt.Sprintf("widget-%03d", index)
+		require.NoError(t, live.Add(widget(name, "healthy"), []string{"default", name}))
+	}
+	renders := 0
+	validator := validationFunc(func(context.Context, stores.StoreProvider) (*pipeline.PipelineResult, error) {
+		renders++
+		return nil, &pipeline.PipelineError{Phase: pipeline.PhaseRender, Cause: errors.New("invalid chart value")}
+	})
+	watch := config.WatchedResource{APIVersion: "example.test/v1", Resources: "widgets", IndexBy: []string{"metadata.namespace", "metadata.name"}}
+	selector := New(validator, map[string]config.WatchedResource{"widgets": watch}, nil)
+	_, err := selector.Execute(t.Context(), stores.NewRealStoreProvider(map[string]stores.Store{"widgets": live}), rendercontext.RenderModeReconcile)
+	require.ErrorContains(t, err, "invalid chart value")
+	require.Equal(t, 2, renders)
+}

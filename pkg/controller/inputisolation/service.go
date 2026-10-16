@@ -30,6 +30,7 @@ import (
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/pipeline"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/rendercontext"
 	"github.com/haproxy-haptic/HAPTIC/pkg/core/config"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane"
 	k8sstore "github.com/haproxy-haptic/HAPTIC/pkg/k8s/store"
 	"github.com/haproxy-haptic/HAPTIC/pkg/stores"
 )
@@ -153,7 +154,7 @@ func (s *Service) Execute(ctx context.Context, observed stores.StoreProvider, mo
 		if stopIsolation(ctx, err) {
 			return nil, err
 		}
-		if bootstrapErr := a.bootstrap(groups); bootstrapErr != nil {
+		if bootstrapErr := a.bootstrap(groups, err); bootstrapErr != nil {
 			return nil, bootstrapErr
 		}
 	}
@@ -250,7 +251,10 @@ func (a *attempt) validate(branches map[string]*k8sstore.SnapshotBranch) (*pipel
 	return a.service.pipeline.Execute(a.ctx, branchProvider(branches), a.mode, a.opts...)
 }
 
-func (a *attempt) bootstrap(groups []changeGroup) error {
+func (a *attempt) bootstrap(groups []changeGroup, baselineErr error) error {
+	if baselineCausesPersist(failureCauses(baselineErr), failureCauses(a.initialError)) {
+		return fmt.Errorf("configuration is invalid even without the changed watched resources, so none is accepted; fix the templates or controller configuration: %w", a.initialError)
+	}
 	ordered := slices.Clone(groups)
 	slices.SortStableFunc(ordered, func(left, right changeGroup) int {
 		return groupMentioned(right, a.initialError.Error()) - groupMentioned(left, a.initialError.Error())
@@ -268,6 +272,24 @@ func (a *attempt) bootstrap(groups []changeGroup) error {
 		}
 	}
 	return fmt.Errorf("observed inputs are invalid and no validated baseline is available: %w", a.initialError)
+}
+
+func failureCauses(err error) []string {
+	var refusal *dataplane.RefusalError
+	if errors.As(err, &refusal) && len(refusal.Causes) > 0 {
+		return refusal.Causes
+	}
+	return []string{err.Error()}
+}
+
+// A cause that remains with every change withheld was not introduced by one of them.
+func baselineCausesPersist(baseline, observed []string) bool {
+	for _, cause := range baseline {
+		if !slices.Contains(observed, cause) {
+			return false
+		}
+	}
+	return true
 }
 
 func groupMentioned(group changeGroup, message string) int {

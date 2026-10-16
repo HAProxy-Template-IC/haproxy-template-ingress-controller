@@ -16,6 +16,7 @@ package dataplane
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -121,7 +122,7 @@ func TestInterpretHAProxyExitError(t *testing.T) {
 
 	t.Run("empty output → wrapped error", func(t *testing.T) {
 		t.Parallel()
-		err := interpretHAProxyExitError(nil, exitErr, "")
+		err := interpretHAProxyExitError(nil, exitErr, "", "")
 		require.Error(t, err,
 			"empty output with non-zero exit must NOT be silently treated as success — "+
 				"this path catches segfault/OOM/signal/binary-not-found scenarios where "+
@@ -133,7 +134,7 @@ func TestInterpretHAProxyExitError(t *testing.T) {
 
 	t.Run("whitespace-only output → wrapped error", func(t *testing.T) {
 		t.Parallel()
-		err := interpretHAProxyExitError([]byte("   \n\t\n"), exitErr, "")
+		err := interpretHAProxyExitError([]byte("   \n\t\n"), exitErr, "", "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "haproxy exited with error but produced no output",
 			"whitespace-only output must be treated identically to empty — there's no "+
@@ -144,7 +145,7 @@ func TestInterpretHAProxyExitError(t *testing.T) {
 		t.Parallel()
 		out := []byte(`[WARNING]  (88) : config : parsing [haproxy.cfg:8] : ` +
 			`'tune.ssl.default-dh-param' is not supported by AWS-LC 1.69.0, keyword ignored`)
-		err := interpretHAProxyExitError(out, exitErr, "")
+		err := interpretHAProxyExitError(out, exitErr, "", "")
 		assert.NoError(t, err,
 			"AWS-LC 'keyword ignored' WARNING with non-zero exit is the production "+
 				"scenario this path was added for — must pass cleanly")
@@ -153,10 +154,33 @@ func TestInterpretHAProxyExitError(t *testing.T) {
 	t.Run("output with [ALERT] → wrapped failure", func(t *testing.T) {
 		t.Parallel()
 		out := []byte(`[ALERT] (001) : parsing [haproxy.cfg:15] : unknown user 'missing' in userlist 'auth_users'`)
-		err := interpretHAProxyExitError(out, exitErr, "")
+		err := interpretHAProxyExitError(out, exitErr, "", "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "haproxy validation failed",
 			"[ALERT] output must surface as a validation error — anything else would "+
 				"admit broken configs")
 	})
+}
+
+func TestRefusalCausesCompareAcrossChecks(t *testing.T) {
+	t.Parallel()
+	exitErr := errors.New("exit status 1")
+	refusal := func(pid, line int, workDir string) *RefusalError {
+		output := fmt.Sprintf("[NOTICE]   (%[1]d) : haproxy version is 3.4.6\n"+
+			"[ALERT]    (%[1]d) : config : parsing [haproxy.cfg:%[2]d] : unknown keyword 'bogus' in 'global' section\n"+
+			"[ALERT]    (%[1]d) : config : parsing [haproxy.cfg:%[2]d] : cannot open '%[3]s/maps/hosts.map'\n"+
+			"[ALERT]    (%[1]d) : config : Fatal errors found in configuration.\n", pid, line, workDir)
+		var refused *RefusalError
+		require.ErrorAs(t, interpretHAProxyExitError([]byte(output), exitErr, "", workDir), &refused)
+		require.ErrorIs(t, refused, ErrHAProxyRefused)
+		return refused
+	}
+	first := refusal(12, 3, "/tmp/haproxy-validation-1")
+	second := refusal(345, 812, "/tmp/haproxy-validation-2")
+	require.Equal(t, []string{
+		"config : parsing [haproxy.cfg] : unknown keyword 'bogus' in 'global' section",
+		"config : parsing [haproxy.cfg] : cannot open 'maps/hosts.map'",
+	}, first.Causes)
+	require.Equal(t, first.Causes, second.Causes)
+	require.NotEqual(t, first.Error(), second.Error(), "the message keeps the positions and process ID")
 }
