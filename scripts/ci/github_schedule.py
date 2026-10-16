@@ -1,11 +1,19 @@
 """Balance independent verification suites using recorded runner durations."""
 
 import argparse
+import datetime
 import json
+import os
 import re
+from collections import defaultdict
 from pathlib import Path
 
 import yaml
+
+from .github import GitHub, jobs_for_run
+
+JOB_PREFIX = "full / "
+HANDOFF_SECONDS = 4
 
 
 def balance_groups(groups, durations, count, early, handoff_seconds):
@@ -53,7 +61,7 @@ def balance_groups(groups, durations, count, early, handoff_seconds):
         for lane in result]
 
 
-def lanes(durations, count, *, early=(), chains=(), handoff_seconds=4):
+def lanes(durations, count, *, early=(), chains=(), handoff_seconds=HANDOFF_SECONDS):
     if count < 1 or not durations or any(value <= 0 for value in durations.values()):
         raise ValueError("Scheduling requires positive durations and runner capacity")
     if not set(early) <= set(durations) or len(early) > count:
@@ -99,6 +107,27 @@ def schedule(workflow, weights):
     return selected
 
 
+def record(weights, runs, prefix=JOB_PREFIX):
+    """Weight each job by its upper quartile, not median: a lane runs several jobs, so medians under-plan it."""
+    samples = defaultdict(list)
+    for run, jobs in runs:
+        if run["conclusion"] != "success":
+            raise ValueError(f"Run {run['id']} did not succeed; its durations cannot weight the schedule")
+        for job in jobs:
+            if job["conclusion"] == "success" and job["name"].startswith(prefix):
+                started, completed = (datetime.datetime.fromisoformat(job[key])
+                                      for key in ("started_at", "completed_at"))
+                samples[job["name"].removeprefix(prefix)].append((completed - started).total_seconds())
+    for name in weights["jobs"].keys() & samples.keys():
+        weights["jobs"][name] = {"seconds": round(sorted(samples[name])[len(samples[name]) * 3 // 4])}
+    weights["source_runs"] = [run["id"] for run, _ in runs]
+    return weights
+
+
+def longest_lane_seconds(selected, durations, handoff_seconds=HANDOFF_SECONDS):
+    return max(sum(durations[name] + handoff_seconds for name in lane) for lane in selected)
+
+
 PINNED_ACTION = re.compile(r"(uses: (\S+@[0-9a-f]{40}))( # \S+)?$", re.M)
 
 
@@ -112,12 +141,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workflow", type=Path, default=Path(".github/workflows/ci-speed-proof.yml"))
     parser.add_argument("--weights", type=Path, default=Path(".github/job-duration-weights.json"))
+    parser.add_argument("--record", nargs="+", type=int, metavar="RUN_ID",
+                        help="re-measure the weights from these successful CI runs first")
     args = parser.parse_args()
+    weights = json.loads(args.weights.read_text())
+    if args.record:
+        api = GitHub(os.environ["GH_TOKEN"])
+        repository = json.loads(Path(".github/ci-verification.json").read_text())["repository"]
+        runs = [(run, jobs_for_run(api, repository, run))
+                for run in (api.get(f"repos/{repository}/actions/runs/{run_id}") for run_id in args.record)]
+        args.weights.write_text(json.dumps(record(weights, runs), indent=2) + "\n")
     text = args.workflow.read_text()
     workflow = yaml.safe_load(text)
-    selected = schedule(workflow, json.loads(args.weights.read_text()))
+    selected = schedule(workflow, weights)
     args.workflow.write_text(keep_version_comments(text, yaml.safe_dump(workflow, sort_keys=False, width=120)))
-    print(f"Scheduled {sum(map(len, selected))} jobs in {len(selected)} lanes, including coverage aggregation")
+    longest = longest_lane_seconds(selected, {name: row["seconds"] for name, row in weights["jobs"].items()})
+    print(f"Scheduled {sum(map(len, selected))} jobs in {len(selected)} lanes, including coverage aggregation; "
+          f"longest lane {longest // 60}m{longest % 60:02d}s")
 
 
 if __name__ == "__main__":
