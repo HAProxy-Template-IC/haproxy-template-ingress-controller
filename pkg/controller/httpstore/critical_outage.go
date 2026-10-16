@@ -115,6 +115,8 @@ func (c *Component) ReconcileRenderCompleted() {
 	o := c.outages
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	// The render either accepted the recovered content or didn't read it.
+	clear(o.recovered)
 	if len(o.sources) == 0 {
 		return
 	}

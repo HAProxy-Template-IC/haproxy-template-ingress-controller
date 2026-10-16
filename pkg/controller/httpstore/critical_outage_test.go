@@ -196,6 +196,7 @@ func TestRecoveredCriticalSourceTriggersOneSuccessfulRender(t *testing.T) {
 	content, accepted := h.component.GetStore().Get(h.url)
 	require.True(t, accepted, "the successful render accepts the content")
 	assert.Equal(t, "page", content)
+	assert.Zero(t, h.component.RecoveredInputs(), "accepted content no longer waits in the recovery set")
 
 	h.changeRoute(t, "!")
 	result, err = h.render(t)

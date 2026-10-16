@@ -37,3 +37,10 @@ func (c *Component) Started() bool {
 	defer c.mu.Unlock()
 	return c.ctx != nil
 }
+
+// RecoveredInputs counts refetched contents waiting for a render to adopt them.
+func (c *Component) RecoveredInputs() int {
+	c.outages.mu.Lock()
+	defer c.outages.mu.Unlock()
+	return len(c.outages.recovered)
+}
