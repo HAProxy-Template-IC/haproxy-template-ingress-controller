@@ -16,11 +16,17 @@ package configpublisher
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
 	v1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
@@ -141,24 +147,31 @@ func TestAcknowledgedCheckpointWaitsForPublicationRecovery(t *testing.T) {
 	}
 }
 
-func TestDrainPublishesOnlyTheNewestReceiptAndHonoursTheFailureLatch(t *testing.T) {
-	c, client, _ := newPublicationAuthorityComponent(t)
-	template := &v1.HAProxyTemplateConfig{ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default", UID: "template-uid"}}
-	c.templateConfig, c.hasTemplateConfig = template, true
-	acknowledged := func(config string) *publishWorkItem {
-		rendered, err := events.NewTemplateRenderedEventWithCycle(
-			testutil.NewRenderCycleFixture(t).Snapshot(t, config, nil, nil), 10, "test", true)
-		require.NoError(t, err)
-		entry, err := renderedConfigEntryFromEvent(rendered)
-		require.NoError(t, err)
-		entry.confirmedPod = &v1.PodDeploymentStatus{
-			PodName: "worker", PodUID: "worker-uid", PodRuntimeID: "runtime",
-			Checksum: entry.contentChecksum, AppliedPlanID: entry.planID,
-			RunningPlanID: entry.planID, Mode: "reload",
-		}
-		return c.makePublishWorkItem(entry.contentChecksum, template, entry, true)
+func acknowledgedDrainWork(t *testing.T, c *Component, template *v1.HAProxyTemplateConfig, config string) *publishWorkItem {
+	t.Helper()
+	rendered, err := events.NewTemplateRenderedEventWithCycle(
+		testutil.NewRenderCycleFixture(t).Snapshot(t, config, nil, nil), 10, "test", true)
+	require.NoError(t, err)
+	entry, err := renderedConfigEntryFromEvent(rendered)
+	require.NoError(t, err)
+	entry.confirmedPod = &v1.PodDeploymentStatus{
+		PodName: "worker", PodUID: "worker-uid", PodRuntimeID: "runtime",
+		Checksum: entry.contentChecksum, AppliedPlanID: entry.planID,
+		RunningPlanID: entry.planID, Mode: "reload",
 	}
-	older, newer := acknowledged("global\n  maxconn 100\n"), acknowledged("global\n  maxconn 200\n")
+	return c.makePublishWorkItem(entry.contentChecksum, template, entry, true)
+}
+
+func drainTemplate() *v1.HAProxyTemplateConfig {
+	return &v1.HAProxyTemplateConfig{ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default", UID: "template-uid"}}
+}
+
+func TestDrainPublishesOnlyTheNewestReceiptAndKeepsTheQueueUntilItCommits(t *testing.T) {
+	c, client, _ := newPublicationAuthorityComponent(t)
+	template := drainTemplate()
+	c.templateConfig, c.hasTemplateConfig = template, true
+	older := acknowledgedDrainWork(t, c, template, "global\n  maxconn 100\n")
+	newer := acknowledgedDrainWork(t, c, template, "global\n  maxconn 200\n")
 	c.enqueueDeployed(older)
 	c.enqueueDeployed(newer)
 
@@ -166,17 +179,58 @@ func TestDrainPublishesOnlyTheNewestReceiptAndHonoursTheFailureLatch(t *testing.
 	before := len(client.Actions())
 	require.Error(t, c.publishNewestAcknowledged(t.Context(), t.Context()))
 	require.Len(t, client.Actions(), before, "a blocked publication must issue no API request")
-	require.Equal(t, 1, c.deployedQueueDepth(), "the newest receipt must survive the failure")
+	require.Equal(t, 2, c.deployedQueueDepth(), "every receipt must survive a blocked publication")
 
 	c.mu.Lock()
 	c.publicationBlocked = false
 	c.mu.Unlock()
+	var denied atomic.Bool
+	denied.Store(true)
+	client.PrependReactor("create", "haproxycfgs", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if !denied.Load() {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "haproxycfgs"}, "checkpoint", errors.New("denied"))
+	})
+	require.Error(t, c.publishNewestAcknowledged(t.Context(), t.Context()))
+	require.Equal(t, 2, c.deployedQueueDepth(), "every receipt must survive a failed publication")
+
+	denied.Store(false)
 	require.NoError(t, c.publishNewestAcknowledged(t.Context(), t.Context()))
 	require.Zero(t, c.deployedQueueDepth())
 	retained, err := c.publisher.LoadRetained(t.Context(), template.Namespace, template.Name, template.UID)
 	require.NoError(t, err)
 	require.Len(t, retained, 1)
 	require.Equal(t, newer.entry.contentChecksum, retained[0].Reference.Checksum)
+}
+
+// A drain request from a term that already ended must not touch the queue of
+// the term the same component runs now.
+func TestDrainFromAnEndedTermLeavesTheRunningTermsQueue(t *testing.T) {
+	client := crdclientfake.NewSimpleClientset()
+	installRuntimeUIDReactor(client)
+	bus := busevents.NewEventBus(20)
+	bus.Start()
+	publisher := configpublisher.NewWithListers(k8sfake.NewClientset(), client, nil, testutil.NewTestLogger())
+	c := New(publisher, bus, testutil.NewTestLogger(), WithPublishInterval(time.Hour))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = c.Start(ctx) }()
+	<-c.SubscriptionReady()
+	template := drainTemplate()
+	c.mu.Lock()
+	c.templateConfig, c.hasTemplateConfig = template, true
+	c.mu.Unlock()
+	c.enqueueDeployed(acknowledgedDrainWork(t, c, template, "global\n  maxconn 300\n"))
+	require.Eventually(t, func() bool { return c.deployedQueueDepth() == 0 }, 5*time.Second, time.Millisecond)
+	c.enqueueDeployed(acknowledgedDrainWork(t, c, template, "global\n  maxconn 400\n"))
+
+	ended, endTerm := context.WithCancel(t.Context())
+	endTerm()
+	stale := drainRequest{ctx: ended, done: make(chan error, 1)}
+	c.drainRequests <- stale
+	require.ErrorIs(t, <-stale.done, context.Canceled)
+	require.Equal(t, 1, c.deployedQueueDepth(), "the throttled receipt must stay queued")
 }
 
 func interruptFirstConfigCreate(ctx context.Context, c *Component, client *crdclientfake.Clientset) {

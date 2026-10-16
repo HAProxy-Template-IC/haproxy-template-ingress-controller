@@ -916,19 +916,31 @@ func (c *Component) takeDeployed() *publishWorkItem {
 	return work
 }
 
-// takeNewestAcknowledged pops the newest queued render that carries a worker
-// receipt together with every render queued before it.
-func (c *Component) takeNewestAcknowledged() *publishWorkItem {
+// newestAcknowledged returns the newest queued render that carries a worker
+// receipt, leaving the queue untouched.
+func (c *Component) newestAcknowledged() *publishWorkItem {
 	c.deployedPendingMu.Lock()
 	defer c.deployedPendingMu.Unlock()
 	for i := len(c.deployedPending) - 1; i >= 0; i-- {
 		if work := c.deployedPending[i]; work.entry.confirmedPod != nil {
-			clear(c.deployedPending[:i+1])
-			c.deployedPending = c.deployedPending[i+1:]
 			return work
 		}
 	}
 	return nil
+}
+
+// dropDeployedThrough removes a published render and every render queued
+// before it: publishing an older one afterwards would move spec backwards.
+func (c *Component) dropDeployedThrough(work *publishWorkItem) {
+	c.deployedPendingMu.Lock()
+	defer c.deployedPendingMu.Unlock()
+	for i, pending := range c.deployedPending {
+		if sameDeployedOutput(pending.entry, work.entry) {
+			clear(c.deployedPending[:i+1])
+			c.deployedPending = c.deployedPending[i+1:]
+			return
+		}
+	}
 }
 
 // deployedQueueDepth reports how many deployed renders are still queued.

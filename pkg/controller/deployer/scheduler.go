@@ -73,7 +73,10 @@ type schedulerState struct {
 	activeCorrelationID string
 	activeOccurrence    *rendercycle.Occurrence
 	deploymentStartTime time.Time
-	pending             *scheduledDeployment
+	// lastScheduled is the newest occurrence this term dispatched, whatever
+	// its completion: the deployer records its plan as the intent before applying.
+	lastScheduled *rendercycle.Occurrence
+	pending       *scheduledDeployment
 }
 
 // scheduledDeployment is the latest desired deployment waiting for the loop.
@@ -302,6 +305,7 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.retryStopped = false
 	s.retryGeneration++
 	s.draining, s.drainOccurrence, s.dispatching, s.followUpArmed = false, nil, false, false
+	s.state.lastScheduled = nil
 	s.drainProgress = make(chan struct{}, 1)
 	s.schedulerMutex.Unlock()
 

@@ -850,7 +850,7 @@ func (s *DeploymentScheduler) failureRetryBackoff(attempt int) time.Duration {
 func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision uint64, reason string) {
 	s.schedulerMutex.Lock()
 	newerPending := s.state.pending != nil && s.state.pending.retryGeneration == 0
-	drained := s.drainOccurrence
+	draining, drained := s.draining, s.drainOccurrence
 	s.schedulerMutex.Unlock()
 	if newerPending {
 		// A newer render is already waiting; dispatching it covers this one.
@@ -870,7 +870,7 @@ func (s *DeploymentScheduler) rescheduleLastValidated(generation, workRevision u
 	correlationID := s.lastCorrelationID
 	endpoints := s.currentEndpoints
 	s.mu.Unlock()
-	if drained != nil {
+	if draining {
 		occurrence = drained
 	}
 
@@ -952,6 +952,7 @@ func (s *DeploymentScheduler) resetDeploymentTerm() {
 	s.state.activeDeploymentID = ""
 	s.state.activeCorrelationID = ""
 	s.state.activeOccurrence = nil
+	s.state.lastScheduled = nil
 	s.state.pending = nil
 
 	s.retryStopped = true

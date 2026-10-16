@@ -137,6 +137,19 @@ func TestDrainWaitsForTheDeploymentInFlightAndStartsNoOther(t *testing.T) {
 	require.NoError(t, <-drained)
 }
 
+func TestDrainOfAnEndedTermLeavesDeploymentsRunning(t *testing.T) {
+	bus := busevents.NewEventBus(10)
+	bus.Start()
+	c := createTestDeployer(bus)
+	ended, cancelEnded := context.WithCancel(t.Context())
+	cancelEnded()
+
+	require.ErrorIs(t, c.Drain(ended), context.Canceled)
+	_, cancel, begun := c.beginDeployment(t.Context(), "next-term", "trace")
+	require.True(t, begun, "an ended term's drain must not stop deployments")
+	cancel()
+}
+
 func TestDrainRefusesWhenANewerTermClaimedTheLease(t *testing.T) {
 	bus := busevents.NewEventBus(10)
 	bus.Start()

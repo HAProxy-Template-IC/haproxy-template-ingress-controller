@@ -25,15 +25,15 @@ import (
 // and its pending-reload follow-ups have completed: a paced reload confirms
 // its worker receipt only on the follow-up.
 func (s *DeploymentScheduler) Drain(ctx context.Context) error {
-	s.mu.RLock()
-	last := s.lastDispatchedOccurrence
-	s.mu.RUnlock()
 	s.schedulerMutex.Lock()
-	s.draining = true
-	s.drainOccurrence = last
-	if s.state.deployInFlight {
-		s.drainOccurrence = s.state.activeOccurrence
+	// Checked under the lock Start resets the drain state with, so a drain
+	// whose term already ended cannot latch the next one.
+	if err := ctx.Err(); err != nil {
+		s.schedulerMutex.Unlock()
+		return err
 	}
+	s.draining = true
+	s.drainOccurrence = s.state.lastScheduled
 	if s.state.pending != nil && !s.drainAdmitsLocked(s.state.pending.occurrence) {
 		s.state.pending = nil
 	}

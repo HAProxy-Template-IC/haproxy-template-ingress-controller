@@ -151,6 +151,7 @@ func (s *DeploymentScheduler) dispatchPending(ctx context.Context, dep *schedule
 	s.state.activeDeploymentID = scheduledEvent.EventID()
 	s.state.activeCorrelationID = dep.correlationID
 	s.state.activeOccurrence = dep.occurrence
+	s.state.lastScheduled = dep.occurrence
 	s.lastPodSetHash = computePodSetHash(dep.endpoints)
 	s.schedulerMutex.Unlock()
 

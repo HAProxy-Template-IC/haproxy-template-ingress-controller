@@ -145,7 +145,8 @@ naming a plan no checkpoint holds, and the next leader correctly refuses every
 older checkpoint (issue #358). A graceful stop therefore drains the term before
 it releases the Lease: on process shutdown after admission drains, and before a
 same-replica hand-over. While the term still renews the Lease, the scheduler
-dispatches no plan other than the last one and waits for that deployment and
+dispatches no plan other than the last one it dispatched, completed or timed
+out, and waits for that deployment and
 its pending-reload follow-ups, because a paced reload confirms the worker
 receipt only on the follow-up. The deployer then starts no further deployment,
 waits for any in flight, and re-reads the Lease to confirm that holder, epoch,

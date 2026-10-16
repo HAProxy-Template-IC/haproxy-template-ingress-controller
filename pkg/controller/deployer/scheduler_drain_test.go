@@ -78,3 +78,59 @@ func TestSchedulerDrainFollowsUpThePendingReloadAndDispatchesNoNewerPlan(t *test
 	require.NoError(t, <-drained)
 	testutil.AssertNoEvent[*events.DeploymentScheduledEvent](t, scheduledCh, 300*time.Millisecond)
 }
+
+// A deployment that timed out never caches its completion, yet the deployer
+// recorded its plan as the intent: the drain must admit that plan, not the
+// older one that last completed.
+func TestSchedulerDrainAdmitsTheLastDispatchedPlanEvenIfItTimedOut(t *testing.T) {
+	bus := testutil.NewTestBus()
+	scheduledCh := bus.SubscribeTypes("drain-watcher", 50, events.EventTypeDeploymentScheduled)
+	bus.Start()
+
+	s := newDeploymentScheduler(bus, testutil.NewTestLogger(), 20*time.Millisecond, 30*time.Second)
+	s.drainProgress = make(chan struct{}, 1)
+	older := primeRendered(s, "render-1", "checksum-1", "plan-1")
+	s.mu.Lock()
+	s.currentEndpoints = oneEndpoint()
+	s.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startLoopForTest(t, s, ctx)
+
+	s.dispatchRender(ctx, "corr-render-1", true, "config_validation")
+	testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
+		Total: 1, Succeeded: 1, ContentChecksum: "checksum-1", PodSetHash: "pods-1",
+	}))
+
+	intended := primeRendered(s, "render-2", "checksum-2", "plan-2")
+	s.dispatchRender(ctx, "corr-render-2", true, "config_validation")
+	testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
+	s.schedulerMutex.Lock()
+	s.state.deploymentTimedOut = true
+	s.schedulerMutex.Unlock()
+	s.handleDeploymentCompleted(completionForActiveDeployment(s, &events.DeploymentResult{
+		Total: 1, Failed: 1, ContentChecksum: "checksum-2", PodSetHash: "pods-1",
+	}))
+
+	require.NoError(t, s.Drain(ctx))
+	s.scheduleOrQueueOccurrence(ctx, older, oneEndpoint(), "validation_fallback", "corr-older", false)
+	s.scheduleOrQueueOccurrence(ctx, intended, oneEndpoint(), "validation_fallback", "corr-intended", false)
+
+	redispatched := testutil.WaitForEvent[*events.DeploymentScheduledEvent](t, scheduledCh, testutil.LongTimeout)
+	carried, err := redispatched.RenderOccurrence()
+	require.NoError(t, err)
+	require.True(t, samePlan(intended, carried), "the drain must admit only the plan the intent names")
+}
+
+func TestSchedulerDrainOfAnEndedTermLeavesTheSchedulerUndrained(t *testing.T) {
+	s := newDeploymentScheduler(testutil.NewTestBus(), testutil.NewTestLogger(), 20*time.Millisecond, 30*time.Second)
+	s.drainProgress = make(chan struct{}, 1)
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	require.ErrorIs(t, s.Drain(ended), context.Canceled)
+	s.schedulerMutex.Lock()
+	defer s.schedulerMutex.Unlock()
+	require.False(t, s.draining)
+}

@@ -419,6 +419,11 @@ func (c *Component) Start(ctx context.Context) error {
 			c.handleEvent(ctx, event)
 
 		case request := <-c.drainRequests:
+			// A new term starts only after the previous term's context ended.
+			if err := request.ctx.Err(); err != nil {
+				request.done <- err
+				continue
+			}
 			c.handleDeliveredEvents(ctx)
 			select {
 			case c.drainWork <- request:

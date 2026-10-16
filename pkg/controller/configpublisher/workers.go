@@ -129,22 +129,26 @@ func (c *Component) publishWorker(ctx context.Context) {
 
 // publishNewestAcknowledged publishes, past the throttle, the newest queued
 // render with a worker receipt: the deployment intent names the newest
-// deployment, so only its checkpoint keeps recovery available.
+// deployment, so only its checkpoint keeps recovery available. The queue
+// keeps every render until that publication commits.
 func (c *Component) publishNewestAcknowledged(ctx, drainCtx context.Context) error {
+	if err := drainCtx.Err(); err != nil {
+		return err
+	}
 	publishCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer context.AfterFunc(drainCtx, cancel)()
-	work := c.takeNewestAcknowledged()
+	work := c.newestAcknowledged()
 	if work == nil {
 		return nil
 	}
 	if !c.publicationAllowed() {
-		c.requeueDeployedFront(work)
 		return errors.New("the acknowledged checkpoint stays unpublished while rendering is blocked")
 	}
 	if !c.executePublish(publishCtx, work) {
 		return errors.New("the acknowledged checkpoint was not published")
 	}
+	c.dropDeployedThrough(work)
 	return nil
 }
 
