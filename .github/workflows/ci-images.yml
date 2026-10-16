@@ -4,7 +4,7 @@ name: CI images
     branches:
       - main
     paths:
-      - .gitlab/ci/**
+      - ci/**
       - scripts/ci-image-input-hash.sh
       - scripts/build-ci-image.sh
       - scripts/build-docs-image.sh

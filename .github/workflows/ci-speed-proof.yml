@@ -65,7 +65,7 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', 'ci/build-pins.yml')
           }}-${{ fromJSON(env.CI_SUITE).shard == 'command' && 'command-race' || fromJSON(env.CI_SUITE).shard }}
         restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ fromJSON(env.CI_SUITE).shard
           == 'command' && 'command-race' || fromJSON(env.CI_SUITE).shard }}-
@@ -75,7 +75,7 @@ jobs:
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', 'ci/build-pins.yml')
           }}-${{ fromJSON(env.CI_SUITE).shard == 'command' && 'command-race' || fromJSON(env.CI_SUITE).shard }}
         restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ fromJSON(env.CI_SUITE).shard
           == 'command' && 'command-race' || fromJSON(env.CI_SUITE).shard }}-
@@ -85,7 +85,7 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
+        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', 'ci/build-pins.yml')
           }}
     - name: Restore shared Helm compilation
       if: (fromJSON(env.CI_SUITE).suite == 'helm' && fromJSON(env.CI_SUITE).haproxy != '3.4') || fromJSON(env.CI_SUITE).suite
@@ -93,7 +93,7 @@ jobs:
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
+        key: go-build-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', 'ci/build-pins.yml')
           }}
     - name: Restore shared Go compilation for checks
       if: fromJSON(env.CI_SUITE).suite == 'lint' || fromJSON(env.CI_SUITE).suite == 'agent' || fromJSON(env.CI_SUITE).suite
@@ -101,7 +101,7 @@ jobs:
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', 'ci/build-pins.yml')
           }}-rest
     - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       if: fromJSON(env.CI_SUITE).suite == 'snapshot' || fromJSON(env.CI_SUITE).suite == 'spoa'
@@ -1711,7 +1711,7 @@ jobs:
       uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-coverage-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
+        key: go-coverage-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', 'ci/build-pins.yml')
           }}-${{ fromJSON(env.CI_SUITE).suite == 'coverage-shard' && 'unit' || 'integration-race' }}
     - name: Restore shared coverage compilation
       if: (fromJSON(env.CI_SUITE).suite == 'coverage-shard' && fromJSON(env.CI_SUITE).shard != 'rest') || (fromJSON(env.CI_SUITE).suite
@@ -1719,7 +1719,7 @@ jobs:
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ env.PILOT_GO_CACHE_DIR }}
-        key: go-coverage-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', '.gitlab/ci/build-pins.yml')
+        key: go-coverage-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'cmd/haptic/default.pgo', 'ci/build-pins.yml')
           }}-${{ fromJSON(env.CI_SUITE).suite == 'coverage-shard' && 'unit' || 'integration-race' }}
     - name: Run existing x64 suite
       if: fromJSON(env.CI_SUITE).kind == 'x64'
