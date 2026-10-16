@@ -10,23 +10,33 @@ import time
 
 
 ROOT = Path(".pilot/initial-startup")
+NAMESPACE = "haptic"
 KUBECTL = ["docker", "exec", "haptic-e2e-control-plane", "kubectl",
-           "--kubeconfig=/etc/kubernetes/admin.conf", "-n", "haptic"]
+           "--kubeconfig=/etc/kubernetes/admin.conf", "-n", NAMESPACE]
 SPEC = importlib.util.spec_from_file_location("verify_startup", Path(__file__).with_name("verify-startup.py"))
 VERIFY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFY)
 
 
-def fetch_log(name, attempts=3):
-    # The kubelet log stream can stall while both replicas run their startup validation tests.
-    for attempt in range(1, attempts + 1):
-        try:
-            return subprocess.check_output(KUBECTL + ["logs", name, "--container=controller", "--prefix", "--tail=-1"],
-                                           text=True, timeout=30)
-        except subprocess.TimeoutExpired:
-            if attempt == attempts:
-                raise
-            print(f"{name}: kubectl logs timed out (attempt {attempt}), retrying", flush=True)
+def kubectl_prefixed(name, cri_log):
+    lines, partial = [], []
+    for record in cri_log.split("\n")[:-1]:
+        _, stream, tag, content = record.split(" ", 3)
+        if stream not in ("stdout", "stderr") or tag not in ("P", "F"):
+            raise ValueError(f"{name}: malformed CRI log record: {record[:200]}")
+        partial.append(content)
+        if tag == "F":
+            lines.append(f"[pod/{name}/controller] {''.join(partial)}\n")
+            partial = []
+    return "".join(lines)
+
+
+def fetch_log(pod):
+    # Read the node's CRI log file: `kubectl logs` through apiserver and kubelet stalled for minutes under load.
+    name, uid = pod["metadata"]["name"], pod["metadata"]["uid"]
+    path = f"/var/log/pods/{NAMESPACE}_{name}_{uid}/controller/0.log"
+    cri_log = subprocess.check_output(["docker", "exec", pod["spec"]["nodeName"], "cat", path], text=True, timeout=30)
+    return kubectl_prefixed(name, cri_log)
 
 
 def capture(pod):
@@ -34,12 +44,12 @@ def capture(pod):
     (ROOT / f"{name}-initial.json").write_text(json.dumps(pod, indent=2) + "\n")
     subprocess.run(KUBECTL + ["wait", f"pod/{name}", "--for=condition=Ready", "--timeout=300s"],
                    check=True, timeout=315)
-    log = fetch_log(name)
-    (ROOT / f"{name}.log").write_text(log)
     ready = json.loads(subprocess.check_output(KUBECTL + ["get", "pod", name, "-o", "json"], timeout=30))
     (ROOT / f"{name}-ready.json").write_text(json.dumps(ready, indent=2) + "\n")
     if ready["metadata"]["uid"] != pod["metadata"]["uid"]:
         raise ValueError(f"{name}: initial controller pod was replaced before verification")
+    log = fetch_log(ready)
+    (ROOT / f"{name}.log").write_text(log)
     return log, ready
 
 
