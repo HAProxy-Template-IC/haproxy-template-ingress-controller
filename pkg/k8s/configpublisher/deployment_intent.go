@@ -86,21 +86,35 @@ func (p *Publisher) RecordDeploymentIntent(ctx context.Context, authority *Deplo
 
 // CheckDeploymentIntent refuses a checkpoint superseded before or during recovery.
 func (p *Publisher) CheckDeploymentIntent(ctx context.Context, authority *DeploymentAuthority, planID, checksum string) error {
-	lease, err := p.deploymentLease(ctx, authority, false)
+	status, err := p.claimedDeploymentIntent(ctx, authority)
 	if err != nil {
 		return err
-	}
-	status, err := readDeploymentIntent(lease, authority)
-	if err != nil {
-		return err
-	}
-	if status.UID != authority.UID || status.Claim != authority.Claim {
-		return errors.New("deployment authority changed during recovery")
 	}
 	if status.PlanID != planID || status.Checksum != checksum {
 		return errors.New("a newer deployment intent supersedes the retained configuration")
 	}
 	return nil
+}
+
+// CheckDeploymentAuthority confirms that no newer term has claimed the Lease.
+func (p *Publisher) CheckDeploymentAuthority(ctx context.Context, authority *DeploymentAuthority) error {
+	_, err := p.claimedDeploymentIntent(ctx, authority)
+	return err
+}
+
+func (p *Publisher) claimedDeploymentIntent(ctx context.Context, authority *DeploymentAuthority) (deploymentIntent, error) {
+	lease, err := p.deploymentLease(ctx, authority, false)
+	if err != nil {
+		return deploymentIntent{}, err
+	}
+	status, err := readDeploymentIntent(lease, authority)
+	if err != nil {
+		return status, err
+	}
+	if status.UID != authority.UID || status.Claim != authority.Claim {
+		return status, errors.New("deployment authority belongs to a newer controller term")
+	}
+	return status, nil
 }
 
 func (p *Publisher) updateDeploymentIntent(ctx context.Context, authority *DeploymentAuthority, update func(*deploymentIntent) error) error {

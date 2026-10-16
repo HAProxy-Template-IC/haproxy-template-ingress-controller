@@ -84,6 +84,26 @@ func TestTakeoverFencesADelayedDeploymentIntent(t *testing.T) {
 	require.NoError(t, publisher.CheckDeploymentIntent(ctx, &fresh, "plan-a", "checksum-a"))
 }
 
+func TestDeploymentAuthorityCheckFailsOnceANewerTermClaims(t *testing.T) {
+	ctx, client, _, publisher := newTestPublisher(t)
+	authority := intentAuthority()
+	setIntentLeader(t, ctx, client, &authority)
+	require.NoError(t, publisher.ClaimDeploymentAuthority(ctx, &authority))
+	require.NoError(t, publisher.CheckDeploymentAuthority(ctx, &authority))
+
+	sameHolder := authority
+	sameHolder.Claim = "restarted-term"
+	require.NoError(t, publisher.ClaimDeploymentAuthority(ctx, &sameHolder))
+	require.ErrorContains(t, publisher.CheckDeploymentAuthority(ctx, &authority), "newer controller term")
+
+	fresh := authority
+	fresh.Epoch, fresh.Claim, fresh.Identity = 2, "new-claim", "new-leader"
+	setIntentLeader(t, ctx, client, &fresh)
+	require.ErrorContains(t, publisher.CheckDeploymentAuthority(ctx, &sameHolder), "newer controller term")
+	require.NoError(t, publisher.ClaimDeploymentAuthority(ctx, &fresh))
+	require.NoError(t, publisher.CheckDeploymentAuthority(ctx, &fresh))
+}
+
 func TestDeploymentIntentRechecksAuthorityAfterConflict(t *testing.T) {
 	ctx, client, _, publisher := newTestPublisher(t)
 	authority := intentAuthority()

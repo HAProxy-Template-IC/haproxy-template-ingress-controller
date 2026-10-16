@@ -6,7 +6,7 @@ Component registry, startup coordination, and health tracking for the controller
 
 The controller iterates by spinning up ~20 components in a coordinated startup sequence. `*Registry` is where they all register; it then drives `StartAll(ctx, isLeader)` (all-replica), then `StartLeaderOnly(ctx)` once leadership is acquired, tracking the per-component status (`Pending` / `Starting` / `Running` / `Failed` / `Stopped` / `Standby` (Standby = registered leader-only component on a follower replica — see `pkg/lifecycle/CLAUDE.md`)).
 
-Components implement the `Component` interface (`Name() string` + `Start(ctx) error`); optionally they can also implement `HealthChecker` for active health probes and `SubscriptionReadySignaler` for "I've subscribed and am ready to receive events" signalling.
+Components implement the `Component` interface (`Name() string` + `Start(ctx) error`); optionally they can also implement `HealthChecker` for active health probes and `SubscriptionReadySignaler` for "I've subscribed and am ready to receive events" signalling. Leader-only components that implement `Drainer` settle in-flight work when `DrainLeaderOnly(ctx)` runs, in registration order, before a graceful stop releases the Lease (ADR-0033).
 
 ## Quick Start
 

@@ -45,9 +45,15 @@ func (c *Component) runCancellationLoop(ctx context.Context, done chan<- struct{
 	}
 }
 
-func (c *Component) beginDeployment(ctx context.Context, deploymentID, correlationID string) (context.Context, context.CancelFunc) {
-	deployCtx, cancel := context.WithCancel(ctx)
+// beginDeployment registers the deployment as active, or reports false once
+// Drain has ended this term's deployments.
+func (c *Component) beginDeployment(ctx context.Context, deploymentID, correlationID string) (context.Context, context.CancelFunc, bool) {
 	c.cancelMu.Lock()
+	if c.draining {
+		c.cancelMu.Unlock()
+		return nil, nil, false
+	}
+	deployCtx, cancel := context.WithCancel(ctx)
 	c.activeDeploymentID = deploymentID
 	c.activeCorrelationID = correlationID
 	c.activeCancelFunc = cancel
@@ -57,7 +63,24 @@ func (c *Component) beginDeployment(ctx context.Context, deploymentID, correlati
 	}
 	c.pendingCancellation = ""
 	c.cancelMu.Unlock()
-	return deployCtx, cancel
+	return deployCtx, cancel, true
+}
+
+// Drain ends this term's deployments and returns once the one in flight has
+// published its receipt, provided the term still holds the Lease.
+func (c *Component) Drain(ctx context.Context) error {
+	c.cancelMu.Lock()
+	c.draining = true
+	done := c.deploymentDone
+	c.cancelMu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return c.checkRetainedAuthority(ctx)
 }
 
 // handleDeploymentCancelRequest cancels the exact in-progress deployment.

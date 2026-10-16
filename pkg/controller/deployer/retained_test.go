@@ -188,14 +188,18 @@ func TestRetainedBootstrapGuardIsRecheckedBeforeApply(t *testing.T) {
 }
 
 type retainedTestIntent struct {
-	planID     string
-	checksum   string
-	recordErr  error
-	afterCheck func()
+	planID       string
+	checksum     string
+	recordErr    error
+	authorityErr error
+	afterCheck   func()
 }
 
 func (*retainedTestIntent) ClaimDeploymentAuthority(context.Context, *configpublisher.DeploymentAuthority) error {
 	return nil
+}
+func (s *retainedTestIntent) CheckDeploymentAuthority(context.Context, *configpublisher.DeploymentAuthority) error {
+	return s.authorityErr
 }
 func (s *retainedTestIntent) RecordDeploymentIntent(_ context.Context, _ *configpublisher.DeploymentAuthority, planID, checksum string) error {
 	if s.recordErr != nil {

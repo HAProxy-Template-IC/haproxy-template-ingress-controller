@@ -141,6 +141,44 @@ func TestAcknowledgedCheckpointWaitsForPublicationRecovery(t *testing.T) {
 	}
 }
 
+func TestDrainPublishesOnlyTheNewestReceiptAndHonoursTheFailureLatch(t *testing.T) {
+	c, client, _ := newPublicationAuthorityComponent(t)
+	template := &v1.HAProxyTemplateConfig{ObjectMeta: metav1.ObjectMeta{Name: "test-config", Namespace: "default", UID: "template-uid"}}
+	c.templateConfig, c.hasTemplateConfig = template, true
+	acknowledged := func(config string) *publishWorkItem {
+		rendered, err := events.NewTemplateRenderedEventWithCycle(
+			testutil.NewRenderCycleFixture(t).Snapshot(t, config, nil, nil), 10, "test", true)
+		require.NoError(t, err)
+		entry, err := renderedConfigEntryFromEvent(rendered)
+		require.NoError(t, err)
+		entry.confirmedPod = &v1.PodDeploymentStatus{
+			PodName: "worker", PodUID: "worker-uid", PodRuntimeID: "runtime",
+			Checksum: entry.contentChecksum, AppliedPlanID: entry.planID,
+			RunningPlanID: entry.planID, Mode: "reload",
+		}
+		return c.makePublishWorkItem(entry.contentChecksum, template, entry, true)
+	}
+	older, newer := acknowledged("global\n  maxconn 100\n"), acknowledged("global\n  maxconn 200\n")
+	c.enqueueDeployed(older)
+	c.enqueueDeployed(newer)
+
+	c.handleEvent(t.Context(), &events.ReconciliationFailedEvent{Error: "critical source unavailable"})
+	before := len(client.Actions())
+	require.Error(t, c.publishNewestAcknowledged(t.Context(), t.Context()))
+	require.Len(t, client.Actions(), before, "a blocked publication must issue no API request")
+	require.Equal(t, 1, c.deployedQueueDepth(), "the newest receipt must survive the failure")
+
+	c.mu.Lock()
+	c.publicationBlocked = false
+	c.mu.Unlock()
+	require.NoError(t, c.publishNewestAcknowledged(t.Context(), t.Context()))
+	require.Zero(t, c.deployedQueueDepth())
+	retained, err := c.publisher.LoadRetained(t.Context(), template.Namespace, template.Name, template.UID)
+	require.NoError(t, err)
+	require.Len(t, retained, 1)
+	require.Equal(t, newer.entry.contentChecksum, retained[0].Reference.Checksum)
+}
+
 func interruptFirstConfigCreate(ctx context.Context, c *Component, client *crdclientfake.Clientset) {
 	interrupted := false
 	client.PrependReactor("create", "haproxycfgs", func(k8stesting.Action) (bool, runtime.Object, error) {

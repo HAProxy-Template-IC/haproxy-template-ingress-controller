@@ -136,6 +136,7 @@ type Component struct {
 	activeCancelFunc    context.CancelFunc     // Cancel function for active deployment
 	deploymentDone      chan struct{}          // Signals when deployment goroutine completes
 	pendingCancellation string                 // Exact deployment cancelled before its handler starts
+	draining            bool                   // Set by Drain: the term starts no further deployment
 	cancelEventChan     <-chan busevents.Event // Out-of-band control subscription
 }
 
@@ -200,6 +201,7 @@ func (c *Component) Start(ctx context.Context) error {
 	c.flushPendingCancellationRequests()
 	c.cancelMu.Lock()
 	c.pendingCancellation = ""
+	c.draining = false
 	c.cancelMu.Unlock()
 
 	// A new term dials fresh: the previous leader's pooled connections carry no

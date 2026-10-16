@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A leader that stops gracefully finishes its deployment in progress, including a pending HAProxy reload, and saves its recovery checkpoint before it releases the Lease. Previously the checkpoint for the last few seconds of deployments was dropped, so after an ordinary leader change replacement HAProxy pods stayed NotReady with `RetainedConfigUnavailable` while rendering was blocked.
 - Publishing a recovery checkpoint reads its shared auxiliary files with one list per kind instead of reading every file twice, removing most of the controller's API requests under steady deployment churn.
 - Publishing the configuration reads its auxiliary files with one list per kind instead of reading every map, file, and certificate Secret on each publication, and checkpoint cleanup reuses the checkpoint's verification list.
 - A replica that had been standby longer than 1.5 × `driftPreventionInterval` failed liveness as soon as it became leader, so the kubelet restarted it whenever it couldn't deploy right away, for example while a critical `http.Fetch` source was down.

@@ -362,12 +362,13 @@ func createReconciliationComponents(
 			resourceApplierComponent,
 			eventEmitterComponent,
 		},
+		// DrainLeaderOnly follows this order: Scheduler, then Deployer, then ConfigPublisher.
 		[]lifecycle.Component{
 			coordinatorComponent,
 			renderGateComponent,
 			deployStack.DriftMonitor,
-			deployStack.Deployer,
 			deployStack.Scheduler,
+			deployStack.Deployer,
 			configPublisherComponent,
 			statusUpdaterComponent,
 		},

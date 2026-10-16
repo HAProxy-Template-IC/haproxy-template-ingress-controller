@@ -452,6 +452,7 @@ func setupLeadershipAndWebhook(
 	logger.Info("Stage 6: Initializing leader election")
 	state, err := setupLeaderElection(setup, cfg, k8sClient, logger)
 	setup.LeaderState = state
+	infra.leadership.Store(state)
 	if err != nil {
 		return err
 	}

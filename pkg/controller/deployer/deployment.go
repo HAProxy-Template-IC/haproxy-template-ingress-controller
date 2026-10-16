@@ -88,7 +88,13 @@ func (c *Component) performDeployment(ctx context.Context, event *events.Deploym
 		return
 	}
 
-	deployCtx, cancel := c.beginDeployment(ctx, deploymentID, correlationID)
+	deployCtx, cancel, begun := c.beginDeployment(ctx, deploymentID, correlationID)
+	if !begun {
+		c.deploymentInProgress.Store(false)
+		c.Logger().Info("Skipping deployment: the leadership term is draining",
+			"deployment_id", deploymentID, "correlation_id", correlationID)
+		return
+	}
 	defer cancel()
 
 	defer func() {

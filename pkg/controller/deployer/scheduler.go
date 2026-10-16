@@ -196,7 +196,14 @@ type DeploymentScheduler struct {
 	//   - loopDone: closed when the loop exits, so Start joins it on shutdown.
 	pendingSignal chan struct{}
 	completed     chan struct{}
-	loopDone      chan struct{}
+
+	// Drain state, guarded by schedulerMutex; see Drain.
+	draining        bool
+	drainOccurrence *rendercycle.Occurrence
+	dispatching     bool
+	followUpArmed   bool
+	drainProgress   chan struct{}
+	loopDone        chan struct{}
 
 	retained            *retainedRecovery
 	retainedResults     chan retainedResult
@@ -294,6 +301,8 @@ func (s *DeploymentScheduler) Start(ctx context.Context) error {
 	s.schedulerMutex.Lock()
 	s.retryStopped = false
 	s.retryGeneration++
+	s.draining, s.drainOccurrence, s.dispatching, s.followUpArmed = false, nil, false, false
+	s.drainProgress = make(chan struct{}, 1)
 	s.schedulerMutex.Unlock()
 
 	// Create deploy-loop channels fresh for this leadership term (see struct).

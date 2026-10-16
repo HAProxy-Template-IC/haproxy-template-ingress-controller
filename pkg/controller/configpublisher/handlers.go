@@ -916,6 +916,21 @@ func (c *Component) takeDeployed() *publishWorkItem {
 	return work
 }
 
+// takeNewestAcknowledged pops the newest queued render that carries a worker
+// receipt together with every render queued before it.
+func (c *Component) takeNewestAcknowledged() *publishWorkItem {
+	c.deployedPendingMu.Lock()
+	defer c.deployedPendingMu.Unlock()
+	for i := len(c.deployedPending) - 1; i >= 0; i-- {
+		if work := c.deployedPending[i]; work.entry.confirmedPod != nil {
+			clear(c.deployedPending[:i+1])
+			c.deployedPending = c.deployedPending[i+1:]
+			return work
+		}
+	}
+	return nil
+}
+
 // deployedQueueDepth reports how many deployed renders are still queued.
 func (c *Component) deployedQueueDepth() int {
 	c.deployedPendingMu.Lock()
