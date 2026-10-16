@@ -433,7 +433,7 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 		}
 	}
 	if os.Getenv("HAPTIC_E2E_PROFILE") == "cache" {
-		if err := loadVarnishIntoKind(ctx); err != nil {
+		if err := loadLocalOrPulledImageIntoKind(ctx, runtimeImages.Varnish); err != nil {
 			return ctx, err
 		}
 		if err := pullImageIntoKind(ctx, VarnishPolicyProbeImage); err != nil {
@@ -448,7 +448,7 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 			return ctx, err
 		}
 	}
-	if err := pullImageIntoKind(ctx, runtimeImages.SPOAHub); err != nil {
+	if err := loadLocalOrPulledImageIntoKind(ctx, runtimeImages.SPOAHub); err != nil {
 		return ctx, err
 	}
 	return ctx, nil
@@ -462,11 +462,11 @@ func loadControllerImage(ctx context.Context) (context.Context, error) {
 // kind import that follows is local and fails deterministically.
 const pullImageRetries = 3
 
-func loadVarnishIntoKind(ctx context.Context) error {
-	if err := exec.CommandContext(ctx, "docker", "image", "inspect", runtimeImages.Varnish).Run(); err == nil {
-		return loadImageIntoKind(ctx, runtimeImages.Varnish)
+func loadLocalOrPulledImageIntoKind(ctx context.Context, image string) error {
+	if err := exec.CommandContext(ctx, "docker", "image", "inspect", image).Run(); err == nil {
+		return loadImageIntoKind(ctx, image)
 	}
-	return pullImageIntoKind(ctx, runtimeImages.Varnish)
+	return pullImageIntoKind(ctx, image)
 }
 
 func pullImageIntoKind(ctx context.Context, image string) error {

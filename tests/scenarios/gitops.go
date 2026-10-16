@@ -84,6 +84,9 @@ func (g *gitops) setup(ctx context.Context) error {
 	if err := g.prepareCharts(ctx); err != nil {
 		return err
 	}
+	if err := s.LoadSPOAImage(ctx); err != nil {
+		return err
+	}
 	secret := resource("v1", "Secret", s.Namespace, gitopsCredentialsSecret)
 	secret["stringData"] = map[string]string{"dataplane_username": "admin", "dataplane_password": "gitops-lifecycle-fixture-only"}
 	if err := s.Apply(ctx, secret); err != nil {

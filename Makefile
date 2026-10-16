@@ -1134,13 +1134,14 @@ spoa-bundle-check: ## Verify docs/.../spoa-hub.md is in sync with versions-spoa.
 	@bash scripts/render-spoa-bundle.sh --check
 
 SPOA_DEV_IMAGE ?= spoa-hub:dev
+SPOA_DEV_PLATFORM ?= linux/amd64
 
-spoa-hub-image: spoa-prep ## Build the SPOA hub locally (amd64; SPOA_DEV_IMAGE selects the tag)
+spoa-hub-image: spoa-prep ## Build the SPOA hub locally (SPOA_DEV_IMAGE selects the tag, SPOA_DEV_PLATFORM the platform)
 	@set -a; . ./versions-spoa.env; set +a; \
 	HUB_TAG="$${SPOA_HUB_VERSION#v}"; \
-	echo "Building $(SPOA_DEV_IMAGE) (linux/amd64, FROM hub $$HUB_TAG)"; \
+	echo "Building $(SPOA_DEV_IMAGE) ($(SPOA_DEV_PLATFORM), FROM hub $$HUB_TAG)"; \
 	docker buildx build \
-		--platform linux/amd64 \
+		--platform "$(SPOA_DEV_PLATFORM)" \
 		--build-arg "SPOA_HUB_VERSION=$$HUB_TAG" \
 		--build-context plugins=plugins \
 		--load \

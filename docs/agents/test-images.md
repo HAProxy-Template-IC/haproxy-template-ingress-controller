@@ -17,11 +17,17 @@ use the digest-pinned image variables checked against the chart before CI
 starts its image builds. `make goreleaser-snapshot` supplies its image variables
 from the local chart.
 
-E2e, conformance, and Gateway API benchmarks use the chart's SPOA image, not a
-bundle rebuilt from `versions-spoa.env`. The benchmark compares every running
-hub and validator's executable and plugin hashes with that image before and
-after measurement. Changing source pins does not change the chart's delivered
-bundle until a matching image is published and selected by the chart.
+E2e, conformance, lifecycle, and Gateway API benchmarks use the chart's SPOA
+image. Snapshot and release publication build the hub from `versions-spoa.env`
+at the published commit, so CI tests that bundle, not the last release's: every
+cluster job runs `.github/scripts/spoa-test-image.sh`, which points the chart at
+`haptic-spoa:test` and builds it with `make spoa-hub-image` alongside the
+controller image. E2e and lifecycle suites load a local chart image into Kind
+and pull a published one. Upgrade baselines install the released chart and keep
+its released SPOA image. To run the commit's bundle locally, set the same chart
+values and build it with `make spoa-hub-image SPOA_DEV_IMAGE=haptic-spoa:test`.
+The benchmark compares every running hub and validator's executable and plugin
+hashes with the chart image before and after measurement.
 E2e startup rejects container images that differ from the chart, including
 overrides introduced by a test values profile.
 

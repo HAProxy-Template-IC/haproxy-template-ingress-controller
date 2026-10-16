@@ -18,9 +18,10 @@ import (
 
 func TestDefaultsLoadTheImageTagRequestedByTheChart(t *testing.T) {
 	const chartImage = "registry:5000/haptic:test-haproxy3.4"
+	const spoaImage = "haptic-spoa:test"
 	for _, source := range []string{"registry:5000/haptic:test", chartImage} {
 		t.Run(source, func(t *testing.T) {
-			local := map[string]bool{source: true}
+			local := map[string]bool{source: true, spoaImage: true}
 			loaded := map[string]bool{}
 			var cluster *kindutil.Cluster
 			helmCalls := 0
@@ -48,6 +49,7 @@ func TestDefaultsLoadTheImageTagRequestedByTheChart(t *testing.T) {
 				case command.Name == "helm":
 					helmCalls++
 					require.True(t, loaded[chartImage], "chart image must be loaded before Helm hooks run")
+					require.True(t, loaded[spoaImage], "a locally built SPOA image must reach the cluster before Helm installs it")
 					require.Contains(t, args, "controller.image.tag=test")
 					require.Contains(t, args, "haproxyVersion=3.4")
 				default:
@@ -62,7 +64,7 @@ func TestDefaultsLoadTheImageTagRequestedByTheChart(t *testing.T) {
 			})
 			require.NoError(t, err)
 			session := &Session{Runner: runner, Cluster: cluster, Artifacts: dir,
-				ImageRepository: "registry:5000/haptic", ImageTag: "test", HAProxyVersion: "3.4"}
+				ImageRepository: "registry:5000/haptic", ImageTag: "test", HAProxyVersion: "3.4", SPOAImage: spoaImage}
 			require.NoError(t, session.installDefaultsChart(t.Context(), &DefaultsOptions{Image: source}))
 			require.Equal(t, 1, helmCalls)
 		})

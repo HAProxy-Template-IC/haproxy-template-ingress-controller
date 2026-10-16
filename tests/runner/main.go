@@ -213,7 +213,7 @@ func runScenario(ctx context.Context, root string, options *options, output io.W
 	if err != nil {
 		return err
 	}
-	session := &scenarios.Session{Runner: runner, Cluster: cluster, Client: cluster.Client(options.namespace), Root: root, Namespace: options.namespace, Release: options.release, Artifacts: artifacts, ImageRepository: repository, ImageTag: tag, HAProxyVersion: images.HAProxyVersion, Log: output}
+	session := &scenarios.Session{Runner: runner, Cluster: cluster, Client: cluster.Client(options.namespace), Root: root, Namespace: options.namespace, Release: options.release, Artifacts: artifacts, ImageRepository: repository, ImageTag: tag, HAProxyVersion: images.HAProxyVersion, SPOAImage: images.SPOAHub, Log: output}
 	if options.name == gitopsScenario {
 		session.CommandTimeout = 10 * time.Minute
 	}

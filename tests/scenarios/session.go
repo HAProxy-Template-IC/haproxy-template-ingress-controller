@@ -33,6 +33,7 @@ type Session struct {
 	ImageRepository string
 	ImageTag        string
 	HAProxyVersion  string
+	SPOAImage       string
 	Log             io.Writer
 	CommandTimeout  time.Duration
 	commandNumber   atomic.Uint64
@@ -124,6 +125,16 @@ func (s *Session) loadControllerImage(ctx context.Context, source string) error 
 		return err
 	}
 	return s.Cluster.LoadImages(ctx, source, versioned)
+}
+
+// LoadSPOAImage loads the chart's SPOA image, which a CI build has only locally.
+func (s *Session) LoadSPOAImage(ctx context.Context) error {
+	if _, err := s.Run(ctx, "docker", "image", "inspect", s.SPOAImage); err != nil {
+		if _, err := s.Run(ctx, "docker", "pull", s.SPOAImage); err != nil {
+			return err
+		}
+	}
+	return s.Cluster.LoadImages(ctx, s.SPOAImage)
 }
 
 func (s *Session) ImageValues() []string {

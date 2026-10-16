@@ -29,6 +29,6 @@ build inputs match. Changed inputs rebuild the toolchain before tests run.
 The native ARM jobs select Go's exact version from the pinned `GO_BUILD_IMAGE`
 metadata and read other tool versions from the same build pins.
 
-When updating Kind, Helm, kubectl, or yq, add the matching ARM64 download checksum
+When updating Kind, Helm, kubectl, yq, or cosign, add the matching ARM64 download checksum
 to `.github/native-tool-checksums.json`. Keep the checksum for its bootstrap yq
 version too. Run `make test-github-verification` to check the complete selection.

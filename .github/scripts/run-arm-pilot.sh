@@ -17,7 +17,12 @@ git diff --exit-code "$PILOT_SOURCE_SHA"
 } > .pilot/host.txt 2>&1
 python3 .github/scripts/runner-metrics.py .pilot/metrics.jsonl &
 metrics_pid=$!
-trap 'kill "$metrics_pid" 2>/dev/null || true; wait "$metrics_pid" 2>/dev/null || true' EXIT
+stop_background() {
+    kill "$metrics_pid" ${spoa_build_pid:+-- "-$spoa_build_pid"} 2>/dev/null || true
+    wait "$metrics_pid" ${spoa_build_pid:+"$spoa_build_pid"} 2>/dev/null || true
+    [[ -z "${spoa_build_pid:-}" ]] || cat .pilot/spoa-build.log
+}
+trap stop_background EXIT
 
 if [[ "${PILOT_CAPTURE_NETWORK:-0}" == 1 ]]; then
     sudo apt-get update -qq
@@ -30,6 +35,7 @@ test "$(kind get clusters | wc -l)" -eq 0
 chart_version="0.0.0-github.g${PILOT_SOURCE_SHA:0:8}"
 sed -i "s|^version:.*|version: ${chart_version}|" charts/haptic/Chart.yaml
 yq -i '.cache.varnish.image = strenv(PILOT_VARNISH_IMAGE)' charts/haptic/values.yaml
+bash .github/scripts/spoa-test-image.sh select
 export PILOT_GOMAXPROCS="${PILOT_GOMAXPROCS:-2}"
 values_file=scripts/dev-env-assets/e2e-values.yaml
 if [[ "${HAPTIC_E2E_PROFILE:-}" == conformance ]]; then
@@ -48,7 +54,11 @@ build_target=docker-build-test
 if [[ "${PILOT_NATIVE_BUILD:-0}" == 1 ]]; then
     build_target=docker-build-test-native
 fi
+setsid bash .github/scripts/spoa-test-image.sh build > .pilot/spoa-build.log 2>&1 &
+spoa_build_pid=$!
 make "$build_target" 2>&1 | tee .pilot/build.log
+wait "$spoa_build_pid" || exit 1
+spoa_build_pid=
 docker image inspect haptic:test > .pilot/controller-image.json
 if [[ "${PILOT_STARTUP_PROFILE:-1}" == 1 ]]; then
     python3 .github/scripts/profile-startup.py > .pilot/startup-profile.log 2>&1 &
