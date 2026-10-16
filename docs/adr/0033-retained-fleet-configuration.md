@@ -45,7 +45,8 @@ Its worker receipt is historical evidence, not current fleet membership. Pod
 termination and discovery cleanup leave checkpoint statuses and their auxiliary
 children intact, including after the acknowledging pod disappears.
 
-The publisher writes the complete set, verifies it by reading it back, and only
+The publisher writes the complete set, verifies it by reading it back (one live
+list per child kind, not one read per child), and only
 then atomically promotes its name, UID, and checksum in the ordinary `HAProxyCfg`'s
 `status.retainedConfigs`. Interrupted publication leaves the previous pointer
 usable. Repeated acknowledgements of identical output reuse its content address.

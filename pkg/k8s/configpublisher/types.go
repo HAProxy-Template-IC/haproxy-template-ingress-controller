@@ -51,6 +51,24 @@ type AuxiliaryFiles struct {
 	CRTListFiles []auxiliaryfiles.CRTListFile
 }
 
+func (f *AuxiliaryFiles) kinds() []string {
+	var kinds []string
+	for _, present := range []struct {
+		kind  string
+		files bool
+	}{
+		{kindMapFile, len(f.MapFiles) > 0},
+		{kindGeneralFile, len(f.GeneralFiles) > 0},
+		{kindCRTListFile, len(f.CRTListFiles) > 0},
+		{kindSecret, len(f.SSLCertificates)+len(f.SSLCaFiles) > 0},
+	} {
+		if present.files {
+			kinds = append(kinds, present.kind)
+		}
+	}
+	return kinds
+}
+
 // PublishRequest contains the information needed to publish HAProxy runtime configuration.
 type PublishRequest struct {
 	// TemplateConfigName is the name of the HAProxyTemplateConfig that generated this config.
@@ -110,6 +128,8 @@ type PublishRequest struct {
 
 	auxiliarySetID string
 	auxiliaryClaim string
+	// retainedChildren is nil outside a checkpoint publication.
+	retainedChildren retainedListing
 }
 
 // PublishResult contains the result of publishing configuration resources.
