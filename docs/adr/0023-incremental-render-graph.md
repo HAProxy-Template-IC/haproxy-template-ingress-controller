@@ -462,4 +462,4 @@ contiguous-string work as constant.
 
 - [Salsa red-green algorithm](https://github.com/salsa-rs/salsa/blob/master/book/src/reference/algorithm.md)
 - [React `memo`](https://react.dev/reference/react/memo)
-- [Issue #187](https://gitlab.com/haproxy-haptic/haptic/-/work_items/187)
+- [Issue #187](https://github.com/haproxy-haptic/HAPTIC/issues/187)

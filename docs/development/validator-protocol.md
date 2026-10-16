@@ -4,7 +4,7 @@
 
 HAPTIC's admission webhook consults one or more validator sidecars to check rendered files before admitting changes. This document is the authoritative specification of the wire protocol between the controller and a validator sidecar; HAPTIC owns the contract.
 
-A validator is an **opaque program** to the controller: it speaks this protocol over a unix socket. What it does internally — whether it parses TOML, has a plugin system, dispatches files to internal handlers, talks to remote services — is its own concern and is not described here. Concrete implementations document their internals in their own repositories. Reference implementation: [`haproxy-spoa-hub --validate-socket <path>`](https://gitlab.com/haproxy-haptic/haproxy-spoa-hub/-/blob/main/specs/004-validate-mode/spec.md).
+A validator is an **opaque program** to the controller: it speaks this protocol over a unix socket. What it does internally — whether it parses TOML, has a plugin system, dispatches files to internal handlers, talks to remote services — is its own concern and is not described here. Concrete implementations document their internals in their own repositories. Reference implementation: [`haproxy-spoa-hub --validate-socket <path>`](https://github.com/haproxy-haptic/haproxy-spoa-hub/blob/main/specs/004-validate-mode/spec.md).
 
 For end-user documentation about declaring validators on `HAProxyTemplateConfig` and operating the sidecar, see [`../site/docs/operations/pluggable-validators.md`](../site/docs/operations/pluggable-validators.md).
 

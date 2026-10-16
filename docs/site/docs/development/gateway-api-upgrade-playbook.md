@@ -2,7 +2,7 @@
 
 Mechanical checklist for bumping the `sigs.k8s.io/gateway-api` dependency.
 Distilled from the v1.6.0 upgrade retrospective
-([issue #58](https://gitlab.com/haproxy-haptic/haptic/-/issues/58)): the bump
+([issue #63](https://github.com/haproxy-haptic/HAPTIC/issues/63)): the bump
 itself takes under an hour — the cost lives in suite adaptation and
 verification. Work through the sections in order.
 

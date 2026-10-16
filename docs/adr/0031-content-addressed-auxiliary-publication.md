@@ -54,4 +54,4 @@ status no longer churn with the set ID. Authoritative refresh still checks all
 children and repairs externally changed or deleted resources. The protocol uses
 existing names, annotations, and status fields; no CRD schema change is needed.
 
-Tracked in [issue #287](https://gitlab.com/haproxy-haptic/haptic/-/issues/287).
+Tracked in [issue #285](https://github.com/haproxy-haptic/HAPTIC/issues/285).
