@@ -748,6 +748,18 @@ func (e *heldRenderError) Error() string { return ErrRenderHeld.Error() + ": " +
 
 func (e *heldRenderError) Unwrap() []error { return []error{ErrRenderHeld, e.cause} }
 
+// HeldRender returns the error Execute would return in mode without rendering
+// any input set, or nil when Execute would render.
+func (p *Pipeline) HeldRender(mode rendercontext.RenderMode) error {
+	if mode != rendercontext.RenderModeReconcile || p.criticalContent == nil {
+		return nil
+	}
+	if _, held := p.criticalContent.BeginReconcileRender(); held != nil {
+		return &heldRenderError{cause: held}
+	}
+	return nil
+}
+
 // RenderHeld reports a reconcile that skipped its render; its error repeats
 // the failure of the render that started the hold.
 func RenderHeld(err error) bool {

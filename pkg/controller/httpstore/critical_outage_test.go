@@ -46,6 +46,7 @@ type outageHarness struct {
 	pipeline  *pipeline.Pipeline
 	provider  stores.StoreProvider
 	routes    *k8sstore.MemoryStore
+	watches   map[string]config.WatchedResource
 	requests  atomic.Int64
 	up        atomic.Bool
 	url       string
@@ -66,13 +67,14 @@ func newOutageHarness(t *testing.T) *outageHarness {
 	}))
 	t.Cleanup(server.Close)
 	h.url = server.URL
+	h.watches = map[string]config.WatchedResource{
+		"routes": {APIVersion: "example.test/v1", Resources: "routes", IndexBy: []string{"metadata.namespace", "metadata.name"}},
+	}
 	cfg := &config.Config{
 		Dataplane: config.DataplaneConfig{
 			MapsDir: "/etc/haproxy/maps", SSLCertsDir: "/etc/haproxy/ssl", GeneralStorageDir: "/etc/haproxy/files",
 		},
-		WatchedResources: map[string]config.WatchedResource{
-			"routes": {APIVersion: "example.test/v1", Resources: "routes", IndexBy: []string{"metadata.namespace", "metadata.name"}},
-		},
+		WatchedResources: h.watches,
 		TemplateSnippets: map[string]config.TemplateSnippet{
 			"routes": {
 				Name:        "routes",

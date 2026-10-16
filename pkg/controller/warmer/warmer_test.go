@@ -280,6 +280,8 @@ type cancelablePipeline struct {
 	started chan context.Context
 }
 
+func (*cancelablePipeline) HeldRender(rendercontext.RenderMode) error { return nil }
+
 func (p *cancelablePipeline) Execute(ctx context.Context, _ stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
 	p.started <- ctx
 	<-ctx.Done()

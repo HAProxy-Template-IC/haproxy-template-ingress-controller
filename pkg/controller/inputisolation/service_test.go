@@ -42,6 +42,8 @@ type validatingFixture struct {
 	aliasCheck bool
 }
 
+func (*validatingFixture) HeldRender(rendercontext.RenderMode) error { return nil }
+
 func (p *validatingFixture) Execute(ctx context.Context, provider stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
 	if p.fail != nil {
 		return nil, p.fail
@@ -139,6 +141,8 @@ func TestFailedBaselineDoesNotAuthorizeInputSelection(t *testing.T) {
 }
 
 type validationFunc func(context.Context, stores.StoreProvider) (*pipeline.PipelineResult, error)
+
+func (validationFunc) HeldRender(rendercontext.RenderMode) error { return nil }
 
 func (f validationFunc) Execute(ctx context.Context, provider stores.StoreProvider, _ rendercontext.RenderMode, _ ...rendercontext.Option) (*pipeline.PipelineResult, error) {
 	return f(ctx, provider)

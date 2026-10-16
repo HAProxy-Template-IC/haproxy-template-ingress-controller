@@ -113,7 +113,9 @@ as a narrowing. Two facts were not weighed then:
    because the skipped inputs may no longer need the source. A completed render
    ends every outage, since an unavailable critical source fails its render.
    Configuration changes start a new iteration without that state. The leader
-   reports the held failure once per term.
+   reports the held failure once per term. Input isolation (ADR-0032) asks for
+   the hold before it captures and stages the watched set, so a held trigger
+   skips that work too (issue #354).
 
 ## RULE #2 delta
 
