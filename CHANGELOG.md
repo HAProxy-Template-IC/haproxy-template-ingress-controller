@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A verified `/v1/state` read that overlapped an apply could overwrite the dataplane agent's file tree with the set from before the apply, so the pod reported `disk_is_the_desired_set` until it restarted and new HAProxy pods could not start from the recovery checkpoint.
 - A leader that stops gracefully finishes its deployment in progress, including a pending HAProxy reload, and saves its recovery checkpoint before it releases the Lease. Previously the checkpoint for the last few seconds of deployments was dropped, so after an ordinary leader change replacement HAProxy pods stayed NotReady with `RetainedConfigUnavailable` while rendering was blocked.
 - Publishing a recovery checkpoint reads its shared auxiliary files with one list per kind instead of reading every file twice, removing most of the controller's API requests under steady deployment churn.
 - Publishing the configuration reads its auxiliary files with one list per kind instead of reading every map, file, and certificate Secret on each publication, and checkpoint cleanup reuses the checkpoint's verification list.
