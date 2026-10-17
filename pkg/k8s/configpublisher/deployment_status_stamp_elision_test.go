@@ -16,12 +16,16 @@ package configpublisher
 
 import (
 	"context"
+	"errors"
+	"maps"
+	"slices"
 	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	haproxyv1alpha1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
 	"github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned/fake"
 
@@ -65,10 +69,16 @@ func installSSAStatusPatchCounter(c *fake.Clientset) *ssaStatusPatchCounter {
 	return counter
 }
 
-func (c *ssaStatusPatchCounter) get(resource string) int {
+func (c *ssaStatusPatchCounter) runtimeConfigs() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.counts[resource]
+	return c.counts[resHAProxyCfgs]
+}
+
+func (c *ssaStatusPatchCounter) snapshot() map[string]int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.counts)
 }
 
 // aux returns the total SSA status patches across all three auxiliary-file kinds.
@@ -134,7 +144,7 @@ func TestUpdateDeploymentStatus_ElidesUnchangedAuxStamps(t *testing.T) {
 
 	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
 	assert.Equal(t, 3, counter.aux(), "first update stamps all three aux files")
-	assert.Equal(t, 1, counter.get(resHAProxyCfgs), "HAProxyCfg patched on first update")
+	assert.Equal(t, 1, counter.runtimeConfigs(), "HAProxyCfg patched on first update")
 
 	const repeats = 5
 	for range repeats {
@@ -143,7 +153,7 @@ func TestUpdateDeploymentStatus_ElidesUnchangedAuxStamps(t *testing.T) {
 
 	assert.Equal(t, 3, counter.aux(),
 		"identical repeats must issue no further aux-file patches (before this fix: %d)", 3+3*repeats)
-	assert.Equal(t, 1+repeats, counter.get(resHAProxyCfgs),
+	assert.Equal(t, 1+repeats, counter.runtimeConfigs(),
 		"HAProxyCfg is patched on every update, unchanged by the elision")
 }
 
@@ -244,9 +254,9 @@ func TestReconcileDeployedToPods_KeepsRunningPodStamps(t *testing.T) {
 	assert.Equal(t, 3, counter.aux(), "a still-running pod's unchanged repeat stays elided")
 }
 
-// TestResetAuxiliaryStampCache_ForcesRestamp proves the leadership-transition
+// TestResetStatusStamps_ForcesRestamp proves the leadership-transition
 // invalidation: after a reset a new leader re-stamps once per (pod, file).
-func TestResetAuxiliaryStampCache_ForcesRestamp(t *testing.T) {
+func TestResetStatusStamps_ForcesRestamp(t *testing.T) {
 	ctx, publisher, counter := newAuxPublisherWithCounter(t)
 
 	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
@@ -254,7 +264,7 @@ func TestResetAuxiliaryStampCache_ForcesRestamp(t *testing.T) {
 	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
 	require.Equal(t, 3, counter.aux(), "unchanged repeat elided before reset")
 
-	publisher.ResetAuxiliaryStampCache()
+	publisher.ResetStatusStamps()
 
 	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
 	assert.Equal(t, 6, counter.aux(), "reset forces one re-stamp per aux file")
@@ -262,57 +272,321 @@ func TestResetAuxiliaryStampCache_ForcesRestamp(t *testing.T) {
 	assert.Equal(t, 6, counter.aux(), "and elision resumes after the re-stamp")
 }
 
-// TestAuxStampCache_CommitSkippedWhenInvalidationRacesPatch is the direct unit
+// TestStatusStampCache_CommitSkippedWhenInvalidationRacesPatch is the direct unit
 // exercise of the check-then-act race guard: an invalidation between beginStamp
 // (compare) and commitStamp (record) must drop the record, so the value the CR
 // may no longer carry is not cached and the next update re-stamps.
-func TestAuxStampCache_CommitSkippedWhenInvalidationRacesPatch(t *testing.T) {
-	var c auxStampCache
+func TestStatusStampCache_CommitSkippedWhenInvalidationRacesPatch(t *testing.T) {
+	var c statusStampCache
 	key := stampKey{kind: kindMapFile, namespace: "default", name: "haproxy-map-x", podName: "haproxy-0"}
-	value := stampedEntry{podUID: "uid-0", podRuntimeID: "rt-0", checksum: "c"}
+	value := stampedEntry{payload: "p", footprint: "f"}
 
-	// Nothing cached yet: the stamp must be applied.
-	skip, gen := c.beginStamp(key, value, false)
-	require.False(t, skip)
+	_, ok, gen := c.beginStamp(key)
+	require.False(t, ok, "nothing cached yet")
 
 	// A pod-departure invalidation races between the (unlocked) Patch and record.
 	// It is a no-op on the entries (none yet) but must still bump the generation.
 	c.forgetPod("haproxy-0")
 
-	// The record is dropped, so the stale value is NOT cached.
 	c.commitStamp(key, value, gen)
-	skipAfter, _ := c.beginStamp(key, value, false)
-	assert.False(t, skipAfter, "a stamp whose invalidation raced its Patch must not be cached; the next update re-stamps")
+	_, ok, gen = c.beginStamp(key)
+	assert.False(t, ok, "a stamp whose invalidation raced its Patch must not be cached")
 
-	// Sanity: an uncontested stamp IS cached and the next identical update elides.
-	skip2, gen2 := c.beginStamp(key, value, false)
-	require.False(t, skip2)
-	c.commitStamp(key, value, gen2)
-	skip3, _ := c.beginStamp(key, value, false)
-	assert.True(t, skip3, "an uncontested stamp is cached and the next identical update is elided")
+	c.commitStamp(key, value, gen)
+	last, ok, _ := c.beginStamp(key)
+	require.True(t, ok, "an uncontested stamp is cached")
+	assert.Equal(t, value, last)
 }
 
-// TestUpdateDeploymentStatus_DriftCheckBypassesElision proves the drift-interval
-// self-heal: a drift-check update re-stamps even when the value is unchanged
-// (restoring the pre-fix authoritative re-stamp that heals an out-of-band strip),
-// while ordinary inter-drift updates with the same value still elide.
-func TestUpdateDeploymentStatus_DriftCheckBypassesElision(t *testing.T) {
-	ctx, publisher, counter := newAuxPublisherWithCounter(t)
+// driftReadCounter counts the live reads a drift check takes: GETs of the
+// HAProxyCfg and LISTs of auxiliary files.
+type driftReadCounter struct {
+	mu     sync.Mutex
+	counts map[string]int
+}
 
+func installDriftReadCounter(c *fake.Clientset) *driftReadCounter {
+	counter := &driftReadCounter{counts: make(map[string]int)}
+	c.PrependReactor("*", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		verb, resource := action.GetVerb(), action.GetResource().Resource
+		if (verb == "get" && resource == resHAProxyCfgs) || (verb == "list" && resource != resHAProxyCfgs) {
+			counter.mu.Lock()
+			counter.counts[verb+" "+resource]++
+			counter.mu.Unlock()
+		}
+		return false, nil, nil
+	})
+	return counter
+}
+
+func (c *driftReadCounter) get(key string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.counts[key]
+}
+
+var testPods = []struct{ name, uid, runtimeID string }{
+	{"haproxy-0", "uid-0", "rt-0"},
+	{"haproxy-1", "uid-1", "rt-1"},
+}
+
+func stampAllPods(t *testing.T, ctx context.Context, publisher *Publisher, update func(name, uid, runtimeID, checksum string) *DeploymentStatusUpdate) {
+	t.Helper()
+	for _, pod := range testPods {
+		require.NoError(t, publisher.UpdateDeploymentStatus(ctx, update(pod.name, pod.uid, pod.runtimeID, "abc123")))
+	}
+}
+
+// TestUpdateDeploymentStatus_IdleDriftChecksWriteNothing is issue #376: after a
+// deployment stamped two pods, drift checks that find every entry as the pods
+// left it read each object live and write nothing.
+func TestUpdateDeploymentStatus_IdleDriftChecksWriteNothing(t *testing.T) {
+	ctx, publisher, counter := newAuxPublisherWithCounter(t)
+	crdClient := publisher.crdClient.(*fake.Clientset)
+	stampAllPods(t, ctx, publisher, statusUpdate)
+	require.Equal(t, 6, counter.aux())
+	require.Equal(t, 2, counter.runtimeConfigs())
+	reads := installDriftReadCounter(crdClient)
+
+	const rounds = 5
+	for range rounds {
+		stampAllPods(t, ctx, publisher, driftStatusUpdate)
+	}
+
+	assert.Equal(t, 6, counter.aux(), "idle drift checks must not re-apply aux entries (before #376: %d)", 6+6*rounds)
+	assert.Equal(t, 2, counter.runtimeConfigs(), "idle drift checks must not re-apply HAProxyCfg entries (before #376: %d)", 2+2*rounds)
+	checks := rounds * len(testPods)
+	assert.Equal(t, checks, reads.get("get "+resHAProxyCfgs), "every drift check reads the HAProxyCfg live")
+	for _, resource := range []string{resHAProxyMapFiles, resHAProxyGeneralFiles, resHAProxyCRTListFiles} {
+		assert.Equal(t, checks, reads.get("list "+resource), "every drift check lists %s once", resource)
+	}
+}
+
+// TestUpdateDeploymentStatus_DriftCheckRestoresChangedEntries proves the drift
+// check keeps its guarantee: whatever changed a pod's footprint since its last
+// apply is re-applied in the next drift check, and nothing else is.
+func TestUpdateDeploymentStatus_DriftCheckRestoresChangedEntries(t *testing.T) {
+	tests := []struct {
+		name     string
+		resource string
+		// reapplied counts the pods whose entry the tamper changed.
+		reapplied int
+		tamper    func(t *testing.T, ctx context.Context, c *fake.Clientset, objects auxObjectNames)
+	}{
+		{
+			name:      "map file entry removed",
+			reapplied: 1,
+			resource:  resHAProxyMapFiles,
+			tamper: func(t *testing.T, ctx context.Context, c *fake.Clientset, objects auxObjectNames) {
+				t.Helper()
+				client := c.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default")
+				obj, err := client.Get(ctx, objects.mapFile, metav1.GetOptions{})
+				require.NoError(t, err)
+				obj.Status.DeployedToPods = withoutPod(obj.Status.DeployedToPods, "haproxy-0")
+				_, err = client.UpdateStatus(ctx, obj, metav1.UpdateOptions{})
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:      "general file entry edited",
+			reapplied: 1,
+			resource:  resHAProxyGeneralFiles,
+			tamper: func(t *testing.T, ctx context.Context, c *fake.Clientset, objects auxObjectNames) {
+				t.Helper()
+				client := c.HaproxyTemplateICV1alpha1().HAProxyGeneralFiles("default")
+				obj, err := client.Get(ctx, objects.generalFile, metav1.GetOptions{})
+				require.NoError(t, err)
+				for i := range obj.Status.DeployedToPods {
+					if obj.Status.DeployedToPods[i].PodName == "haproxy-0" {
+						obj.Status.DeployedToPods[i].Checksum = "forged"
+					}
+				}
+				_, err = client.UpdateStatus(ctx, obj, metav1.UpdateOptions{})
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:      "crt-list entry ownership lost",
+			reapplied: 1,
+			resource:  resHAProxyCRTListFiles,
+			tamper: func(t *testing.T, ctx context.Context, c *fake.Clientset, objects auxObjectNames) {
+				t.Helper()
+				client := c.HaproxyTemplateICV1alpha1().HAProxyCRTListFiles("default")
+				obj, err := client.Get(ctx, objects.crtListFile, metav1.GetOptions{})
+				require.NoError(t, err)
+				manager := podStatusFieldManager("haproxy-0")
+				obj.ManagedFields = slices.DeleteFunc(obj.ManagedFields, func(entry metav1.ManagedFieldsEntry) bool { return entry.Manager == manager })
+				_, err = client.Update(ctx, obj, metav1.UpdateOptions{})
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:      "HAProxyCfg entry removed",
+			reapplied: 1,
+			resource:  resHAProxyCfgs,
+			tamper: func(t *testing.T, ctx context.Context, c *fake.Clientset, _ auxObjectNames) {
+				t.Helper()
+				client := c.HaproxyTemplateICV1alpha1().HAProxyCfgs("default")
+				obj, err := client.Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+				require.NoError(t, err)
+				obj.Status.DeployedToPods = withoutPod(obj.Status.DeployedToPods, "haproxy-0")
+				_, err = client.UpdateStatus(ctx, obj, metav1.UpdateOptions{})
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:      "map file recreated empty",
+			reapplied: 2,
+			resource:  resHAProxyMapFiles,
+			tamper: func(t *testing.T, ctx context.Context, c *fake.Clientset, objects auxObjectNames) {
+				t.Helper()
+				client := c.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default")
+				obj, err := client.Get(ctx, objects.mapFile, metav1.GetOptions{})
+				require.NoError(t, err)
+				require.NoError(t, client.Delete(ctx, obj.Name, metav1.DeleteOptions{}))
+				obj.ResourceVersion = ""
+				obj.UID = "recreated"
+				obj.ManagedFields = nil
+				obj.Status = haproxyv1alpha1.HAProxyMapFileStatus{}
+				_, err = client.Create(ctx, obj, metav1.CreateOptions{})
+				require.NoError(t, err)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, publisher, counter := newAuxPublisherWithCounter(t)
+			crdClient := publisher.crdClient.(*fake.Clientset)
+			objects := publishedAuxObjects(t, ctx, crdClient)
+			stampAllPods(t, ctx, publisher, statusUpdate)
+			stampAllPods(t, ctx, publisher, driftStatusUpdate)
+			before := counter.snapshot()
+
+			tt.tamper(t, ctx, crdClient, objects)
+			stampAllPods(t, ctx, publisher, driftStatusUpdate)
+
+			after := counter.snapshot()
+			assert.Equal(t, before[tt.resource]+tt.reapplied, after[tt.resource], "only the changed entries are re-applied")
+			for resource, count := range after {
+				if resource != tt.resource {
+					assert.Equal(t, before[resource], count, "%s is unchanged and must not be re-applied", resource)
+				}
+			}
+			assertEntryRestored(t, ctx, crdClient, tt.resource, objects)
+
+			stampAllPods(t, ctx, publisher, driftStatusUpdate)
+			assert.Equal(t, after, counter.snapshot(), "the restored footprint makes the next drift check idle again")
+		})
+	}
+}
+
+// TestUpdateDeploymentStatus_DriftCheckWithoutMemoryAppliesOnce covers a new
+// leader: a publisher that never applied anything must not skip, then idles.
+func TestUpdateDeploymentStatus_DriftCheckWithoutMemoryAppliesOnce(t *testing.T) {
+	ctx, publisher, counter := newAuxPublisherWithCounter(t)
+	stampAllPods(t, ctx, publisher, statusUpdate)
+	before := counter.snapshot()
+
+	successor := NewWithListers(publisher.k8sClient, publisher.crdClient, nil, testLogger())
+	stampAllPods(t, ctx, successor, driftStatusUpdate)
+	assert.Equal(t, before[resHAProxyCfgs]+2, counter.runtimeConfigs(), "a new leader re-asserts each pod's HAProxyCfg entry")
+	assert.Equal(t, 6+6, counter.aux(), "a new leader re-asserts each pod's aux entries")
+
+	stampAllPods(t, ctx, successor, driftStatusUpdate)
+	assert.Equal(t, before[resHAProxyCfgs]+2, counter.runtimeConfigs())
+	assert.Equal(t, 12, counter.aux(), "and its next drift check writes nothing")
+}
+
+// TestUpdateDeploymentStatus_DriftCheckStampsNewPod: a pod first seen by a
+// drift check has no footprint anywhere and gets every entry.
+func TestUpdateDeploymentStatus_DriftCheckStampsNewPod(t *testing.T) {
+	ctx, publisher, counter := newAuxPublisherWithCounter(t)
 	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
 	require.Equal(t, 3, counter.aux())
 
-	// Ordinary repeat: elided.
-	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
-	assert.Equal(t, 3, counter.aux(), "a normal identical update is elided")
+	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, driftStatusUpdate("haproxy-2", "uid-2", "rt-2", "abc123")))
+	assert.Equal(t, 6, counter.aux(), "the new pod gets its aux entries")
+	assert.Equal(t, 2, counter.runtimeConfigs(), "and its HAProxyCfg entry")
+}
 
-	// Drift check with the identical value: re-stamps every aux file.
-	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, driftStatusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
-	assert.Equal(t, 6, counter.aux(), "a drift-check update re-stamps even when the value is unchanged")
+// TestUpdateDeploymentStatus_DriftCheckAppliesWhatItCouldNotRead: a kind whose
+// live list failed is re-applied unverified; listed kinds still idle.
+func TestUpdateDeploymentStatus_DriftCheckAppliesWhatItCouldNotRead(t *testing.T) {
+	ctx, publisher, counter := newAuxPublisherWithCounter(t)
+	crdClient := publisher.crdClient.(*fake.Clientset)
+	stampAllPods(t, ctx, publisher, statusUpdate)
+	before := counter.snapshot()
+	crdClient.PrependReactor("list", resHAProxyMapFiles, func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("list unavailable")
+	})
 
-	// The drift re-stamp is recorded, so the next ordinary update elides again.
-	require.NoError(t, publisher.UpdateDeploymentStatus(ctx, statusUpdate("haproxy-0", "uid-0", "rt-0", "abc123")))
-	assert.Equal(t, 6, counter.aux(), "elision resumes after the drift re-stamp")
+	stampAllPods(t, ctx, publisher, driftStatusUpdate)
+
+	after := counter.snapshot()
+	assert.Equal(t, before[resHAProxyMapFiles]+2, after[resHAProxyMapFiles], "unread map files are re-applied for each pod")
+	assert.Equal(t, before[resHAProxyGeneralFiles], after[resHAProxyGeneralFiles])
+	assert.Equal(t, before[resHAProxyCRTListFiles], after[resHAProxyCRTListFiles])
+	assert.Equal(t, before[resHAProxyCfgs], after[resHAProxyCfgs])
+}
+
+type auxObjectNames struct {
+	mapFile, generalFile, crtListFile string
+}
+
+func publishedAuxObjects(t *testing.T, ctx context.Context, c *fake.Clientset) auxObjectNames {
+	t.Helper()
+	cfg, err := c.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	refs := cfg.Status.AuxiliaryFiles
+	require.Len(t, refs.MapFiles, 1)
+	require.Len(t, refs.GeneralFiles, 1)
+	require.Len(t, refs.CRTListFiles, 1)
+	return auxObjectNames{mapFile: refs.MapFiles[0].Name, generalFile: refs.GeneralFiles[0].Name, crtListFile: refs.CRTListFiles[0].Name}
+}
+
+func withoutPod(pods []haproxyv1alpha1.PodDeploymentStatus, podName string) []haproxyv1alpha1.PodDeploymentStatus {
+	kept := make([]haproxyv1alpha1.PodDeploymentStatus, 0, len(pods))
+	for i := range pods {
+		if pods[i].PodName != podName {
+			kept = append(kept, pods[i])
+		}
+	}
+	return kept
+}
+
+func statusObject(t *testing.T, ctx context.Context, c *fake.Clientset, resource string, objects auxObjectNames) metav1.Object {
+	t.Helper()
+	client := c.HaproxyTemplateICV1alpha1()
+	var (
+		obj metav1.Object
+		err error
+	)
+	switch resource {
+	case resHAProxyCfgs:
+		obj, err = client.HAProxyCfgs("default").Get(ctx, "test-config-haproxycfg", metav1.GetOptions{})
+	case resHAProxyMapFiles:
+		obj, err = client.HAProxyMapFiles("default").Get(ctx, objects.mapFile, metav1.GetOptions{})
+	case resHAProxyGeneralFiles:
+		obj, err = client.HAProxyGeneralFiles("default").Get(ctx, objects.generalFile, metav1.GetOptions{})
+	case resHAProxyCRTListFiles:
+		obj, err = client.HAProxyCRTListFiles("default").Get(ctx, objects.crtListFile, metav1.GetOptions{})
+	}
+	require.NoError(t, err)
+	return obj
+}
+
+func assertEntryRestored(t *testing.T, ctx context.Context, c *fake.Clientset, resource string, objects auxObjectNames) {
+	t.Helper()
+	obj := statusObject(t, ctx, c, resource, objects)
+	pods, ok := podStatusesOf(obj)
+	require.True(t, ok)
+	index := slices.IndexFunc(pods, func(pod haproxyv1alpha1.PodDeploymentStatus) bool { return pod.PodName == "haproxy-0" })
+	require.GreaterOrEqual(t, index, 0, "%s lost haproxy-0's entry: %+v", resource, pods)
+	assert.Equal(t, "uid-0", pods[index].PodUID)
+	assert.NotEqual(t, "forged", pods[index].Checksum)
+	manager := podStatusFieldManager("haproxy-0")
+	assert.True(t, slices.ContainsFunc(obj.GetManagedFields(), func(entry metav1.ManagedFieldsEntry) bool { return entry.Manager == manager }),
+		"%s entry must be owned by %s again", resource, manager)
 }
 
 // TestPublishConfig_AuxFileDeleteRecreateReStamps reproduces the content

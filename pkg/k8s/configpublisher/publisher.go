@@ -63,14 +63,14 @@ type Publisher struct {
 	// content. Nil makes every publication re-check read the whole object.
 	resourceVersionOf func(ctx context.Context, namespace, name string) (string, error)
 
-	// auxStamps elides per-pod status re-stamps on auxiliary-file CRs whose
-	// value is unchanged (see aux_stamp_cache.go). Zero value is ready to use.
-	auxStamps auxStampCache
+	// statusStamps elides per-pod status applies that would store nothing
+	// (see status_stamp_cache.go). Zero value is ready to use.
+	statusStamps statusStampCache
 
 	// publishedMu guards published, the last successful publication per
 	// (namespace, template, suffix) key. With republishInterval > 0 an
 	// unchanged republish inside the interval returns the recorded result
-	// without any API call — the same elision contract as auxStampCache one
+	// without any API call — the same elision contract as statusStampCache one
 	// level up: only a write of provably identical content is skipped, and
 	// the interval-expiry republish stays the authoritative self-heal for
 	// out-of-band child deletions. Zero interval disables skipping, so every
@@ -208,11 +208,11 @@ func (p *Publisher) forgetPublishedResource(namespace, name string) {
 	}
 }
 
-// ResetAuxiliaryStampCache drops every remembered auxiliary-file status stamp.
-// Call it on a leadership transition so a new leader re-stamps each (pod, file)
-// once rather than trusting a cache it did not populate.
-func (p *Publisher) ResetAuxiliaryStampCache() {
-	p.auxStamps.reset()
+// ResetStatusStamps drops every remembered per-pod status apply. Call it on a
+// leadership transition so a new leader applies each (pod, object) once rather
+// than trusting a cache it did not populate.
+func (p *Publisher) ResetStatusStamps() {
+	p.statusStamps.reset()
 }
 
 // forgetAuxFileStampOnDelete drops an auxiliary-file CR's stamp cache entries
@@ -220,7 +220,7 @@ func (p *Publisher) ResetAuxiliaryStampCache() {
 // content-hashed name re-stamps instead of being elided against the stale cache.
 func (p *Publisher) forgetAuxFileStampOnDelete(err error, kind, namespace, name string) {
 	if err == nil || apierrors.IsNotFound(err) {
-		p.auxStamps.forgetAuxFile(kind, namespace, name)
+		p.statusStamps.forgetAuxFile(kind, namespace, name)
 	}
 }
 

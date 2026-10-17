@@ -39,6 +39,20 @@ Status-only writes can still be retried because they preserve the claim. A
 terminating child cannot satisfy publication. Owner checks and stamp-cache
 invalidation on recreation remain in force.
 
+## Per-pod status
+
+Each pod applies its entry to the `HAProxyCfg` and every referenced child with
+its own field manager. Between drift-prevention rounds a child apply identical
+to the pod's last successful one is not sent (issue #163); the `HAProxyCfg`
+entry is always applied. A drift-prevention round
+reads the `HAProxyCfg` and one label-selected list per child kind live. It
+re-applies an entry unless the object still shows exactly what that pod's last
+identical apply left on it: the same UID, the same entry, and the same managed
+fields for the pod's field manager. Any other write to them, such as a removed
+or edited entry, a recreated object, or an ownership change, makes the round
+re-apply. A failed or missing read re-applies unverified, and a new leader
+re-applies everything once (issue #376).
+
 ## Validation delta
 
 The atomic completeness check remains. For new publications, a checked digest
@@ -53,6 +67,11 @@ The publisher's up-to-date, ownership, and deletion-state checks run on listed
 objects. A list without a `resourceVersion` is a quorum read like a GET and
 returns the same fields, including Secret data, so those checks keep their
 strength.
+
+A drift-prevention round still re-applies, in that round, every per-pod status
+entry whose object no longer shows the pod's last identical apply. Its reads are
+quorum reads taken after the pod's drift result, and an apply it skips would
+have stored nothing.
 
 After accepting the new format, a reader rejects a downgrade to older identity
 rules until a new-format publication arrives or that reader restarts. During a

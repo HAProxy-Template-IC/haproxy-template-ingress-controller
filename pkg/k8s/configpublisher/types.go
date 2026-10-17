@@ -193,11 +193,10 @@ type DeploymentStatusUpdate struct {
 	// Empty string indicates success.
 	Error string
 
-	// IsDriftCheck marks a periodic drift-prevention re-sync. On such an update
-	// the auxiliary-file per-pod stamp bypasses the write-elision cache and
-	// re-applies unconditionally, so an out-of-band strip of a pod's entry
-	// self-heals within one drift interval (the high-frequency inter-drift
-	// re-stamps are still elided).
+	// IsDriftCheck marks a periodic drift-prevention re-sync. Such an update
+	// reads the HAProxyCfg and its auxiliary files live and re-applies the pod's
+	// entry wherever an object no longer shows the pod's last identical apply,
+	// so an out-of-band change self-heals within one drift interval.
 	IsDriftCheck bool
 }
 
