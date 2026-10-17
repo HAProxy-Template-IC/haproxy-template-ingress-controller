@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A new leader no longer holds a critical `http.Fetch` source's first content until the next drift-prevention round (60 seconds by default) when its replica accepted the content just after the leader's first render. HAProxy pods stayed NotReady until then, for example right after the controller started.
+
 ## [0.6.0-rc.2] - 2026-10-17
 
 HAPTIC 0.6 moves to GitHub, requires Kubernetes 1.35 or newer, and drops
