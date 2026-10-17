@@ -30,8 +30,9 @@ import (
 var pendingErrors = []*regexp.Regexp{
 	regexp.MustCompile(`^Error from server \(InternalError\): .*Internal error occurred: failed calling webhook .*failed to call webhook: .*connect: connection refused$`),
 	regexp.MustCompile(`^Error from server \(InternalError\): .*Internal error occurred: failed calling webhook .*no endpoints available for service .*$`),
-	// kubectl's --request-timeout surfaces with or without net/http's Client.Timeout suffix.
-	regexp.MustCompile(`^error: error when creating .*: Post "https://.*": (context deadline exceeded|net/http: request canceled( while waiting for connection)?)( \(Client\.Timeout exceeded while awaiting headers\))?$`),
+	// kubectl's --request-timeout surfaces with or without net/http's Client.Timeout suffix, and
+	// without the "error: " prefix when it follows another error.
+	regexp.MustCompile(`^(error: )?error when creating .*: Post "https://.*": (context deadline exceeded|net/http: request canceled( while waiting for connection)?)( \(Client\.Timeout exceeded while awaiting headers\))?$`),
 	regexp.MustCompile(`^Error from server \(Timeout\): error when creating .*: the server was unable to return a response in the time allotted, but may still be processing the request \(post [a-z0-9.]+\)$`),
 }
 
