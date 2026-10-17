@@ -487,8 +487,9 @@ func (c *Component) attemptPublication(ctx context.Context, request *configpubli
 		c.activePublicationCancel = nil
 		c.mu.Unlock()
 	}()
+	cancelledBeforeStart := publishCtx.Err() != nil
 	result, err := c.publisher.PublishConfig(publishCtx, request)
-	if request.NameSuffix == "" {
+	if request.NameSuffix == "" && !cancelledBeforeStart {
 		c.wakeParkedStatusWork()
 	}
 	if err == nil {

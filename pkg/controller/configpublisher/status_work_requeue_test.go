@@ -196,6 +196,22 @@ func TestParkStatusWork_PublicationDuringTheAttemptRetriesAtOnce(t *testing.T) {
 	assert.True(t, c.statusWorkerSignalled())
 }
 
+// TestBlockedPublicationLeavesStatusWorkParked: an attempt cancelled before it
+// reaches the API cannot publish the checksum a parked update waits for.
+func TestBlockedPublicationLeavesStatusWorkParked(t *testing.T) {
+	_, c := newStatusWorkComponent(t)
+	work := &statusWorkItem{event: podStatusEvent("haproxy-1", "", "b")}
+	c.parkStatusWork(work, 0)
+	c.publicationBlocked = true
+
+	_, _ = c.attemptPublication(context.Background(), mapFilePublishRequest("x", "b"), alwaysCurrent)
+
+	pending, parked := c.statusWorkFor(statusWorkKey(work.event))
+	assert.Nil(t, pending)
+	assert.Same(t, work, parked)
+	assert.False(t, c.statusWorkerSignalled())
+}
+
 // TestParkedStatusWork_NewerUpdateSupersedes: a publication must never apply a
 // parked update over a newer one for the same pod.
 func TestParkedStatusWork_NewerUpdateSupersedes(t *testing.T) {
