@@ -32,7 +32,7 @@ def entry(version="dev", sha="a" * 40):
 
 class WebsiteStateTests(unittest.TestCase):
     def setUp(self):
-        self.state = {"version": 1, "baseline": BASELINE, "releases": {}, "dev": None}
+        self.state = {"version": 1, "baseline": BASELINE, "releases": {}, "superseded": [], "dev": None}
         self.api = Mock()
 
     def test_missing_branch_bootstraps_only_from_the_pinned_baseline(self):
@@ -43,7 +43,7 @@ class WebsiteStateTests(unittest.TestCase):
             storage.read(self.api, REPOSITORY, BASELINE)
 
     def test_catalog_read_is_pinned_to_one_git_commit(self):
-        content = json.dumps(self.state).encode()
+        content = json.dumps({key: value for key, value in self.state.items() if key != "superseded"}).encode()
         self.api.get.side_effect = [
             {"object": {"sha": "head"}},
             {"truncated": False, "tree": [{"path": "catalog.json", "type": "blob", "mode": "100644", "sha": "blob"}]},
@@ -68,6 +68,39 @@ class WebsiteStateTests(unittest.TestCase):
         updated = storage.advance(self.api, REPOSITORY, current, entry(sha="d" * 40))
         self.assertEqual(updated["releases"], current["releases"])
         self.assertNotEqual(updated["dev"], current["dev"])
+
+    def test_final_release_retires_its_prereleases_from_the_catalog(self):
+        state = self.state
+        for version in ("0.6.0-alpha.1", "0.6.0-beta.1", "0.6.0-rc.2", "0.6.0-rc.3", "0.7.0-rc.1", "10.6.0-rc.1"):
+            state = storage.advance(self.api, REPOSITORY, state, entry(version))
+        self.assertIn("0.6.0-rc.2", state["releases"])
+        final = storage.advance(self.api, REPOSITORY, state, entry("0.6.0"))
+        self.assertEqual(sorted(final["releases"]), ["0.6.0", "0.7.0-rc.1", "10.6.0-rc.1"])
+        self.assertEqual(final["superseded"], ["0.6.0-alpha.1", "0.6.0-beta.1", "0.6.0-rc.2", "0.6.0-rc.3"])
+        self.assertEqual(storage.advance(self.api, REPOSITORY, final, entry("0.6.0")), final)
+        self.assertEqual(storage.advance(self.api, REPOSITORY, final, entry())["superseded"], final["superseded"])
+        for version in ("0.6.0-rc.2", "0.6.0-rc.4"):
+            with self.subTest(version=version), self.assertRaisesRegex(ValueError, "superseded by its final release"):
+                storage.advance(self.api, REPOSITORY, final, entry(version))
+
+    def test_catalog_lists_superseded_versions_only_beside_their_final_release(self):
+        final = storage.advance(self.api, REPOSITORY,
+                                storage.advance(self.api, REPOSITORY, self.state, entry("1.0.0-rc.1")), entry("1.0.0"))
+        storage.validate(final, BASELINE, REPOSITORY)
+        for releases, superseded in (({"1.0.0", "1.0.0-rc.1"}, ["1.0.0-rc.1"]), ({"1.0.0"}, ["1.0.0"]),
+                                     ({"1.0.0"}, ["1.1.0-rc.1"]), ({"1.0.0"}, ["1.0.0-rc.2", "1.0.0-rc.1"]),
+                                     ({"1.0.0"}, ["1.0.0-rc.1"] * 2), ({"1.0.0"}, "1.0.0-rc.1")):
+            with self.subTest(releases=releases, superseded=superseded), self.assertRaises(ValueError):
+                storage.validate({**final, "releases": {version: entry(version) for version in releases},
+                                  "superseded": superseded}, BASELINE, REPOSITORY)
+
+    def test_next_publication_retires_prereleases_left_beside_their_final_release(self):
+        releases = {version: entry(version) for version in ("1.0.0", "1.0.0-rc.1", "1.1.0-rc.1")}
+        unretired = {**self.state, "releases": releases}
+        storage.validate(unretired, BASELINE, REPOSITORY)
+        for retired in (storage.retire(unretired), storage.advance(self.api, REPOSITORY, unretired, entry())):
+            self.assertEqual((sorted(retired["releases"]), retired["superseded"]),
+                             (["1.0.0", "1.1.0-rc.1"], ["1.0.0-rc.1"]))
 
     def test_catalog_rejects_other_repositories_urls_and_baselines(self):
         state = storage.advance(self.api, REPOSITORY, self.state, entry())

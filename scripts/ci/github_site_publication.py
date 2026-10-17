@@ -79,8 +79,9 @@ def build(api, repository, receipt, version, output, evidence):
                      url=f"https://github.com/{repository}/releases/download/{storage.TAG}/website-{version}-{result['sha256']}.tar.gz")
         next_state = storage.advance(api, repository, state, entry)
         restored[version] = (content, provenance)
+        publications = [restored[name] for name in (*next_state["releases"], "dev") if name in restored]
         assembled = scratch / "assembled"
-        result = assemble(source, list(restored.values()), assembled)
+        result = assemble(source, publications, assembled, next_state["superseded"])
         packaged = prepare(assembled, output)
         request = {"expected_state_head": state_head, "state": next_state, "entry": entry,
                    "assembly": result, "packaging": packaged}

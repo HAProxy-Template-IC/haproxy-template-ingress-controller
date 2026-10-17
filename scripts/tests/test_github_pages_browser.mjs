@@ -42,6 +42,12 @@ try {
     assert.equal(content.length, expected.size, `Published size differs: ${path}`);
     assert.equal(createHash('sha256').update(content).digest('hex'), expected.sha256, `Published content differs: ${path}`);
   }
+  for (const [path, entries] of [['docs/versions.json', catalog => catalog],
+    ['playground/versions.json', catalog => catalog.versions]]) {
+    const listed = entries(JSON.parse(await readFile(resolve(root, path), 'utf8'))).map(entry => entry.version);
+    assert.deepEqual(listed.filter(version => version.includes('-') && listed.includes(version.split('-')[0])), [],
+      `${path} lists pre-releases of a final release`);
+  }
   for (const name of (process.env.PAGES_BROWSERS || 'chromium').split(',')) {
     const browser = await playwright[name].launch({ headless: true });
     try {
@@ -109,6 +115,11 @@ try {
       await page.waitForURL(`${base}/docs/latest/?preserved=1#preserved`);
       await page.goto(`${base}/controller/latest/getting-started/index.html?preserved=1#preserved`);
       await page.waitForURL(`${base}/docs/latest/getting-started/index.html?preserved=1#preserved`);
+      for (const [from, to] of Object.entries(receipt.prerelease_redirects)) {
+        await page.goto(`${base}/${from}index.html?preserved=1#preserved`);
+        await page.waitForURL(`${base}/${to}?preserved=1#preserved`);
+        console.log(JSON.stringify({ browser: name, redirect: from, target: to, result: 'redirected' }));
+      }
       await page.close();
     } finally {
       await browser.close();

@@ -17,6 +17,7 @@ FETCH_HASH = "50fef1ca5327b86f1bd59edb794f2b54653e8391df443dc5f3c898fd3d88264e"
 ENGINE = re.compile(r"playground/(dev|\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)/playground\.wasm")
 ASSETS = Path(__file__).parents[1] / "pages"
 RECEIPT = "shared/pages-transport.json"
+PRERELEASE_REDIRECT = re.compile(r"/(docs|playground)/((\d+\.\d+\.\d+)-(?:alpha|beta|rc)\.\d+)/\* /\1/\3/:splat 301")
 
 
 def record(path):
@@ -80,8 +81,21 @@ def materialize_redirects(root):
 
     path = root / "_redirects"
     rules = path.read_text().splitlines() if path.exists() else []
+    prereleases = {}
     for line in rules:
         if not line.strip() or line.startswith("#"):
+            continue
+        if redirect := PRERELEASE_REDIRECT.fullmatch(line):
+            area, old, new = redirect.groups()
+            final = root / area / new
+            if (root / area / old).exists() or not final.is_dir():
+                raise ValueError(f"Pre-release redirect must replace a removed version with its final release: {line}")
+            for page in sorted(page for page in final.rglob("*.html") if page.is_file()):
+                destination = f"/{area}/{new}/{page.relative_to(final).as_posix()}"
+                target = root / area / old / page.relative_to(final)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                write(target, destination.removesuffix("index.html") if page.name == "index.html" else destination)
+            prereleases[f"{area}/{old}/"] = f"{area}/{new}/"
             continue
         match = re.fullmatch(r"/(controller|helm-chart)(/latest/\*|/latest|/) /docs(/latest/:splat|/latest/|/) 301", line)
         if not match:
@@ -108,6 +122,7 @@ def materialize_redirects(root):
         write(root / "docs/index.html", "/docs/latest/")
     if path.exists():
         path.unlink()
+    return prereleases
 
 
 def prepare(source, destination, *, limit=MAX_BYTES):
@@ -160,7 +175,7 @@ def prepare(source, destination, *, limit=MAX_BYTES):
         shared.mkdir(exist_ok=True)
         shutil.copyfile(ASSETS / "playground-wasm-loader.mjs", shared / "playground-wasm-loader.mjs")
         shutil.copytree(ASSETS / "brotli-dec-wasm-2.3.2", shared / "brotli-dec-wasm-2.3.2")
-        materialize_redirects(output)
+        prerelease_redirects = materialize_redirects(output)
         (output / ".nojekyll").touch()
         after = inventory(output)
         for name in before.keys() - removed - changed.keys() - {"_redirects"}:
@@ -168,7 +183,8 @@ def prepare(source, destination, *, limit=MAX_BYTES):
                 raise ValueError(f"Pages packaging changed a retained file: {name}")
         receipt = {"version": 1, "codec": "brotli", "before_bytes": sum(e["size"] for e in before.values()),
                    "source_files": before, "removed_transport_copies": sorted(removed), "changed_transport_files": changed,
-                   "published_files": after, "engines": engines, "limit_bytes": limit}
+                   "published_files": after, "engines": engines, "limit_bytes": limit,
+                   "prerelease_redirects": prerelease_redirects}
         (output / RECEIPT).write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
         size = sum(e["size"] for e in inventory(output).values())
         if size > limit:
