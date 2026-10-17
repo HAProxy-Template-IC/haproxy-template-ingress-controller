@@ -119,15 +119,35 @@ jobs:
       release: true
   website:
     needs: [source, chart, conformance]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
     permissions:
-      contents: write
-      actions: read
-      pages: write
-      id-token: write
-    uses: ./.github/workflows/pages.yml
-    with:
-      verification_run: ${{ inputs.verification_run }}
-      version: ${{ needs.source.outputs.version }}
+      actions: write
+    steps:
+      # Pages never serves a tag-ref deployment of an already-deployed commit (actions/deploy-pages#383).
+      - name: Publish the release docs from main and wait for the live-site verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_RUN: ${{ inputs.verification_run }}
+          VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          for attempt in 1 2 3; do
+            url=$(gh workflow run pages.yml -R "$GITHUB_REPOSITORY" --ref main \
+              -f version="$VERSION" -f verification_run="$VERIFICATION_RUN")
+            run=${url##*/}
+            [[ $run =~ ^[0-9]+$ ]] || { echo "::error::No run ID in the Pages dispatch output: $url"; exit 1; }
+            echo "Watching $url"
+            gh run watch "$run" -R "$GITHUB_REPOSITORY" --interval 30 > /dev/null
+            conclusion=$(gh run view "$run" -R "$GITHUB_REPOSITORY" --json conclusion --jq .conclusion)
+            case $conclusion in
+              success) exit 0 ;;
+              # A newer pages-publication run cancels a waiting one.
+              cancelled) echo "::warning::Pages run $run was cancelled (attempt $attempt); dispatching again" ;;
+              *) echo "::error::Pages run $run concluded $conclusion; re-run this job after fixing it"; exit 1 ;;
+            esac
+          done
+          echo "::error::Pages runs were cancelled three times; re-run this job"
+          exit 1
   smoke:
     needs: [source, spoa]
     strategy:

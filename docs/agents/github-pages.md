@@ -52,9 +52,12 @@ MkDocs build once, retaining those same files for preview and publication.
 
 ## Subsequent publications
 
-Successful main CI publishes development content. The release workflow
-publishes versioned content after image, chart, and conformance checks.
-Maintenance releases cannot advance `latest` past a newer stable version.
+Successful main CI publishes development content. After image, chart, and
+conformance checks, the release workflow dispatches `pages.yml` on `main` with the
+release version and waits for that run. Pages never serves a tag-ref deployment of
+an already-deployed commit ([actions/deploy-pages#383](https://github.com/actions/deploy-pages/issues/383)),
+so maintenance releases also publish through main's `pages.yml`. Maintenance
+releases cannot advance `latest` past a newer stable version.
 
 The publisher rechecks the canonical CI receipt and downloads its documentation
 and playground artifacts. Their producing job IDs, run attempts, source commits,
@@ -79,7 +82,9 @@ version catalogs, and source identities with the exact uploaded artifact.
 The catalog records the site prepared for deployment. If deployment fails after
 retention, the previous live site remains; rerun the failed deployment jobs. A
 new build also restores the retained version, so that failure cannot discard a
-release. The workflow uses the shared `pages-publication` concurrency group.
+release. The workflow uses the shared `pages-publication` concurrency group, which
+cancels a waiting run when a newer one queues; the release job dispatches again
+when its run ends cancelled, up to three times.
 
 Publishing happens after CI and adds no jobs to the PR verification gate.
 
