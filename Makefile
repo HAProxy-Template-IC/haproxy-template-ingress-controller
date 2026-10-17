@@ -407,7 +407,7 @@ test-gateway-benchmark-harness: build-map-identity-check ## Verify benchmark set
 
 .PHONY: test-process
 test-process: ## Verify process supervision with real child processes, without a cluster
-	$(GO) tool gotestsum --junitfile report-process.xml --format testname -- -race -count=1 -tags=testinfra ./tests/process/...
+	$(GO) tool gotestsum --junitfile report-process.xml --format testname -- -race -count=1 -tags=testinfra,e2e ./tests/process/... ./tests/e2e/availability/...
 
 test-unit: go-mod-download ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 	@# No coverage flags here: instrumenting the module for coverage costs a
