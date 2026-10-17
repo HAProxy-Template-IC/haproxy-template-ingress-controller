@@ -202,5 +202,12 @@ class WebsiteWorkflowTests(unittest.TestCase):
         self.assertEqual(jobs["verify"]["needs"], ["build", "deploy"])
         self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
         self.assertEqual(jobs["deploy"]["environment"]["name"], "github-pages")
+        self.assertNotIn("workflow_call", workflow["on"])
         release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-        self.assertEqual(release["jobs"]["website"]["needs"], ["source", "chart", "conformance"])
+        website = release["jobs"]["website"]
+        self.assertEqual(website["needs"], ["source", "chart", "conformance"])
+        self.assertNotIn("uses", website)
+        self.assertEqual(website["permissions"], {"actions": "write"})
+        script = website["steps"][0]["run"]
+        self.assertIn("gh workflow run pages.yml -R \"$GITHUB_REPOSITORY\" --ref main", script)
+        self.assertIn("--exit-status", script)

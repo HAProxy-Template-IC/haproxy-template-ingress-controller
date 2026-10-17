@@ -119,15 +119,23 @@ jobs:
       release: true
   website:
     needs: [source, chart, conformance]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     permissions:
-      contents: write
-      actions: read
-      pages: write
-      id-token: write
-    uses: ./.github/workflows/pages.yml
-    with:
-      verification_run: ${{ inputs.verification_run }}
-      version: ${{ needs.source.outputs.version }}
+      actions: write
+    steps:
+      # Pages never serves a tag-ref deployment of an already-deployed commit (actions/deploy-pages#383).
+      - name: Publish the release docs from main and wait for the live-site verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERIFICATION_RUN: ${{ inputs.verification_run }}
+          VERSION: ${{ needs.source.outputs.version }}
+        run: |
+          url=$(gh workflow run pages.yml -R "$GITHUB_REPOSITORY" --ref main \
+            -f version="$VERSION" -f verification_run="$VERIFICATION_RUN")
+          run=${url##*/}
+          [[ $run =~ ^[0-9]+$ ]] || { echo "::error::No run ID in the Pages dispatch output: $url"; exit 1; }
+          gh run watch "$run" -R "$GITHUB_REPOSITORY" --exit-status --interval 30
   smoke:
     needs: [source, spoa]
     strategy:

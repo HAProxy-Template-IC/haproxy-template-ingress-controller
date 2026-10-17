@@ -13,14 +13,6 @@ name: Publish website
         description: dev or an existing published release version
         default: dev
         type: string
-  workflow_call:
-    inputs:
-      verification_run:
-        required: true
-        type: string
-      version:
-        default: dev
-        type: string
 permissions:
   contents: read
   actions: read
