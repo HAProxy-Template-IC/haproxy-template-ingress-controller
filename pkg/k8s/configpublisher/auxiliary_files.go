@@ -278,7 +278,7 @@ func (p *Publisher) createOrUpdateMapFile(ctx context.Context, req *PublishReque
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
 		},
 		onCreate: func(createdName string) {
-			p.auxStamps.forgetAuxFile(kindMapFile, req.TemplateConfigNamespace, createdName)
+			p.statusStamps.forgetAuxFile(kindMapFile, req.TemplateConfigNamespace, createdName)
 		},
 	})
 }
@@ -409,7 +409,7 @@ func (p *Publisher) createOrUpdateGeneralFile(ctx context.Context, req *PublishR
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
 		},
 		onCreate: func(createdName string) {
-			p.auxStamps.forgetAuxFile(kindGeneralFile, req.TemplateConfigNamespace, createdName)
+			p.statusStamps.forgetAuxFile(kindGeneralFile, req.TemplateConfigNamespace, createdName)
 		},
 	})
 }
@@ -468,7 +468,7 @@ func (p *Publisher) createOrUpdateCRTListFile(ctx context.Context, req *PublishR
 			return client.Update(ctx, existing, metav1.UpdateOptions{})
 		},
 		onCreate: func(createdName string) {
-			p.auxStamps.forgetAuxFile(kindCRTListFile, req.TemplateConfigNamespace, createdName)
+			p.statusStamps.forgetAuxFile(kindCRTListFile, req.TemplateConfigNamespace, createdName)
 		},
 	})
 }

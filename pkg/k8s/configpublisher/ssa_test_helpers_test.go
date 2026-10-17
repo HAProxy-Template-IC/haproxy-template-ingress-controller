@@ -17,9 +17,10 @@ package configpublisher
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync/atomic"
+	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -75,17 +76,19 @@ func installSSAListMapMergeReactor(c *fake.Clientset) {
 
 		existing, err := c.Tracker().Get(gvr, ns, name)
 		if err != nil {
-			if !apierrors.IsNotFound(err) {
-				return true, nil, err
-			}
-			// Resource doesn't exist yet — SSA against the status subresource
-			// on a non-existent resource is a NotFound in real K8s too. Return
-			// the same error so tests can assert on it.
+			// Including NotFound: SSA against the status subresource of a
+			// non-existent resource is a NotFound in real K8s too.
 			return true, nil, err
 		}
 
-		merged := mergeDeployedToPods(getDeployedToPods(existing), patchPods)
-		setDeployedToPods(existing, merged)
+		changed, err := applyStatusEntries(existing, action.(testing.PatchActionImpl).PatchOptions.FieldManager, patchPods)
+		if err != nil {
+			return true, nil, err
+		}
+		if !changed {
+			// Like the API server, an apply that changes nothing stores nothing.
+			return true, existing, nil
+		}
 
 		// Write the merged object back through the tracker.
 		if err := c.Tracker().Update(gvr, existing, ns); err != nil {
@@ -93,6 +96,24 @@ func installSSAListMapMergeReactor(c *fake.Clientset) {
 		}
 		return true, existing, nil
 	})
+}
+
+// applyStatusEntries merges pods into obj's deployedToPods and gives manager
+// their ownership, reporting whether obj changed.
+func applyStatusEntries(obj runtime.Object, manager string, pods []haproxyv1alpha1.PodDeploymentStatus) (bool, error) {
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return false, err
+	}
+	current := getDeployedToPods(obj)
+	merged := mergeDeployedToPods(current, pods)
+	managed := ownStatusEntries(accessor.GetManagedFields(), manager, pods)
+	if reflect.DeepEqual(merged, current) && reflect.DeepEqual(managed, accessor.GetManagedFields()) {
+		return false, nil
+	}
+	setDeployedToPods(obj, merged)
+	accessor.SetManagedFields(managed)
+	return true, nil
 }
 
 func installRuntimeUIDReactor(c *fake.Clientset) {
@@ -186,7 +207,44 @@ func setDeployedToPods(obj runtime.Object, pods []haproxyv1alpha1.PodDeploymentS
 	}
 }
 
-// avoid-unused (metav1 + meta) — referenced as a smoke check that imports
-// resolve when tests grow.
-var _ = metav1.ObjectMeta{}
-var _ = meta.IsListType
+// ownStatusEntries gives manager one Apply entry owning the applied pods'
+// status entries, as the API server records it; an unchanged entry keeps its
+// time.
+func ownStatusEntries(entries []metav1.ManagedFieldsEntry, manager string, pods []haproxyv1alpha1.PodDeploymentStatus) []metav1.ManagedFieldsEntry {
+	owned := map[string]any{}
+	for i := range pods {
+		owned[fmt.Sprintf(`k:{"podName":%q}`, pods[i].PodName)] = map[string]any{}
+	}
+	fields, err := json.Marshal(map[string]any{"f:status": map[string]any{"f:deployedToPods": owned}})
+	if err != nil {
+		panic(err)
+	}
+	want := metav1.ManagedFieldsEntry{
+		Manager: manager, Operation: metav1.ManagedFieldsOperationApply, APIVersion: "haproxy-haptic.org/v1alpha1",
+		Subresource: "status", FieldsType: "FieldsV1", FieldsV1: metav1.NewFieldsV1(string(fields)),
+	}
+	now := &metav1.Time{Time: time.Now().Truncate(time.Second)}
+	out := make([]metav1.ManagedFieldsEntry, 0, len(entries)+1)
+	owns := false
+	for i := range entries {
+		if entries[i].Manager != manager {
+			out = append(out, entries[i])
+			continue
+		}
+		if owns {
+			continue
+		}
+		owns = true
+		entry := want
+		entry.Time = entries[i].Time
+		if !reflect.DeepEqual(entries[i], entry) {
+			entry.Time = now
+		}
+		out = append(out, entry)
+	}
+	if !owns {
+		want.Time = now
+		out = append(out, want)
+	}
+	return out
+}

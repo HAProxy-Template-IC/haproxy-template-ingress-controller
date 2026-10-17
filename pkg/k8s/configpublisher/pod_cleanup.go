@@ -37,7 +37,7 @@ func (p *Publisher) CleanupPodReferences(ctx context.Context, cleanup *PodCleanu
 
 	// Drop the departing pod's remembered aux-file stamps so a recycled pod
 	// name re-stamps from scratch instead of being elided against stale state.
-	p.auxStamps.forgetPod(cleanup.PodName)
+	p.statusStamps.forgetPod(cleanup.PodName)
 
 	// List HAProxyCfgs in the specified namespace only (namespace-scoped).
 	// The controller manages CRDs in its own namespace, not cluster-wide.
@@ -68,7 +68,7 @@ func (p *Publisher) ReconcileDeployedToPods(ctx context.Context, namespace strin
 	// (missed termination event, or a transient discovery blip) re-stamps if it
 	// returns. runningPods is the complete current fleet, so a podName absent
 	// from it is genuinely gone.
-	p.auxStamps.retainRunningPods(runningSet)
+	p.statusStamps.retainRunningPods(runningSet)
 
 	// List HAProxyCfgs in the specified namespace only (namespace-scoped).
 	// The controller manages CRDs in its own namespace, not cluster-wide.
