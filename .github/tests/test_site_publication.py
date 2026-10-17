@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -210,4 +211,28 @@ class WebsiteWorkflowTests(unittest.TestCase):
         self.assertEqual(website["permissions"], {"actions": "write"})
         script = website["steps"][0]["run"]
         self.assertIn("gh workflow run pages.yml -R \"$GITHUB_REPOSITORY\" --ref main", script)
-        self.assertIn("--exit-status", script)
+
+    def test_release_docs_dispatch_retries_only_cancelled_pages_runs(self):
+        release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+        script = release["jobs"]["website"]["steps"][0]["run"]
+        fake_gh = """#!/bin/bash
+case $1 in
+  workflow) n=$(( $(wc -l < "$STATE/dispatches") + 1 )); echo "$n" >> "$STATE/dispatches"
+            echo "https://github.com/owner/project/actions/runs/$n" ;;
+  run) if [[ $2 == view ]]; then sed -n "$(wc -l < "$STATE/dispatches")p" "$STATE/conclusions"; fi ;;
+esac
+"""
+        for conclusions, code, dispatches in (
+                (["success"], 0, 1), (["cancelled", "success"], 0, 2),
+                (["failure"], 1, 1), (["cancelled"] * 3, 1, 3)):
+            with self.subTest(conclusions=conclusions), tempfile.TemporaryDirectory() as state:
+                (Path(state) / "gh").write_text(fake_gh)
+                (Path(state) / "gh").chmod(0o755)
+                (Path(state) / "dispatches").write_text("")
+                (Path(state) / "conclusions").write_text("\n".join(conclusions) + "\n")
+                env = {"PATH": f"{state}:/usr/bin:/bin", "STATE": state, "GITHUB_REPOSITORY": REPOSITORY,
+                       "VERSION": "1.2.3", "VERIFICATION_RUN": "7"}
+                result = subprocess.run(["bash", "-eo", "pipefail", "-c", script], env=env,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertEqual(len((Path(state) / "dispatches").read_text().split()), dispatches)
