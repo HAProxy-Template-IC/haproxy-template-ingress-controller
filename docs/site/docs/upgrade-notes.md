@@ -7,8 +7,8 @@ to keep your existing routes working. For routine chart upgrades, see
 
 ## Upgrading to 0.6
 
-0.6 requires Kubernetes 1.35 or newer and moves the chart and images to the
-GitHub container registry.
+0.6 requires Kubernetes 1.35 or newer, removes HAProxy 3.1, and moves the chart
+and images to the GitHub container registry.
 
 ### 1. Check the Kubernetes version
 
@@ -22,7 +22,47 @@ kubectl version
 If the server version is older than 1.35, upgrade the cluster before you upgrade
 HAPTIC.
 
-### 2. Remove GitLab registry overrides
+### 2. Move off HAProxy 3.1
+
+HAProxy 3.1 is past its upstream end of life and misses the major HTTP/1 and
+HTTP/2 fixes released on 2026-10-14. 0.6 no longer builds it, and Helm refuses
+the 0.6 chart while `haproxyVersion` is `3.1`. Check the series your release
+selects:
+
+```bash
+helm get values haptic --namespace haptic --output yaml | grep haproxyVersion
+```
+
+If the command prints nothing or another series, continue with the next step.
+If it prints `haproxyVersion: "3.1"`, switch your current 0.5 release to a
+long-term support (LTS) series before you upgrade HAPTIC, so you can verify the
+new HAProxy series on the chart you already run. To select 3.4:
+
+```bash
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
+  --version 0.5.0 --namespace haptic --reuse-values \
+  --set-string haproxyVersion=3.4 \
+  --set-string haproxy.image.tag= --set-string controller.image.tag=
+```
+
+To select 3.2:
+
+```bash
+helm upgrade haptic oci://ghcr.io/haproxy-haptic/haptic/charts/haptic \
+  --version 0.5.0 --namespace haptic --reuse-values \
+  --set-string haproxyVersion=3.2 \
+  --set-string haproxy.image.tag= --set-string controller.image.tag=
+```
+
+These commands use the chart's Community Edition images. For custom or
+Enterprise images, follow [HAProxy Enterprise](operations/haproxy-versions.md#haproxy-enterprise)
+instead; the chart has a tested Enterprise image for 3.2 but not for 3.4. If you
+manage values in Git, set `haproxyVersion` there too.
+
+[Check the Deployments](deploying-with-helm.md#check-the-installation) before you
+continue.
+
+### 3. Remove GitLab registry overrides
 
 The chart's default images come from `ghcr.io/haproxy-haptic/haptic`. Find image
 overrides that still point at the GitLab registry:

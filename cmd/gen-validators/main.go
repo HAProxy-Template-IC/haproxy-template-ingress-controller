@@ -74,7 +74,6 @@ var targetSchemas = []string{
 // specFiles maps version strings to their pinned OpenAPI spec.
 var specFiles = map[string]string{
 	"v30": "cmd/gen-validators/spec/v30.json",
-	"v31": "cmd/gen-validators/spec/v31.json",
 	"v32": "cmd/gen-validators/spec/v32.json",
 	"v33": "cmd/gen-validators/spec/v33.json",
 }

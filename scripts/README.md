@@ -86,7 +86,7 @@ Downloads the OpenAPI v3 specification for a given HAProxy Dataplane API version
 
 ```bash
 ./scripts/extract-dataplane-spec.sh 3.2
-./scripts/extract-dataplane-spec.sh 3.1 /tmp/dataplane-v31.json
+./scripts/extract-dataplane-spec.sh 3.3 /tmp/dataplane-v33.json
 ./scripts/extract-dataplane-spec.sh 3.0 cmd/gen-validators/spec/v30.json
 ```
 

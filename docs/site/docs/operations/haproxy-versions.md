@@ -16,12 +16,11 @@ change both; use `haproxy.image.tag` only to pin a patch within that series.
 | Series | HAPTIC build | Community image | Enterprise image |
 |--------|--------|-----------------|------------------|
 | 3.0 | Supported (LTS) | `haproxytech/haproxy-debian:3.0.x` | `...:3.0r1` |
-| 3.1 | Supported; upstream unmaintained | `haproxytech/haproxy-debian:3.1.x` | `...:3.1r1` |
 | 3.2 | Supported (LTS) | `haproxytech/haproxy-debian:3.2.x` | `...:3.2r1` |
 | 3.3 | Supported (non-LTS) | `haproxytech/haproxy-debian:3.3.x` | — |
 | 3.4 | Supported (LTS, default) | `haproxytech/haproxy-debian:3.4.x` | — |
 
-HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of support; odd-numbered series (3.1, 3.3) get a shorter maintenance window. This chart defaults to 3.4. HAProxy 3.1 remains in HAPTIC's build matrix but no longer receives upstream maintenance; check [HAProxy's maintenance table](https://www.haproxy.org/) when choosing a series.
+The chart rejects any other `haproxyVersion`. HAProxy's even-numbered series (3.0, 3.2, 3.4) are LTS with about five years of support; odd-numbered series such as 3.3 get a shorter maintenance window. This chart defaults to 3.4. HAPTIC 0.6 removed HAProxy 3.1, which no longer receives upstream fixes; see [Upgrading to 0.6](../upgrade-notes.md#upgrading-to-06) to move off it. Check [HAProxy's maintenance table](https://www.haproxy.org/) when choosing a series.
 
 During a rolling upgrade, HAPTIC renders for the lowest HAProxy series in the
 fleet. A pod reloads for changes its version can't apply at runtime.

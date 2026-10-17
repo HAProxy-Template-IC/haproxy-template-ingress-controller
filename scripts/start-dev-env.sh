@@ -79,7 +79,6 @@ compute_haproxy_image() {
         # Map community version to the tested Enterprise revision tag.
         case "$HAPROXY_VERSION" in
             3.0*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_30" ;;
-            3.1*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_31" ;;
             3.2*) HAPROXY_TAG="$HAPROXY_ENTERPRISE_32" ;;
             *)    HAPROXY_TAG="$HAPROXY_VERSION" ;;
         esac
@@ -166,10 +165,10 @@ OPTIONS:
     --help, -h              Show this help
 
 ENVIRONMENT VARIABLES:
-    HAPROXY_VERSION         HAProxy version for production pods (default: 3.2)
-                            Supported: 3.0, 3.1, 3.2 (LTS, default), 3.3
+    HAPROXY_VERSION         HAProxy version for production pods (default: ${DEFAULT_HAPROXY})
+                            Supported: ${HAPROXY_VERSIONS}
     HAPROXY_ENTERPRISE      Use HAProxy Enterprise instead of Community (default: false)
-                            Enterprise versions: 3.0r1, 3.1r1, 3.2r1
+                            Enterprise versions: 3.0r1, 3.2r1
                             Registry: hapee-registry.haproxy.com/haproxy-enterprise
 
 EXAMPLES:

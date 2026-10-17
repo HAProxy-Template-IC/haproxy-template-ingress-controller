@@ -731,13 +731,13 @@ The source hash covers all `.go` files in `pkg/` and `cmd/`, `go.mod`, `go.sum`,
 
 **Build-time** (what CI builds):
 
-- `versions.env` defines supported versions (`HAPROXY_VERSIONS="3.0 3.1 3.2 3.3 3.4"`)
+- `versions.env` defines supported versions (`HAPROXY_VERSIONS="3.0 3.2 3.3 3.4"`)
 - `Dockerfile` uses `DEFAULT_HAPROXY` for local builds
 - CI builds one controller image per version: `<version>-haproxy3.0` … `<version>-haproxy3.4` (for example `0.2.0-alpha.1-haproxy3.4`)
 
 **Deploy-time** (what the chart uses):
 
-- `haproxyVersion` in `values.yaml` selects the version (must be one CI builds)
+- `haproxyVersion` in `values.yaml` selects the version; its schema enum lists the series CI builds, and `make lint` checks it against `versions.env`
 - This single value drives both:
     - Controller image tag: `ghcr.io/haproxy-haptic/haptic:0.2.0-alpha.1-haproxy3.4`
     - HAProxy image tag: `haproxytech/haproxy-debian:3.4`

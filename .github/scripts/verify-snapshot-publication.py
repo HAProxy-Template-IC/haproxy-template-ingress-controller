@@ -34,7 +34,7 @@ def main():
     images = [item for item in json.loads(Path("dist/artifacts.json").read_text())
               if item["type"] == "Docker Image"]
     expected = {f"haproxy{version}": {"linux/amd64", "linux/arm64", "linux/arm/v7"}
-                for version in ("30", "31", "32", "33", "34")}
+                for version in ("30", "32", "33", "34")}
     expected["varnish"] = {"linux/amd64", "linux/arm64"}
     groups = {}
     evidence = {"images": [], "indexes": []}

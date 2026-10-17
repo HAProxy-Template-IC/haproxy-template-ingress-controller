@@ -6,11 +6,6 @@
       "haproxy": "3.0",
       "build_input_hash": "fb4e7ba559a0a22cef440c64fc4e7d56e93c4cfdaec4c7472ec95064b7f021c3"
     },
-    "ghcr.io/haproxy-haptic/haptic-ci@sha256:df6198590aedf8b724bae6bbca026eafe5f14c76931df1c313ea242e6a9846ae": {
-      "kind": "ci",
-      "haproxy": "3.1",
-      "build_input_hash": "fb4e7ba559a0a22cef440c64fc4e7d56e93c4cfdaec4c7472ec95064b7f021c3"
-    },
     "ghcr.io/haproxy-haptic/haptic-ci@sha256:e9d51d59a99a63b8437654d9a8fddf71bec50021ab95b1d64058bb58c0cdda07": {
       "kind": "ci",
       "haproxy": "3.2",

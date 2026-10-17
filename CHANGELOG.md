@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Changed
 
 - **BREAKING:** The chart requires Kubernetes 1.35 or newer; 1.33 is past its upstream end of life and 1.34 reaches it on 2026-10-27. [Check your cluster version](./docs/site/docs/upgrade-notes.md#upgrading-to-06) before upgrading.
+- **BREAKING:** HAProxy 3.1 is no longer supported and no `-haproxy3.1` controller image is built; 3.1 is past its upstream end of life and misses the 2026-10-14 HTTP/1 and HTTP/2 fixes. Helm rejects `haproxyVersion: "3.1"`, so [switch to 3.2 or 3.4](./docs/site/docs/upgrade-notes.md#upgrading-to-06) before upgrading.
 - Default controller, SPOA hub, and Varnish images come from `ghcr.io/haproxy-haptic/haptic`, and the chart is published at `oci://ghcr.io/haproxy-haptic/haptic/charts/haptic`; its `home` and `sources` links point to GitHub.
 - Render the Helm chart faster by avoiding repeated YAML serialization of template libraries.
 

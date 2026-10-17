@@ -152,9 +152,11 @@ HAProxy doesn't add HTTP/3 in these cases:
 - **TLS-Passthrough and TLS-Terminate (`TLSRoute`) listeners.** They forward TCP
   streams, not HTTP.
 
-The bundled HAProxy images (3.0–3.4) are built with QUIC support. A
-[self-managed HAProxy](#haproxy-pod-requirements) needs a QUIC-capable build too;
-if `haproxy -vv` doesn't list `QUIC`, set `http3.enabled: false`.
+The bundled HAProxy images of every
+[supported series](operations/haproxy-versions.md#supported-versions) are built
+with QUIC support. A [self-managed HAProxy](#haproxy-pod-requirements) needs a
+QUIC-capable build too; if `haproxy -vv` doesn't list `QUIC`, set
+`http3.enabled: false`.
 
 ### PROXY protocol
 

@@ -2599,7 +2599,12 @@
     },
     "haproxyVersion": {
       "type": "string",
-      "pattern": "^[0-9]+\\.[0-9]+$"
+      "enum": [
+        "3.0",
+        "3.2",
+        "3.3",
+        "3.4"
+      ]
     },
     "haproxytech": {
       "type": "object",

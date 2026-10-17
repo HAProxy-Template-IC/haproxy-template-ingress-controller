@@ -77,7 +77,6 @@ variables:
   KIND_NODE_IMAGE_130: "kindest/node:v1.30.13@sha256:8673291894dc400e0fb4f57243f5fdc6e355ceaa765505e0e73941aa1b6e0b80"
   KIND_NODE_IMAGE_136: "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
   HAPROXY_IMAGE_30: "haproxytech/haproxy-debian:3.0.30@sha256:193fb111363a91a0d9c2f2c84b2d754a2e486f2133caa24ec3f3db7ededfd0e5"
-  HAPROXY_IMAGE_31: "haproxytech/haproxy-debian:3.1.17@sha256:6777767e63fa743413f937988c823016b4d2e0b3aeaacc82b2c1a30c4256c07a"
   HAPROXY_IMAGE_32: "haproxytech/haproxy-debian:3.2.26@sha256:84ebd0d452822f5b4e74b415f5c2520b932a51c9c8ec18d546904feab0168f9d"
   HAPROXY_IMAGE_33: "haproxytech/haproxy-debian:3.3.17@sha256:a1cb6d886ce148479073890afa140d9da75847f2758b211d2d9eacd6ab18aef7"
   HAPROXY_IMAGE_34: "haproxytech/haproxy-debian:3.4.7@sha256:41711399e05fd31da1200b28216fa67f0fbc09754aabd40fe86fe967ad214d80"

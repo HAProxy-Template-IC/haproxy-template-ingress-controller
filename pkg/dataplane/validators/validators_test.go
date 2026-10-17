@@ -33,7 +33,7 @@ func TestForVersion(t *testing.T) {
 	}{
 		{"v2.9 maps to v30", 2, 9, validatorSetV30},
 		{"v3.0 maps to v30", 3, 0, validatorSetV30},
-		{"v3.1 maps to v31", 3, 1, validatorSetV31},
+		{"v3.1 maps to v30", 3, 1, validatorSetV30},
 		{"v3.2 maps to v32", 3, 2, validatorSetV32},
 		{"v3.3 maps to v33", 3, 3, validatorSetV33},
 		{"v4.0 maps to v33", 4, 0, validatorSetV33},
@@ -50,7 +50,6 @@ func TestForVersion(t *testing.T) {
 
 func TestValidatorSet_Version(t *testing.T) {
 	assert.Same(t, validatorSetV30, ForVersion(3, 0))
-	assert.Same(t, validatorSetV31, ForVersion(3, 1))
 	assert.Same(t, validatorSetV32, ForVersion(3, 2))
 	assert.Same(t, validatorSetV33, ForVersion(3, 3))
 }
@@ -103,7 +102,6 @@ func TestValidatorSet_ValidateWithGeneratedValidators(t *testing.T) {
 		minor int
 	}{
 		{"v30", 3, 0},
-		{"v31", 3, 1},
 		{"v32", 3, 2},
 	}
 

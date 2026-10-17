@@ -596,7 +596,7 @@
       <select id="ctrlver" title="Controller / chart version" disabled><option>local</option></select></div>
     <div class="ctrl"><label for="hpver">HAProxy</label>
       <select id="hpver" title="Target HAProxy version">
-        <option>3.0</option><option>3.1</option><option>3.2</option><option>3.3</option><option selected>3.4</option>
+        <option>3.0</option><option>3.2</option><option>3.3</option><option selected>3.4</option>
       </select></div>
     <span class="spacer"></span>
     <button id="help" class="btn" title="How to use the playground with your own config and resources.">Help</button>
@@ -2172,7 +2172,7 @@ backend {{ e }}
     const markStateReady = () => { if (window.hapticPlayground) window.hapticPlayground.stateReady = true; };
     async function applyState(st) {
       suppressNextGlow = true; configDirty = true; resetBaselineNext = true;
-      if (st.v) $('hpver').value = st.v;
+      if ([...$('hpver').options].some((o) => o.value === st.v)) $('hpver').value = st.v;
       const preset = st.p ? PRESETS.find((p) => p.id === st.p) : null;
       schemasUrl = st.s || preset?.schemas || null;
       schemas = schemasUrl ? await fetchText(schemasUrl).catch(() => '') : '';

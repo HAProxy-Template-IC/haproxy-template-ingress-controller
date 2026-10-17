@@ -43,7 +43,7 @@ The full values reference lives in [Chart Values Reference](https://haproxy-hapt
 | Parameter | Default | Notes |
 |-----------|---------|-------|
 | `controller.replicaCount` | `2` | Controller replicas; 2+ runs with leader election |
-| `haproxyVersion` | `3.4` | Major.minor HAProxy series (`3.0` / `3.1` / `3.2` / `3.3` / `3.4`); pairs the controller image tag (`-haproxy3.4`) with the HAProxy pod image |
+| `haproxyVersion` | `3.4` | Major.minor HAProxy series (`3.0` / `3.2` / `3.3` / `3.4`); pairs the controller image tag (`-haproxy3.4`) with the HAProxy pod image |
 | `haproxy.image.tag` | derived from `haproxyPatchVersions` | Override to pin a specific patch |
 | `haproxy.enabled` | `true` | Disable to manage HAProxy pods separately |
 | `haproxy.enterprise.enabled` | `false` | Switch to HAProxy Enterprise images |
