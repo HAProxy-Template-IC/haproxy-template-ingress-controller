@@ -1,0 +1,16 @@
+ci/image-build-inputs.txt
+ci/build-pins.yml
+ci/images/ci/Dockerfile
+ci/images/ci/package.json
+ci/images/ci/package-lock.json
+ci/images/ci/requirements.in
+ci/images/ci/requirements.lock
+ci/images/ci/shims/braces/index.js
+ci/images/ci/shims/braces/index.test.js
+ci/images/ci/shims/braces/package.json
+ci/images/ci/tools/go.mod
+ci/images/ci/tools/go.sum
+ci/images/python-docs/Dockerfile
+ci/images/python-docs/requirements.in
+ci/images/python-docs/requirements.lock
+scripts/ci-image-input-hash.sh

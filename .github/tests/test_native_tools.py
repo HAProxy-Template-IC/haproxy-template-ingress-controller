@@ -14,7 +14,7 @@ ROOT = Path(__file__).parents[2]
 
 class NativeToolTests(unittest.TestCase):
     def setUp(self):
-        self.pins = yaml.safe_load((ROOT / ".gitlab/ci/build-pins.yml").read_text())["variables"]
+        self.pins = yaml.safe_load((ROOT / "ci/build-pins.yml").read_text())["variables"]
         self.checksums = json.loads((ROOT / ".github/native-tool-checksums.json").read_text())
         self.version = self.pins["GO_VERSION"] + ".2"
         self.images = {"linux/arm64": {"config": {"Env": ["GOLANG_VERSION=" + self.version]}}}

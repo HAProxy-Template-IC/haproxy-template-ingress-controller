@@ -16,7 +16,7 @@ print(version, checksums["yq"][version])
 ')
 fetch "$tools_dir/yq-bootstrap" "https://github.com/mikefarah/yq/releases/download/v$bootstrap_version/yq_linux_arm64" "$bootstrap_sha"
 chmod +x "$tools_dir/yq-bootstrap"
-"$tools_dir/yq-bootstrap" -o=json '.variables' .gitlab/ci/build-pins.yml > "$tools_dir/pins.json"
+"$tools_dir/yq-bootstrap" -o=json '.variables' ci/build-pins.yml > "$tools_dir/pins.json"
 go_image=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["GO_BUILD_IMAGE"])' "$tools_dir/pins.json")
 bash scripts/retry.sh docker buildx imagetools inspect "$go_image" --format '{{json .Image}}' > "$tools_dir/go-image.json"
 python3 -m scripts.ci.github_native_tools plan "$tools_dir/pins.json" "$tools_dir/go-image.json" > "$tools_dir/plan.json"

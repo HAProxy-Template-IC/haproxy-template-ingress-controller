@@ -314,7 +314,7 @@ cr-size-check: ## Check each rendered HAProxyTemplateConfig against etcd's ~1.5 
 audit: vendor ## Run security vulnerability scanning
 	@echo "Running govulncheck..."
 	$(GOVULNCHECK) ./...
-	npm --prefix .gitlab/ci/images/ci audit
+	npm --prefix ci/images/ci audit
 	npm --prefix scripts/pages audit
 
 ## Combined checks

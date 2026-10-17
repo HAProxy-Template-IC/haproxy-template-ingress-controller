@@ -16,7 +16,7 @@ def main():
     reference = inventory["bootstrap"] if args.kind == "ci" else next(
         ref for ref, item in inventory["images"].items() if item["kind"] == "docs")
     before = resolve(inventory, reference)
-    dockerfile = Path(".gitlab/ci/images") / ("ci" if args.kind == "ci" else "python-docs") / "Dockerfile"
+    dockerfile = Path("ci/images") / ("ci" if args.kind == "ci" else "python-docs") / "Dockerfile"
     original = dockerfile.read_bytes()
     probe = "HAPTIC_TOOLCHAIN_PROBE=updated-" + before["build_hash"]
     try:

@@ -45,7 +45,7 @@
       "customType": "regex",
       "description": "Pinned Node/npm toolchain for CI without changing HAProxy runtime libraries.",
       "managerFilePatterns": [
-        "/^\\.gitlab/ci/build-pins\\.yml$/"
+        "/^ci/build-pins\\.yml$/"
       ],
       "matchStrings": [
         "NODE_BUILD_IMAGE:\\s*\"node:(?<currentValue>[^\"@]+)@(?<currentDigest>sha256:[a-f0-9]{64})\""
@@ -59,7 +59,7 @@
       "description": "HAProxy patch tags and optional digests in dev manifests and CI bases, updated within each supported series alongside the chart.",
       "managerFilePatterns": [
         "/^scripts/dev-env-assets/haproxy-.*\\.yaml$/",
-        "/^\\.gitlab/ci/build-pins\\.yml$/"
+        "/^ci/build-pins\\.yml$/"
       ],
       "matchStrings": [
         "haproxytech/haproxy-debian:(?<currentValue>(?<seriesMajor>\\d+)\\.(?<seriesMinor>\\d+)\\.\\d+)(?:@(?<currentDigest>sha256:[a-f0-9]{64}))?"
@@ -305,7 +305,7 @@
       "matchFileNames": [
         "Dockerfile",
         "versions.env",
-        ".gitlab/ci/images/ci/Dockerfile"
+        "ci/images/ci/Dockerfile"
       ],
       "matchPackageNames": [
         "haproxytech/haproxy-debian"
@@ -315,7 +315,7 @@
     {
       "description": "Keep HAPROXY_VERSION in the CI image Dockerfile on stable series only. Upstream haproxy/haproxy tags are `vX.Y-devN` during development and `vX.Y.Z` at release; deriving the version from patch tags skips series that have no stable release yet.",
       "matchFileNames": [
-        ".gitlab/ci/images/ci/Dockerfile"
+        "ci/images/ci/Dockerfile"
       ],
       "matchPackageNames": [
         "haproxy/haproxy"
@@ -330,7 +330,7 @@
       "groupName": "spoa hub bundle"
     },
     {
-      "description": "Ignore the placeholder ARG defaults in the CI image Dockerfiles. They read `<image>:must-be-supplied@sha256:0000...`, are always overridden with --build-arg from .gitlab/ci/build-pins.yml (where the real tag@digest pins live and ARE tracked by the customManagers above), and exist only so a build without the arg fails loudly. Renovate's dockerfile manager reads them as real dependencies and reports `Could not determine new digest` for golang, python and haproxytech/haproxy-debian on every run - permanent Dependency Dashboard noise that hides a genuine lookup failure when one occurs.",
+      "description": "Ignore the placeholder ARG defaults in the CI image Dockerfiles. They read `<image>:must-be-supplied@sha256:0000...`, are always overridden with --build-arg from ci/build-pins.yml (where the real tag@digest pins live and ARE tracked by the customManagers above), and exist only so a build without the arg fails loudly. Renovate's dockerfile manager reads them as real dependencies and reports `Could not determine new digest` for golang, python and haproxytech/haproxy-debian on every run - permanent Dependency Dashboard noise that hides a genuine lookup failure when one occurs.",
       "matchManagers": [
         "dockerfile"
       ],

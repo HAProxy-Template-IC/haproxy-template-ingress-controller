@@ -1,5 +1,5 @@
 # CI image with Go, HAProxy, Docker CLI, and Kubernetes tools
-# Every version ARG is supplied from .gitlab/ci/build-pins.yml (scripts/build-ci-image.sh)
+# Every version ARG is supplied from ci/build-pins.yml (scripts/build-ci-image.sh)
 #
 # Uses haproxytech/haproxy-debian as the base image so HAProxy is natively
 # available for all versions without depending on haproxy.debian.net.

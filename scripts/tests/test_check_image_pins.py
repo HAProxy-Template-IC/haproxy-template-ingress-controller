@@ -25,7 +25,7 @@ class CheckImagePinsTests(unittest.TestCase):
             ),
             "scripts/dev-env-assets/haproxy-production.yaml": "image: haproxytech/haproxy-debian:3.2.23\n",
             "charts/haptic/files/default-values.json": '{"haproxyPatchVersions":{"3.2":"3.2.23","3.4":"3.4.4"}}\n',
-            ".gitlab/ci/build-pins.yml": (
+            "ci/build-pins.yml": (
                 '  HAPROXY_IMAGE_32: "haproxytech/haproxy-debian:3.2.23@sha256:' + 'a' * 64 + '"\n'
                 '  HAPROXY_IMAGE_34: "haproxytech/haproxy-debian:3.4.4@sha256:' + 'b' * 64 + '"\n'
             ),
@@ -41,17 +41,17 @@ class CheckImagePinsTests(unittest.TestCase):
         self.assertFalse(CHECKER.report_pins(pins, io.StringIO()))
 
     def test_stale_ci_patch_fails(self):
-        self.files[".gitlab/ci/build-pins.yml"] = self.files[".gitlab/ci/build-pins.yml"].replace("3.4.4", "3.4.3")
+        self.files["ci/build-pins.yml"] = self.files["ci/build-pins.yml"].replace("3.4.4", "3.4.3")
         output = io.StringIO()
         self.assertTrue(CHECKER.report_pins(self.pins(), output))
         self.assertIn("FAIL: haproxy-debian 3.4.x", output.getvalue())
-        self.assertIn(".gitlab/ci/build-pins.yml", output.getvalue())
+        self.assertIn("ci/build-pins.yml", output.getvalue())
         self.assertIn("charts/haptic/values.yaml", output.getvalue())
 
     def test_renovate_captures_digest_with_the_tag(self):
         manager = self.managers[0]
         pattern = CHECKER.re.compile(CHECKER.to_python(manager["matchStrings"][0]))
-        matches = list(pattern.finditer(self.files[".gitlab/ci/build-pins.yml"]))
+        matches = list(pattern.finditer(self.files["ci/build-pins.yml"]))
         self.assertEqual(len(matches), 2)
         self.assertEqual(matches[0].group("currentDigest"), "sha256:" + "a" * 64)
         self.assertEqual(matches[1].group("currentValue"), "3.4.4")

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-input_manifest="$repo_root/.gitlab/ci/image-build-inputs.txt"
+input_manifest="$repo_root/ci/image-build-inputs.txt"
 mapfile -t inputs <"$input_manifest"
 
 if ((${#inputs[@]} == 0)); then

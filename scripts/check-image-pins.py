@@ -111,7 +111,7 @@ def main():
         ).stdout.split("\0")
         managers = json.loads(Path("renovate.json").read_text(encoding="utf-8")).get("customManagers", [])
         chart = yaml.safe_load(Path("charts/haptic/values.yaml").read_text(encoding="utf-8"))
-        build_pins = yaml.safe_load(Path(".gitlab/ci/build-pins.yml").read_text(encoding="utf-8"))
+        build_pins = yaml.safe_load(Path("ci/build-pins.yml").read_text(encoding="utf-8"))
         validate_haproxy_ci_pins(chart["haproxyPatchVersions"], build_pins["variables"])
         pins = collect_pins(managers, paths, lambda path: Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError, yaml.YAMLError, subprocess.CalledProcessError) as error:
