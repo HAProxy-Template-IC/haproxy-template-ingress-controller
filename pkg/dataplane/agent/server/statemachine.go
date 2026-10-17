@@ -292,11 +292,16 @@ func (s *Server) observeTree(m *api.Manifest, staged map[string]*files.Staged, d
 	if s.tree == nil {
 		s.tree = map[string]api.FileAt{}
 	}
-	for path := range staged {
+	if s.treePrints == nil {
+		s.treePrints = map[string]files.Fingerprint{}
+	}
+	for path, part := range staged {
 		s.tree[path] = api.FileAt{Digest: declared[path].Digest, Proof: declared[path].Proof, Size: declared[path].Size}
+		s.treePrints[path] = part.Fingerprint
 	}
 	for _, path := range deleted {
 		delete(s.tree, path)
+		delete(s.treePrints, path)
 	}
 }
 
@@ -337,6 +342,7 @@ func (s *Server) restoreJournal() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tree = tree
+	s.treePrints = nil
 	s.state.ManifestPaths = paths
 	s.state.TreeDigest = treeDigest(tree)
 	// The tree is the last known good set again, so the backups have nothing

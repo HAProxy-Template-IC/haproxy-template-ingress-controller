@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -132,6 +133,7 @@ type driftWiring struct {
 	kube       *k8sfake.Clientset
 	bus        *busevents.EventBus
 	completed  <-chan busevents.Event
+	published  <-chan busevents.Event
 	occurrence *rendercycle.Occurrence
 	pods       []dataplane.Endpoint
 	log        *statusRequestLog
@@ -160,6 +162,7 @@ func newDriftWiring(t *testing.T) *driftWiring {
 		}},
 	}
 	w.completed = w.bus.SubscribeTypes("drift-wiring-test", 100, events.EventTypeDeploymentCompleted)
+	w.published = w.bus.SubscribeTypes("drift-wiring-published", 10, events.EventTypeConfigPublished)
 	w.bus.Start()
 
 	domainMetrics := metrics.NewMetrics(prometheus.NewRegistry())
@@ -299,13 +302,15 @@ func (w *driftWiring) driftRound(t *testing.T) int {
 	return want - 1
 }
 
-// deployed deploys to every pod, waits for their entries, and settles: the
-// first drift round may record the drift pass's own apply mode on the
+// deployed deploys to every pod, waits for their entries and for the
+// publication, whose retained checkpoint step reads HAProxyCfgs, and settles:
+// the first drift round may record the drift pass's own apply mode on the
 // HAProxyCfg. It returns the last GET of the idle round that follows.
 func (w *driftWiring) deployed(t *testing.T) int {
 	t.Helper()
 	w.deployTo(t, "config_validation")
 	w.waitStamped(t)
+	testutil.WaitForEvent[*events.ConfigPublishedEvent](t, w.published, driftTimeout)
 	w.driftRound(t)
 	return w.driftRound(t)
 }
@@ -373,6 +378,33 @@ func (w *driftWiring) removeMapFileEntry(t *testing.T, podName string) {
 		return
 	}
 	t.Fatal("no map file published")
+}
+
+// TestFakeRefusesStaleStatusUpdate: the wiring's read-modify-write of
+// status.retainedConfigs keeps a pod entry applied between its read and its
+// update only because that update conflicts, as on a real API server.
+func TestFakeRefusesStaleStatusUpdate(t *testing.T) {
+	crd := fake.NewSimpleClientset()
+	installSSAListMapMergeReactor(crd)
+	client := crd.HaproxyTemplateICV1alpha1().HAProxyCfgs(driftNamespace)
+	_, err := client.Create(t.Context(), &v1alpha1.HAProxyCfg{
+		ObjectMeta: metav1.ObjectMeta{Name: "cfg", Namespace: driftNamespace},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+	read, err := client.Get(t.Context(), "cfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	apply := fmt.Sprintf(`{"apiVersion":"haproxy-haptic.org/v1alpha1","kind":"HAProxyCfg",`+
+		`"metadata":{"name":"cfg","namespace":%q},"status":{"deployedToPods":[{"podName":"haproxy-0"}]}}`, driftNamespace)
+	_, err = client.Patch(t.Context(), "cfg", types.ApplyPatchType, []byte(apply),
+		metav1.PatchOptions{FieldManager: "haptic-pod-status-haproxy-0"}, "status")
+	require.NoError(t, err)
+
+	read.Status.RetainedConfigs = []v1alpha1.RetainedConfigReference{{Name: "checkpoint"}}
+	_, err = client.UpdateStatus(t.Context(), read, metav1.UpdateOptions{})
+	require.True(t, apierrors.IsConflict(err), "a stale status update must conflict, got %v", err)
+	current, err := client.Get(t.Context(), "cfg", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Len(t, current.Status.DeployedToPods, 1)
 }
 
 // TestIdleDriftRoundsApplyNoPodStatus is issue #376 through the production

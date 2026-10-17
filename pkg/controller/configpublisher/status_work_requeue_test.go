@@ -15,21 +15,43 @@
 package configpublisher
 
 import (
+	"bytes"
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
-	haproxyv1alpha1 "github.com/haproxy-haptic/HAPTIC/pkg/apis/haproxytemplate/v1alpha1"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/events"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/testutil"
 	"github.com/haproxy-haptic/HAPTIC/pkg/controller/throttle"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/auxiliaryfiles"
 	"github.com/haproxy-haptic/HAPTIC/pkg/generated/clientset/versioned/fake"
 	configpublisher "github.com/haproxy-haptic/HAPTIC/pkg/k8s/configpublisher"
 )
+
+// holdAuxiliaryReferences refuses a publication's status.auxiliaryFiles patch
+// until release is called, leaving the HAProxyCfg written without them.
+func holdAuxiliaryReferences(c *fake.Clientset) (release func()) {
+	var held atomic.Bool
+	held.Store(true)
+	c.PrependReactor("patch", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		patch := action.(k8stesting.PatchAction)
+		if !held.Load() || patch.GetPatchType() != types.JSONPatchType ||
+			!bytes.Contains(patch.GetPatch(), []byte(`"/status/auxiliaryFiles"`)) {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewServiceUnavailable("auxiliary references held")
+	})
+	return func() { held.Store(false) }
+}
 
 // TestProcessStatusWork_RequeuesUntilRuntimeConfigPublished is the regression
 // test for the startup race where the first deployment to the HAProxy pods
@@ -85,11 +107,29 @@ func TestProcessStatusWork_RequeuesUntilRuntimeConfigPublished(t *testing.T) {
 	c.statusWorkPendingMu.Unlock()
 	assert.Same(t, newer, kept, "requeue must not overwrite a newer pending update")
 
-	// Publish the HAProxyCfg, then process the pending work: the entry lands.
-	_, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyCfgs("default").Create(ctx,
-		&haproxyv1alpha1.HAProxyCfg{
-			ObjectMeta: metav1.ObjectMeta{Name: "test-config-haproxycfg", Namespace: "default"},
-		}, metav1.CreateOptions{})
+	// The publication writes the HAProxyCfg before its auxiliary references:
+	// the update is still requeued, or the pod's map file entry is lost.
+	release := holdAuxiliaryReferences(crdClient)
+	request := &configpublisher.PublishRequest{
+		TemplateConfigName: "test-config", TemplateConfigNamespace: "default", TemplateConfigUID: "test-uid",
+		Config: "global\n", ConfigPath: "/etc/haproxy/haproxy.cfg", Checksum: "abc123",
+		AuxiliaryFiles: &configpublisher.AuxiliaryFiles{
+			MapFiles: []auxiliaryfiles.MapFile{{Path: "/etc/haproxy/maps/host.map", Content: "example.com be_a\n"}},
+		},
+	}
+	_, err := publisher.PublishConfig(ctx, request)
+	require.Error(t, err)
+
+	c.processAllPendingStatusWork(ctx)
+
+	c.statusWorkPendingMu.Lock()
+	_, pending = c.statusWorkPending[key]
+	c.statusWorkPendingMu.Unlock()
+	require.True(t, pending, "status update must be requeued while the HAProxyCfg has no auxiliary references")
+
+	// Once the publication completes, the entry lands on every object.
+	release()
+	_, err = publisher.PublishConfig(ctx, request)
 	require.NoError(t, err)
 
 	c.processAllPendingStatusWork(ctx)
@@ -100,6 +140,12 @@ func TestProcessStatusWork_RequeuesUntilRuntimeConfigPublished(t *testing.T) {
 	require.Len(t, cfg.Status.DeployedToPods, 1)
 	assert.Equal(t, "haproxy-1", cfg.Status.DeployedToPods[0].PodName)
 	assert.Equal(t, "abc123", cfg.Status.DeployedToPods[0].Checksum)
+	require.Len(t, cfg.Status.AuxiliaryFiles.MapFiles, 1)
+	mapFile, err := crdClient.HaproxyTemplateICV1alpha1().HAProxyMapFiles("default").
+		Get(ctx, cfg.Status.AuxiliaryFiles.MapFiles[0].Name, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Len(t, mapFile.Status.DeployedToPods, 1)
+	assert.Equal(t, "haproxy-1", mapFile.Status.DeployedToPods[0].PodName)
 
 	c.statusWorkPendingMu.Lock()
 	remaining := len(c.statusWorkPending)

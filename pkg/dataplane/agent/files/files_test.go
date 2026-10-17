@@ -15,6 +15,7 @@
 package files
 
 import (
+	"crypto/sha256"
 	"errors"
 	"io"
 	"io/fs"
@@ -29,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
@@ -394,6 +396,45 @@ func TestHashTreeReportsOnlyExistingPaths(t *testing.T) {
 	assert.NotContains(t, tree, "maps/absent.map")
 }
 
+// Observe reads back the fingerprint each part was staged with, a spliced patch
+// included.
+func TestObserveReadsBackTheFingerprintOfTheStagedFile(t *testing.T) {
+	s := newTestStore(t)
+	base := "example.com be-a\n"
+	whole := stage(t, s, "haproxy.cfg", "global\n")
+	tx := s.Begin(&Journal{}, "haproxy.cfg")
+	tx.Install(whole)
+	tx.Install(stage(t, s, "maps/host.map", base))
+	require.NoError(t, tx.Backup())
+	require.NoError(t, tx.Write())
+
+	added := "b.example.com be-b\n"
+	patch := &api.FilePatch{BaseDigest: renderplan.DigestString(base), BaseSize: int64(len(base)), Offset: int64(len(base))}
+	patched, err := s.StagePatch("maps/host.map", strings.NewReader(added), patch,
+		renderplan.DigestString(base+added), int64(len(base+added)))
+	require.NoError(t, err)
+	tx = s.Begin(&Journal{}, "haproxy.cfg")
+	tx.Install(patched)
+	require.NoError(t, tx.Backup())
+	require.NoError(t, tx.Write())
+
+	observed, err := s.Observe([]string{"haproxy.cfg", "maps/host.map", "maps/absent.map"})
+	require.NoError(t, err)
+	uid, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	assert.Equal(t, Fingerprint{Sum: sha256.Sum256([]byte("global\n")), Mode: filePerm, UID: uid, GID: gid}, whole.Fingerprint)
+	assert.Equal(t, whole.Fingerprint, observed["haproxy.cfg"].Fingerprint)
+	assert.Equal(t, Fingerprint{Sum: sha256.Sum256([]byte(base + added)), Mode: filePerm, UID: uid, GID: gid}, patched.Fingerprint)
+	assert.Equal(t, patched.Fingerprint, observed["maps/host.map"].Fingerprint)
+	assert.NotContains(t, observed, "maps/absent.map")
+
+	abs, err := s.Abs("maps/host.map")
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(abs, 0o600))
+	observed, err = s.Observe([]string{"maps/host.map"})
+	require.NoError(t, err)
+	assert.NotEqual(t, patched.Fingerprint, observed["maps/host.map"].Fingerprint, "a mode change is a rewrite")
+}
+
 func TestHashTreeSkipsWhatIsNotAFileTheAgentWrote(t *testing.T) {
 	s := newTestStore(t)
 	abs, err := s.Abs("maps")
@@ -404,7 +445,7 @@ func TestHashTreeSkipsWhatIsNotAFileTheAgentWrote(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, tree, "maps")
 
-	_, err = s.Digest("maps")
+	_, _, err = s.readRegular("maps")
 	assert.ErrorIs(t, err, ErrInvalidPath, "a single-path read still names the problem")
 }
 
@@ -432,7 +473,7 @@ func TestDiscardLeavesTheTreeUntouched(t *testing.T) {
 	tx.Install(stage(t, s, "haproxy.cfg", "global\n"))
 	tx.Discard()
 
-	_, err := s.Digest("haproxy.cfg")
+	_, _, err := s.readRegular("haproxy.cfg")
 	assert.ErrorIs(t, err, fs.ErrNotExist)
 	assert.True(t, j.Empty())
 }

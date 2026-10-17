@@ -16,7 +16,10 @@ package configpublisher
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"sync/atomic"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,7 +44,8 @@ import (
 // tracker for the HAProxyCfg / HAProxyMapFile / HAProxyGeneralFile /
 // HAProxyCRTListFile types, intercepts ApplyPatchType actions on the
 // status subresource, and does the listmap merge by podName before
-// writing back through the tracker's normal Update path.
+// writing back through the tracker's normal Update path. Writes also honour
+// resourceVersion preconditions (see installResourceVersionReactor).
 //
 // Test-only: stripped from any binary that imports this package outside
 // `go test`.
@@ -93,6 +97,52 @@ func installSSAListMapMergeReactor(c *fake.Clientset) {
 		}
 		return true, existing, nil
 	})
+	installResourceVersionReactor(c)
+}
+
+// installResourceVersionReactor gives every write through the reactors already
+// installed a new resourceVersion and refuses an update carrying a stale one,
+// as the API server does. The fake tracker does neither, so a read-modify-write
+// status update would silently overwrite a concurrent pod-status apply.
+func installResourceVersionReactor(c *fake.Clientset) {
+	var version atomic.Uint64
+	chain := slices.Clone(c.ReactionChain)
+	c.PrependReactor("*", "*", func(action testing.Action) (bool, runtime.Object, error) {
+		if verb := action.GetVerb(); verb != "create" && verb != "update" && verb != "patch" {
+			return false, nil, nil
+		}
+		if update, ok := action.(testing.UpdateActionImpl); ok && staleUpdate(c, update) {
+			return true, nil, apierrors.NewConflict(action.GetResource().GroupResource(),
+				update.GetObject().(metav1.Object).GetName(), errors.New("the object has been modified"))
+		}
+		for _, reactor := range chain {
+			if !reactor.Handles(action) {
+				continue
+			}
+			handled, obj, err := reactor.React(action)
+			if !handled {
+				continue
+			}
+			if written, ok := obj.(metav1.Object); ok && err == nil {
+				written.SetResourceVersion(strconv.FormatUint(version.Add(1), 10))
+				err = c.Tracker().Update(action.GetResource(), obj, written.GetNamespace())
+			}
+			return true, obj, err
+		}
+		return false, nil, nil
+	})
+}
+
+func staleUpdate(c *fake.Clientset, update testing.UpdateAction) bool {
+	submitted, ok := update.GetObject().(metav1.Object)
+	if !ok || submitted.GetResourceVersion() == "" {
+		return false
+	}
+	stored, err := c.Tracker().Get(update.GetResource(), update.GetNamespace(), submitted.GetName())
+	if err != nil {
+		return false
+	}
+	return stored.(metav1.Object).GetResourceVersion() != submitted.GetResourceVersion()
 }
 
 func installRuntimeUIDReactor(c *fake.Clientset) {

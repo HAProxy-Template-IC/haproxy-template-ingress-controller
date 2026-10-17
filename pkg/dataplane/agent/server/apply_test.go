@@ -28,6 +28,7 @@ import (
 
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/haproxytest"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 func baseFiles(config string) []file {
@@ -893,10 +894,69 @@ func TestAFailedScheduledReloadReportsTheInvalidatedBaseline(t *testing.T) {
 
 func TestStateVerifyObservesTheTree(t *testing.T) {
 	h := newHarness(t)
-	firstApply(t, h)
+	first := firstApply(t, h)
+	held := h.state(false).Files
 
 	require.NoError(t, writeFile(h, "maps/host.map", "tampered by someone else\n"))
-	assert.NotEqual(t, h.state(false).Files["maps/host.map"].Digest, h.state(true).Files["maps/host.map"].Digest)
+	verified := h.state(true).Files
+	assert.NotEqual(t, held["maps/host.map"].Digest, verified["maps/host.map"].Digest)
+	assert.Empty(t, verified["maps/host.map"].Proof, "a rewritten file keeps no proof")
+	assert.Equal(t, held[configPath], verified[configPath])
+
+	files := baseFiles("global\n")
+	m := buildManifest("plan-1", files)
+	m.ExpectedPrevPlanID = first.AppliedPlanID
+	m.ExpectedPrevToken = first.AppliedToken
+	status, raw := h.post(&m, files, configPath, "maps/host.map")
+	require.Equal(t, http.StatusConflict, status, string(raw))
+	missing := api.Missing{}
+	require.NoError(t, json.Unmarshal(raw, &missing))
+	assert.Equal(t, []string{"maps/host.map"}, missing.Missing)
+
+	status, raw = h.post(&m, files, configPath)
+	require.Equal(t, http.StatusOK, status, string(raw))
+	result := api.ApplyResult{}
+	require.NoError(t, json.Unmarshal(raw, &result))
+	assert.Equal(t, api.ResultFileOnly, result.Mode)
+	assert.Equal(t, "example.com be-a\n", h.read("maps/host.map"))
+}
+
+// Drift prevention verifies before every round. A file that still holds the
+// bytes its proof was issued for keeps the proof, so the round sends nothing.
+func TestStateVerifyKeepsTheProofsOfAnUntouchedTree(t *testing.T) {
+	h := newHarness(t)
+	first := firstApply(t, h)
+	held := h.state(false).Files
+
+	assert.Equal(t, held, h.state(true).Files)
+
+	files := baseFiles("global\n")
+	m := buildManifest("plan-1", files)
+	m.ExpectedPrevPlanID = first.AppliedPlanID
+	m.ExpectedPrevToken = first.AppliedToken
+	status, raw := h.post(&m, files, configPath, "maps/host.map")
+	require.Equal(t, http.StatusOK, status, string(raw))
+	result := api.ApplyResult{}
+	require.NoError(t, json.Unmarshal(raw, &result))
+	assert.Equal(t, api.ResultNoop, result.Mode)
+}
+
+// The digest is xxhash64, which is cheap to collide: a rewrite behind the agent
+// with the same digest and size still loses its proof.
+func TestStateVerifyDropsTheProofOfARewriteWithTheSameDigest(t *testing.T) {
+	const written, colliding = "f16d1e21e4919d26 be\n", "7127d105c5942881 be\n"
+	require.Equal(t, renderplan.DigestString(written), renderplan.DigestString(colliding))
+	h := newHarness(t)
+	files := []file{{Path: configPath, Content: "global\n", Reload: true}, {Path: "maps/host.map", Content: written}}
+	m := buildManifest("plan-1", files)
+	m.Mode = api.ModeReload
+	first := h.apply(&m, files)
+	require.True(t, first.OK, "%+v", first.Error)
+
+	require.NoError(t, writeFile(h, "maps/host.map", colliding))
+	observed := h.state(true).Files["maps/host.map"]
+	assert.Equal(t, renderplan.DigestString(written), observed.Digest, "the digest cannot tell the two apart")
+	assert.Empty(t, observed.Proof)
 }
 
 func TestAuthenticationIsRequiredForTheAPIButNotTheProbes(t *testing.T) {
