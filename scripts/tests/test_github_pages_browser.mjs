@@ -9,10 +9,32 @@ const root = resolve(process.argv[2]);
 const receipt = JSON.parse(await readFile(resolve(root, 'shared/pages-transport.json'), 'utf8'));
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.wasm': 'application/wasm', '.json': 'application/json', '.css': 'text/css' };
+// Pages answers 5xx for a short while after a deployment. The local server does so once per path, so the retries stay tested.
+const unavailableOnce = new Set(['/shared/pages-transport.json',
+  '/' + Object.keys(receipt.engines).sort()[0].replace(/playground\.wasm$/, 'starter.resources.yaml')]);
+const attempts = 3;
+const pause = () => new Promise(resolve => setTimeout(resolve, 10000));
+async function fetchPublished(url, options) {
+  for (let attempt = 1; ; attempt++) {
+    const response = await fetch(url, options);
+    if (response.status < 500 || attempt === attempts) return response;
+    console.log(JSON.stringify({ url, status: response.status, attempt, result: 'retrying' }));
+    await pause();
+  }
+}
+async function gotoPublished(page, url) {
+  for (let attempt = 1; ; attempt++) {
+    const response = await page.goto(url);
+    if (!response || response.status() < 500 || attempt === attempts) return response;
+    console.log(JSON.stringify({ url, status: response.status(), attempt, result: 'retrying' }));
+    await pause();
+  }
+}
 const server = createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
     if (pathname === '/favicon.ico') { response.writeHead(204).end(); return; }
+    if (unavailableOnce.delete(pathname)) { response.writeHead(503).end(); return; }
     let path = resolve(root, '.' + pathname);
     if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
     if ((await stat(path)).isDirectory()) path = resolve(path, 'index.html');
@@ -28,7 +50,7 @@ if (!base) {
   base = `http://127.0.0.1:${server.address().port}`;
 }
 try {
-  const publishedReceipt = await fetch(`${base}/shared/pages-transport.json`);
+  const publishedReceipt = await fetchPublished(`${base}/shared/pages-transport.json`);
   assert.equal(publishedReceipt.status, 200);
   assert.deepEqual(await publishedReceipt.json(), receipt, 'Published site differs from its verified artifact');
   const identities = Object.keys(receipt.published_files).filter(path => path.endsWith('/release-identity.json'));
@@ -36,7 +58,7 @@ try {
     'docs/versions.json', 'playground/versions.json', ...identities]) {
     const expected = receipt.published_files[path];
     assert.ok(expected, `Missing publication evidence for ${path}`);
-    const response = await fetch(`${base}/${path}`, { cache: 'no-store' });
+    const response = await fetchPublished(`${base}/${path}`, { cache: 'no-store' });
     assert.equal(response.status, 200, `Cannot fetch published ${path}`);
     const content = Buffer.from(await response.arrayBuffer());
     assert.equal(content.length, expected.size, `Published size differs: ${path}`);
@@ -53,30 +75,41 @@ try {
     try {
       for (const engine of Object.keys(receipt.engines).sort()) {
         const version = engine.split('/')[1];
-        const context = await browser.newContext();
-        const page = await context.newPage();
-        const errors = [];
-        const requests = [];
-        page.on('pageerror', error => errors.push(error.message));
-        context.on('request', request => requests.push(request.url()));
-        const start = performance.now();
-        await page.goto(`${base}/playground/${version}/?preset=starter`);
-        await page.waitForFunction(() => window.hapticPlayground?.stats()?.haproxyCfg
-          || document.querySelector('#chip')?.textContent === 'error', null, { timeout: 30000 });
-        const result = await page.evaluate(() => window.hapticPlayground.stats());
-        assert.ok(result?.haproxyCfg?.includes('frontend http'), await page.locator('body').innerText());
-        assert.ok(Object.keys(result.maps).length > 0, `${version}: rendered map missing`);
-        assert.equal(result.error, undefined);
-        assert.deepEqual(errors, []);
-        assert.ok(requests.includes(`${base}/${engine}.br`), `${version}: Brotli engine was not requested`);
-        assert.ok(!requests.some(url => new URL(url).pathname.endsWith('/playground.wasm')));
-        assert.ok(requests.every(url => url.startsWith(base + '/')), `${version}: external runtime request`);
-        console.log(JSON.stringify({ browser: name, version, sha256: receipt.engines[engine].sha256,
-          ready_ms: Math.round(performance.now() - start), result: 'rendered' }));
-        await context.close();
+        for (let attempt = 1; ; attempt++) {
+          const context = await browser.newContext();
+          const page = await context.newPage();
+          const errors = [];
+          const requests = [];
+          const unavailable = [];
+          page.on('pageerror', error => errors.push(error.message));
+          context.on('request', request => requests.push(request.url()));
+          context.on('response', response => response.status() >= 500 && unavailable.push(`${response.status()} ${response.url()}`));
+          const start = performance.now();
+          await page.goto(`${base}/playground/${version}/?preset=starter`);
+          await page.waitForFunction(() => window.hapticPlayground?.stats()?.haproxyCfg
+            || document.querySelector('#chip')?.textContent === 'error', null, { timeout: 30000 });
+          const result = await page.evaluate(() => window.hapticPlayground.stats());
+          if (unavailable.length && attempt < attempts) {
+            console.log(JSON.stringify({ browser: name, version, unavailable, attempt, result: 'retrying' }));
+            await context.close();
+            await pause();
+            continue;
+          }
+          assert.ok(result?.haproxyCfg?.includes('frontend http'), await page.locator('body').innerText());
+          assert.ok(Object.keys(result.maps).length > 0, `${version}: rendered map missing`);
+          assert.equal(result.error, undefined);
+          assert.deepEqual(errors, []);
+          assert.ok(requests.includes(`${base}/${engine}.br`), `${version}: Brotli engine was not requested`);
+          assert.ok(!requests.some(url => new URL(url).pathname.endsWith('/playground.wasm')));
+          assert.ok(requests.every(url => url.startsWith(base + '/')), `${version}: external runtime request`);
+          console.log(JSON.stringify({ browser: name, version, sha256: receipt.engines[engine].sha256,
+            ready_ms: Math.round(performance.now() - start), result: 'rendered' }));
+          await context.close();
+          break;
+        }
       }
       const page = await browser.newPage();
-      await page.goto(`${base}/playground/dev/?preset=starter`);
+      await gotoPublished(page, `${base}/playground/dev/?preset=starter`);
       const engine = 'playground/dev/playground.wasm';
       const expected = { compressed: receipt.published_files[engine + '.br'], decoded: receipt.engines[engine] };
       const decoderMemory = await page.evaluate(async ({ engine, expected, base }) => {
@@ -111,12 +144,12 @@ try {
         console.log(JSON.stringify({ browser: name, case: kind, result: 'rejected' }));
         await page.unroute(`**/${engine}.br`);
       }
-      await page.goto(`${base}/controller/latest/index.html?preserved=1#preserved`);
+      await gotoPublished(page, `${base}/controller/latest/index.html?preserved=1#preserved`);
       await page.waitForURL(`${base}/docs/latest/?preserved=1#preserved`);
-      await page.goto(`${base}/controller/latest/getting-started/index.html?preserved=1#preserved`);
+      await gotoPublished(page, `${base}/controller/latest/getting-started/index.html?preserved=1#preserved`);
       await page.waitForURL(`${base}/docs/latest/getting-started/index.html?preserved=1#preserved`);
       for (const [from, to] of Object.entries(receipt.prerelease_redirects)) {
-        await page.goto(`${base}/${from}index.html?preserved=1#preserved`);
+        await gotoPublished(page, `${base}/${from}index.html?preserved=1#preserved`);
         await page.waitForURL(`${base}/${to}?preserved=1#preserved`);
         console.log(JSON.stringify({ browser: name, redirect: from, target: to, result: 'redirected' }));
       }
@@ -125,6 +158,7 @@ try {
       await browser.close();
     }
   }
+  if (server.listening) assert.deepEqual([...unavailableOnce], [], 'The 5xx retry path was not exercised');
 } finally {
   if (server.listening) await new Promise(resolve => server.close(resolve));
 }
