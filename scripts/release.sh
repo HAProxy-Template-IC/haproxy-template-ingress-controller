@@ -9,7 +9,8 @@
 # This script:
 # 1. Validates the version format (SemVer)
 # 2. Promotes the CHANGELOG.md [Unreleased] section to [<version>] - <date>
-#    (skipped when a [<version>] section already exists)
+#    (skipped when a [<version>] section already exists); a final X.Y.Z also
+#    folds its [X.Y.Z-*] pre-release sections into that section
 # 3. Writes <version> to the VERSION file
 # 4. Updates charts/haptic/Chart.yaml: version, appVersion, and the
 #    artifacthub.io/images annotation (controller + spoa-hub image tags)
@@ -54,6 +55,7 @@ usage() {
     echo "Usage: $0 <version>"
     echo "Example: $0 0.2.0"
     echo "         $0 0.2.0-alpha.1"
+    echo "A final X.Y.Z folds the CHANGELOG.md [X.Y.Z-*] pre-release sections into [X.Y.Z]."
 }
 
 # Check if we're in the repository root
@@ -86,22 +88,8 @@ if [[ -n $(git status --porcelain) ]]; then
     fi
 fi
 
-# --- CHANGELOG: promote [Unreleased] to [<version>] - <date> -----------------
-if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
-    warn "CHANGELOG.md already has a [$VERSION] section — skipping the [Unreleased] promotion"
-else
-    grep -q "^## \[Unreleased\]" CHANGELOG.md \
-        || error "CHANGELOG.md has no [Unreleased] section to promote"
-    echo "Promoting CHANGELOG.md [Unreleased] to [$VERSION]..."
-    # Insert the version heading right below [Unreleased]: the unreleased
-    # content ends up under the new version, and [Unreleased] stays empty
-    # at the top.
-    # awk instead of sed: GNU sed renders \n in the replacement as a newline,
-    # BSD/macOS sed emits a literal "n" — silently corrupting the changelog.
-    awk -v ver="$VERSION" -v today="$(date +%Y-%m-%d)" \
-        '{ print; if ($0 == "## [Unreleased]") { print ""; print "## [" ver "] - " today } }' \
-        CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
-fi
+# --- CHANGELOG: promote [Unreleased]; a final release absorbs its pre-releases --
+python3 scripts/promote-changelog.py "$VERSION" "$(date +%Y-%m-%d)" CHANGELOG.md
 
 # --- VERSION file -------------------------------------------------------------
 echo "Updating VERSION file..."

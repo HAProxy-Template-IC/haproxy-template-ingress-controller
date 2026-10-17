@@ -100,6 +100,7 @@ The script:
 
 - Validates the version format (`X.Y.Z` or `X.Y.Z-suffix.N`)
 - Promotes `CHANGELOG.md` `[Unreleased]` to `[<version>] - <date>` and leaves a fresh empty `[Unreleased]` above it (skipped when a `[<version>]` section already exists)
+- For a final `X.Y.Z`, folds `[Unreleased]` and every `[X.Y.Z-…]` pre-release section into `[X.Y.Z]`: one list per heading in release order, oldest first, with identical entries once and the newest intro paragraph. It stops when it can't place a section, for example another version's unreleased pre-release, or both `[X.Y.Z]` and `[X.Y.Z-…]` sections
 - Writes `<version>` to the `VERSION` file
 - Updates `Chart.yaml` `version`, `appVersion`, and the `artifacthub.io/images` annotation (controller and spoa-hub image tags)
 - Updates the `helm install ... --version <version>` examples in the READMEs and docs, and the landing page's fallback version
