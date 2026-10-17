@@ -27,6 +27,7 @@ fail=0
 #   gateway_conformance  -> `make test-gateway-conformance`     [CI: test-gateway-conformance]
 #   ingress_conformance  -> `make test-ingress-conformance`     [CI: test-ingress-conformance]
 #   testinfra && unix    -> `make test-process`                [CI: test]
+#   testinfra && linux   -> `make test-process` (tests/e2e/availability)
 #   playground           -> `make test-playground`              [CI: test]
 
 while IFS= read -r f; do
@@ -36,6 +37,9 @@ while IFS= read -r f; do
   case "$f" in
     tests/process/process_integration_test.go)
       want="testinfra && unix" ;;
+    tests/e2e/availability/*)
+      # ptrace-based monitor tests: `make test-process`, never a cluster shard.
+      want="testinfra && linux" ;;
     tests/e2e/*)
       want="e2e" ;;
     tests/integration/*)
