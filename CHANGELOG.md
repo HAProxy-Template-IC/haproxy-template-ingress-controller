@@ -10,55 +10,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+HAPTIC 0.6 moves to GitHub, requires Kubernetes 1.35 or newer, and drops
+HAProxy 3.1. It ships security updates for Go, HAProxy, and the bundled Coraza
+WAF plugin, and makes retained recovery hold up through ordinary leader changes
+and critical `http.Fetch` outages.
+
+**Before upgrading:** check your Kubernetes version, move off HAProxy 3.1, and
+remove any `registry.gitlab.com` image overrides. Read the
+[upgrade notes](./docs/site/docs/upgrade-notes.md#upgrading-to-06).
+
 ### Added
 
+- Metrics:
+    - `haptic_render_errors_total`: failed reconcile renders on every replica, by cache state.
+    - `haptic_haproxy_checks_total` and `haptic_haproxy_checks_reused_total`: `haproxy -c` runs per validator and result on every replica, and the runs answered by an identical input's verdict instead.
+    - `haptic_admission_render_slot_wait_seconds`: how long admission dry runs queue for a render slot.
 - Select several validation tests in one run by repeating `haptic validate --test`.
-- Add the `haptic_admission_render_slot_wait_seconds` metric: how long admission dry runs queue for a render slot.
-- `MUTEX_PROFILE_FRACTION` and `BLOCK_PROFILE_RATE` enable the controller's mutex and block profiles on `/debug/pprof`.
-- Add the `haptic_render_errors_total` metric: failed reconcile renders on every replica, by cache state.
-- Add the `haptic_haproxy_checks_total` and `haptic_haproxy_checks_reused_total` metrics: `haproxy -c` runs per validator and result on every replica, including followers, and the runs answered by an identical input's verdict instead.
+- `MUTEX_PROFILE_FRACTION` and `BLOCK_PROFILE_RATE` enable the mutex and block profiles on `/debug/pprof`.
 
 ### Changed
 
 - **BREAKING:** The Go module path is now `github.com/haproxy-haptic/HAPTIC` (was `gitlab.com/haproxy-haptic/haptic`). Programs that import HAPTIC packages must update their import paths.
 - Development, issues, releases, and container images moved to GitHub: [github.com/haproxy-haptic/HAPTIC](https://github.com/haproxy-haptic/HAPTIC) and `ghcr.io/haproxy-haptic`. Releases up to 0.5.0 are available there with their original digests and signatures.
+- Reconciliation CPU and latency no longer grow with the size of the watched set: input isolation inspects only the resources changed since its last capture.
+- The leader runs `haproxy -c` once per render instead of twice: the render gate reuses the verdict input acceptance just gave the identical config and files.
+- Recovery checkpoints share unchanged auxiliary files instead of copying every map, file, and certificate Secret, and publications read auxiliary files with one list per kind. Steady deployment churn no longer creates a full object set per checkpoint, and most of the controller's API requests are gone.
+- Drift prevention no longer re-applies every HAProxy pod's unchanged status to the `HAProxyCfg` and each auxiliary file every interval: it reads them live and corrects only entries that changed. On an idle fleet this removes about two thirds of the controller's API requests.
 - Startup validation may use 80% of the controller's startup probe window (240 seconds by default) instead of a fixed 120 seconds, so a large validation-test suite on a small node no longer crash-loops the controller.
-- Reduce reconciliation allocations by reusing unchanged watched-resource revisions during input isolation.
-- Reduce temporary template allocations during configuration validation and rendering.
-- Log validation test totals and results at the default INFO level.
-- Recovery checkpoints share unchanged auxiliary files instead of copying every map, file, and certificate Secret, so frequent deployments no longer create and garbage-collect a full set of objects each time.
-- `haptic_webhook_request_duration_seconds` buckets now extend to 30 seconds, so latencies near the admission timeout are measurable.
+- Failed renders count in `haptic_render_total`, and failed reconciliations in `haptic_reconciliation_duration_seconds`. A follower warns when its renders start failing.
+- `haptic_webhook_request_duration_seconds` buckets extend to 30 seconds, so latencies near the admission timeout are measurable.
+- Validation test totals and results are logged at INFO.
+- Fewer allocations during input isolation, validation, and rendering.
 
 ### Fixed
 
-- A verified `/v1/state` read that overlapped an apply could overwrite the dataplane agent's file tree with the set from before the apply, so the pod reported `disk_is_the_desired_set` until it restarted and new HAProxy pods could not start from the recovery checkpoint.
-- A leader that stops gracefully finishes its deployment in progress, including a pending HAProxy reload, and saves its recovery checkpoint before it releases the Lease. Previously the checkpoint for the last few seconds of deployments was dropped, so after an ordinary leader change replacement HAProxy pods stayed NotReady with `RetainedConfigUnavailable` while rendering was blocked.
-- Publishing a recovery checkpoint reads its shared auxiliary files with one list per kind instead of reading every file twice, removing most of the controller's API requests under steady deployment churn.
-- Publishing the configuration reads its auxiliary files with one list per kind instead of reading every map, file, and certificate Secret on each publication, and checkpoint cleanup reuses the checkpoint's verification list.
-- Drift prevention no longer re-applies every HAProxy pod's unchanged status to the `HAProxyCfg` and each auxiliary file every interval; it reads them live, one list per auxiliary-file kind, and corrects only entries that changed.
-- A replica that had been standby longer than 1.5 × `driftPreventionInterval` failed liveness as soon as it became leader, so the kubelet restarted it whenever it couldn't deploy right away, for example while a critical `http.Fetch` source was down.
-- `/livez` and `/readyz` now say why a component is unhealthy instead of reporting it with no reason.
-- A schema fetch timeout during config validation no longer rejects a valid HAProxyTemplateConfig change for good: the change shows `Validated=Unknown` (`ValidationInconclusive`) and is validated again with backoff, and schema reads fetch only the watched CRDs instead of listing every CRD, which took seconds on k3s.
-- The dataplane agent reported ready before its admin and drain sockets existed, so a client probing right after readiness could fail with `no such file or directory`.
-- The playground escapes quotes in resource, annotation, and template names, so a shared link can no longer inject HTML attributes into the output pane.
-- A cold render cancelled while a template published a shared value, such as a follower's render when its replica becomes leader, no longer deadlocks the replica's first render, which left admission denied and input rejections unreported.
-- Reconciliation CPU and latency no longer grow with the size of the watched set: input isolation inspects only the resources changed since its last capture instead of every watched resource.
-- A configuration that fails `haproxy -c` or rendering independently of watched resources, such as an invalid global directive, is reported after two checks at startup instead of one check per watched object.
-- Shared rate limiting no longer switches to per-pod budgets for 5 seconds after one slow store reply: the bundled rate-limit plugin (v0.4.2) keeps its store connection and reconnects only when the store also misses a PING.
-- Recreate pruned recovery checkpoints when their configuration is deployed again.
-- Account for recovery plans when compressing retained configurations to prevent storage-limit publication failures.
-- Prevent a 30-second agent startup stall when HAProxy is still starting its worker.
-- The leader no longer runs `haproxy -c` twice per render: the render gate reuses the verdict input acceptance just gave the identical config and files, halving the leader's check CPU under endpoint churn.
-- Retained configuration recovery now starts after leader failover when a critical HTTP source is unavailable, including with large watched resource sets.
-- A replica without a critical `http.Fetch` source's content no longer renders the whole configuration, or re-reads every watched resource, on every change while the source is down. It refetches the source every `interval` (30 seconds without one) and renders when the source answers.
-- Failed renders count in `haptic_render_total` on every replica, and failed reconciliations add their duration to `haptic_reconciliation_duration_seconds`. A follower logs a warning when its renders start failing instead of logging each failure at debug level.
-- Prevent queued mailbox events from delaying controller shutdown after cancellation during queue processing.
-- Keep a CPU free for each admission render while reconciliation renders, so valid changes are no longer denied with a timeout during heavy resource churn.
+- Retained recovery:
+    - A leader that stops gracefully finishes its deployment in progress, including a pending HAProxy reload, and saves its recovery checkpoint before it releases the Lease. Previously, after an ordinary leader change, replacement HAProxy pods could stay NotReady with `RetainedConfigUnavailable` while rendering was blocked.
+    - A verified `/v1/state` read that overlapped an apply could restore the dataplane agent's previous file set, so the pod reported `disk_is_the_desired_set` until it restarted and new pods could not recover from the checkpoint.
+    - Recovery starts after leader failover when a critical HTTP source is unavailable, including with large watched sets.
+    - Pruned checkpoints are recreated when their configuration is deployed again, and retained configurations no longer exceed the storage limit once recovery plans are included.
+- Critical `http.Fetch` outages: a replica without the source's content no longer renders, or re-reads every watched resource, on every change. It refetches the source every `interval` (30 seconds by default) and renders when the source answers.
+- A standby replica that became leader after more than 1.5 × `driftPreventionInterval` failed liveness until it deployed, so the kubelet restarted it, for example while a critical `http.Fetch` source was down.
+- Valid changes are no longer denied with a timeout during heavy resource churn: a CPU stays free for each admission render.
+- A schema fetch timeout no longer rejects a valid HAProxyTemplateConfig change for good: it shows `Validated=Unknown` (`ValidationInconclusive`) and is validated again with backoff. Schema reads fetch only the watched CRDs.
+- A configuration that fails `haproxy -c` or rendering independently of watched resources is reported after two checks at startup instead of one per watched object.
+- A cold render cancelled while a template published a shared value no longer deadlocks the replica's first render, which left admission denied.
+- Shared rate limiting no longer falls back to per-pod budgets for 5 seconds after one slow store reply (rate-limit plugin v0.4.2).
+- The dataplane agent no longer reports ready before its admin and drain sockets exist, and no longer stalls 30 seconds when HAProxy is still starting its worker.
+- `/livez` and `/readyz` say why a component is unhealthy.
+- Queued events no longer delay controller shutdown.
+- The playground escapes quotes in resource, annotation, and template names, so a shared link cannot inject HTML attributes.
 
 ### Security
 
-- Update Go to 1.27.2 and its HTTP/2 dependency to fix HTTP, TLS, and filesystem vulnerabilities.
-- Bundle the Coraza SPOA plugin v0.10.1, built against Coraza v3.8.1, to fix WAF bypass and crash vulnerabilities (GHSA-6gcq-wc29-5xf2, GHSA-6r3q-mjv7-xr8m, and ten Medium advisories). It also stops a memory leak each time the validator rechecks an invalid WAF policy.
+- Go 1.27.2 and its HTTP/2 dependency fix HTTP, TLS, and filesystem vulnerabilities.
+- HAProxy 3.0.30, 3.2.26, 3.3.17, and 3.4.7 fix HTTP/2 PING frame handling and an over-long HTTP/1 chunk-size line, both marked major upstream.
+- The bundled Coraza SPOA plugin v0.10.1 is built against Coraza v3.8.1 and fixes WAF bypass and crash vulnerabilities (GHSA-6gcq-wc29-5xf2, GHSA-6r3q-mjv7-xr8m, and ten Medium advisories). It also stops a memory leak when the validator rechecks an invalid WAF policy.
 
 ### Helm chart
 
@@ -69,19 +76,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Changed
 
 - **BREAKING:** The chart requires Kubernetes 1.35 or newer; 1.33 is past its upstream end of life and 1.34 reaches it on 2026-10-27. [Check your cluster version](./docs/site/docs/upgrade-notes.md#upgrading-to-06) before upgrading.
-- **BREAKING:** HAProxy 3.1 is no longer supported and no `-haproxy3.1` controller image is built; 3.1 is past its upstream end of life and misses the 2026-10-14 HTTP/1 and HTTP/2 fixes. Helm rejects `haproxyVersion: "3.1"`, so [switch to 3.2 or 3.4](./docs/site/docs/upgrade-notes.md#upgrading-to-06) before upgrading.
+- **BREAKING:** HAProxy 3.1 is no longer supported: it is past its upstream end of life and misses the 2026-10-14 HTTP/1 and HTTP/2 fixes. Helm rejects `haproxyVersion: "3.1"`; [switch to 3.2 or 3.4](./docs/site/docs/upgrade-notes.md#upgrading-to-06) before upgrading.
 - Default controller, SPOA hub, and Varnish images come from `ghcr.io/haproxy-haptic/haptic`, and the chart is published at `oci://ghcr.io/haproxy-haptic/haptic/charts/haptic`; its `home` and `sources` links point to GitHub.
 - Render the Helm chart faster by avoiding repeated YAML serialization of template libraries.
+- Default controller, SPOA hub, and Varnish images come from `ghcr.io/haproxy-haptic/haptic`, and the chart is published at `oci://ghcr.io/haproxy-haptic/haptic/charts/haptic`.
+- The chart renders faster.
 
 #### Fixed
 
-- The controller NetworkPolicy now accepts webhook calls from any source by default. Its `0.0.0.0/0` and `::/0` `ipBlock` rules don't match node traffic on Cilium, so admission calls arriving from other nodes timed out and Ingress changes failed intermittently. `controller.networkPolicy.ingress.webhook.from` still restricts the webhook port when set.
-- With several releases in one cluster, each release's Ingress and Gateway status listed every release's load balancer addresses, so external-dns published names with other releases' IPs. The controller now watches only its own release's load balancer Services (`app.kubernetes.io/instance`).
-- TLS Gateways use isolated service addresses and pod ports to prevent routing to another Gateway's TLSRoutes.
-- Gateway API: TLSRoutes retain their original hostname specificity after listener intersection, with older routes winning ties.
-- Pre-rollout validation and the controller's load gate no longer fail with `vector.enabled=false`, `vector.requestMetrics` features off, `spoaHub.enabled=false`, or the mirror plugin off; bundled tests now run only when the release includes the feature they test.
-- haproxy-ingress: an Ingress with `haproxy-ingress.github.io/waf` or `waf-mode` fails the render when `spoaHub.enabled=false`, instead of being served without WAF inspection.
-- nginx-ingress: `nginx.ingress.kubernetes.io/enable-modsecurity: "true"` sends the route to the Coraza WAF in detect mode, like ingress-nginx's detection-only default, under the default opt-in dispatch; it was ignored, leaving the route uninspected.
+- The controller NetworkPolicy accepts webhook calls from any source by default. Its `0.0.0.0/0` and `::/0` rules don't match node traffic on Cilium, so admission calls from other nodes timed out. `controller.networkPolicy.ingress.webhook.from` still restricts the webhook port when set.
+- With several releases in one cluster, each release's Ingress and Gateway status listed every release's load balancer addresses, so external-dns published names with other releases' IPs. Each controller now watches only its own release's load balancer Services.
+- TLS Gateways use isolated service addresses and pod ports, so they can't route to another Gateway's TLSRoutes.
+- Gateway API: TLSRoutes keep their hostname specificity after listener intersection, with older routes winning ties.
+- Pre-rollout validation and the load gate no longer fail with `vector.enabled=false`, `vector.requestMetrics` features off, `spoaHub.enabled=false`, or the mirror plugin off.
+- haproxy-ingress: an Ingress with `haproxy-ingress.github.io/waf` or `waf-mode` fails the render when `spoaHub.enabled=false` instead of being served without WAF inspection.
+- nginx-ingress: `nginx.ingress.kubernetes.io/enable-modsecurity: "true"` sends the route to the Coraza WAF in detect mode, like ingress-nginx's default; it was ignored.
 
 ## [0.5.0] - 2026-10-08
 

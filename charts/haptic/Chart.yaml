@@ -110,19 +110,27 @@ annotations:
 
   # Release highlights; full notes are in the root CHANGELOG.md.
   artifacthub.io/changes: |
+    - kind: security
+      description: Go 1.27.2 and the bundled Coraza WAF plugin v0.10.1 (Coraza v3.8.1) fix HTTP, TLS, WAF bypass, and crash vulnerabilities
+    - kind: security
+      description: HAProxy 3.0.30, 3.2.26, 3.3.17, and 3.4.7 fix major HTTP/2 PING and HTTP/1 chunk-size bugs
+    - kind: changed
+      description: "Breaking: requires Kubernetes 1.35 or newer"
+    - kind: removed
+      description: "Breaking: HAProxy 3.1, which is past its upstream end of life, is no longer supported"
+    - kind: changed
+      description: Images and the chart are published on ghcr.io/haproxy-haptic; development moved to GitHub
     - kind: added
-      description: New HAProxy pods can recover an acknowledged configuration when a restarted controller or new leader cannot render
-    - kind: added
-      description: Warning events, a retained-configuration gauge, and a bundled alert report retained recovery
+      description: Opt-in Pod readiness gate keeps single-replica rollouts from dropping requests
     - kind: fixed
-      description: Controllers complete startup validation faster within the existing memory budget
+      description: A graceful leader stop saves its recovery checkpoint, so retained recovery works after ordinary leader changes
     - kind: fixed
-      description: Endpoint updates and admission requests no longer wait for each other's validation checks
+      description: A replica no longer re-renders on every change while a critical http.Fetch source is down
     - kind: fixed
-      description: Repeated status writes no longer make valid Kubernetes updates time out
-    - kind: fixed
-      description: Catch-all GRPCRoutes select the most specific hostname regardless of route age or name
-  artifacthub.io/containsSecurityUpdates: "false"
+      description: Each release's Ingress and Gateway status lists only its own load balancer addresses
+    - kind: changed
+      description: Reconciliation cost no longer grows with the watched set, and the leader runs haproxy -c once per render
+  artifacthub.io/containsSecurityUpdates: "true"
 
   # Links
   artifacthub.io/links: |
