@@ -96,3 +96,34 @@ class PagesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported Pages redirect"):
             prepare(self.source, self.output)
         self.assertFalse(self.output.exists())
+
+    def test_prerelease_redirects_keep_deep_links_without_copying_assets(self):
+        final = self.source / "docs/1.0.0"
+        (final / "guide").mkdir(parents=True)
+        for name, value in (("index.html", "final"), ("guide/index.html", "guide"), ("404.html", "missing"),
+                            ("style.css", "body{}")):
+            (final / name).write_text(value)
+        (self.source / "_redirects").write_text("/docs/1.0.0-rc.1/* /docs/1.0.0/:splat 301\n")
+        prepare(self.source, self.output)
+        old = self.output / "docs/1.0.0-rc.1"
+        self.assertEqual(sorted(path.relative_to(old).as_posix() for path in old.rglob("*") if path.is_file()),
+                         ["404.html", "guide/index.html", "index.html"])
+        for name, destination in (("index.html", "../1.0.0/"), ("guide/index.html", "../../1.0.0/guide/"),
+                                  ("404.html", "../1.0.0/404.html")):
+            self.assertIn(f'location.replace("{destination}"+location.search+location.hash)', (old / name).read_text())
+        receipt = json.loads((self.output / "shared/pages-transport.json").read_text())
+        self.assertEqual(receipt["prerelease_redirects"], {"docs/1.0.0-rc.1/": "docs/1.0.0/"})
+
+    def test_prerelease_redirects_never_replace_content_or_leave_their_release(self):
+        for version in ("1.0.0", "1.0.0-rc.1"):
+            (self.source / "docs" / version).mkdir(parents=True)
+            (self.source / "docs" / version / "index.html").write_text(version)
+        for rule, error in (("/docs/1.0.0-rc.1/* /docs/1.0.0/:splat 301", "removed version"),
+                            ("/playground/1.0.0-rc.2/* /playground/1.0.0/:splat 301", "removed version"),
+                            ("/docs/1.0.0-rc.2/* /docs/1.0.1/:splat 301", "Unsupported"),
+                            ("/docs/11.0.0-rc.2/* /docs/1.0.0/:splat 301", "Unsupported")):
+            with self.subTest(rule=rule):
+                (self.source / "_redirects").write_text(rule + "\n")
+                with self.assertRaisesRegex(ValueError, error):
+                    prepare(self.source, self.output)
+                self.assertFalse(self.output.exists())

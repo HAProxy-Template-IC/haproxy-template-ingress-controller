@@ -15,7 +15,7 @@ import urllib.parse
 from .github import GitHub
 from .github_pages import record
 from .github_site_archive import download
-from .github_site_versions import assemble, version_key
+from .github_site_versions import assemble, superseded_prereleases, version_key
 
 
 BRANCH = "website-state"
@@ -37,7 +37,7 @@ def read(api, repository, baseline):
     root = f"repos/{repository}"
     reference = optional(api, root + "/git/ref/heads/" + BRANCH)
     if reference is None:
-        return None, {"version": 1, "baseline": baseline, "releases": {}, "dev": None}
+        return None, {"version": 1, "baseline": baseline, "releases": {}, "superseded": [], "dev": None}
     sha = reference["object"]["sha"]
     tree = api.get(root + "/git/trees/" + sha)
     if tree.get("truncated") or len(tree["tree"]) != 1:
@@ -48,7 +48,7 @@ def read(api, repository, baseline):
     blob = api.get(root + "/git/blobs/" + item["sha"])
     if blob["encoding"] != "base64" or blob["size"] > 2_000_000:
         raise ValueError("Website catalog encoding or size is invalid")
-    state = json.loads(base64.b64decode(blob["content"]))
+    state = {"superseded": [], **json.loads(base64.b64decode(blob["content"]))}
     validate(state, baseline, repository)
     return sha, state
 
@@ -56,6 +56,9 @@ def read(api, repository, baseline):
 def validate(state, baseline, repository):
     if state.get("version") != 1 or state.get("baseline") != baseline or not isinstance(state.get("releases"), dict):
         raise ValueError("Website state does not match the pinned migration baseline")
+    releases, superseded = state["releases"], state["superseded"]
+    if superseded != sorted(superseded_prereleases([*releases, *superseded]) - releases.keys(), key=version_key):
+        raise ValueError("Website state lists a superseded version without its final release")
     entries = list(state["releases"].items())
     if state.get("dev") is not None:
         entries.append(("dev", state["dev"]))
@@ -68,6 +71,13 @@ def validate(state, baseline, repository):
                 not 0 < entry["size"] < 2_000_000_000 or
                 entry["url"] != f"https://github.com/{repository}/releases/download/{TAG}/website-{version}-{entry['sha256']}.tar.gz"):
             raise ValueError("Website publication catalog contains an invalid archive")
+
+
+def retire(state):
+    """Move pre-releases of listed final releases to superseded; older catalogs may still list both."""
+    retired = superseded_prereleases([*state["releases"], *state["superseded"]])
+    return {**state, "releases": {name: value for name, value in state["releases"].items() if name not in retired},
+            "superseded": sorted(retired, key=version_key)}
 
 
 def advance(api, repository, state, entry):
@@ -87,6 +97,9 @@ def advance(api, repository, state, entry):
         if previous is not None and previous != entry:
             raise ValueError("Released website archive cannot be replaced")
         result["releases"][version] = entry
+    result = retire(result)
+    if version in result["superseded"]:
+        raise ValueError(f"Website {version} is superseded by its final release")
     validate(result, state["baseline"], repository)
     return result
 
@@ -151,6 +164,7 @@ def upload(api, repository, bundle, provenance, scratch):
 
 def restore_current(api, repository, baseline, destination):
     head, state = read(api, repository, baseline)
+    state = retire(state)
     with tempfile.TemporaryDirectory(prefix="website-restore-") as temporary:
         scratch = Path(temporary)
         source = scratch / "baseline"
@@ -163,7 +177,7 @@ def restore_current(api, repository, baseline, destination):
             if manifest["provenance"] != entry["provenance"]:
                 raise ValueError("Stored website archive differs from its catalog provenance")
             publications.append((output, manifest["provenance"]))
-        result = assemble(source, publications, destination)
+        result = assemble(source, publications, destination, state["superseded"])
     return {**result, "state_head": head, "baseline_sha256": baseline["sha256"]}
 
 

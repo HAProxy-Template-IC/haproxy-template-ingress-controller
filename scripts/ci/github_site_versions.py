@@ -14,6 +14,7 @@ from .github_site_archive import restore
 
 VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc)\.(0|[1-9]\d*))?")
 RESERVED = {"docs", "playground", "controller", "helm-chart", "_redirects", ".nojekyll"}
+STAGES = {"alpha": 0, "beta": 1, "rc": 2, None: 3}
 
 
 def version_key(value):
@@ -21,7 +22,14 @@ def version_key(value):
     if not match:
         raise ValueError(f"Invalid website version: {value}")
     major, minor, patch, stage, number = match.groups()
-    return (int(major), int(minor), int(patch), {"alpha": 0, "beta": 1, "rc": 2, None: 3}[stage], int(number or 0))
+    return (int(major), int(minor), int(patch), STAGES[stage], int(number or 0))
+
+
+def superseded_prereleases(versions):
+    """Pre-releases whose final release is also in versions."""
+    keys = {version: version_key(version) for version in versions}
+    finals = {key[:3] for key in keys.values() if key[3] == STAGES[None]}
+    return {version for version, key in keys.items() if key[3] != STAGES[None] and key[:3] in finals}
 
 
 def extract(source, destination, *, limit=3_000_000_000):
@@ -170,7 +178,31 @@ def catalogs(site):
         (root / "versions.json").write_text(json.dumps(data, indent=2) + "\n")
 
 
-def assemble(baseline, publications, destination):
+def retire_prereleases(site, superseded, publications):
+    present = {path.name for area in ("docs", "playground") for path in (site / area).iterdir()
+               if path.is_dir() and VERSION.fullmatch(path.name)}
+    retired = superseded_prereleases(present | set(superseded))
+    if not retired.issuperset(superseded):
+        raise ValueError("Superseded website versions must be pre-releases of a published final release")
+    if retired & publications:
+        raise ValueError(f"Website publication is superseded by its final release: {sorted(retired & publications)}")
+    rules = []
+    for version in sorted(retired, key=version_key):
+        final = version.partition("-")[0]
+        for area in ("docs", "playground"):
+            if (site / area / version).exists():
+                shutil.rmtree(site / area / version)
+            if (site / area / final).is_dir():
+                rules.append(f"/{area}/{version}/* /{area}/{final}/:splat 301")
+    if rules:
+        path = site / "_redirects"
+        lines = path.read_text().splitlines() if path.exists() else []
+        path.write_text("\n".join(lines + rules) + "\n")
+    return retired
+
+
+def assemble(baseline, publications, destination, superseded=()):
+    """superseded: pre-releases an earlier final publication removed; their URLs keep redirecting."""
     if destination.exists() or destination.resolve().is_relative_to(baseline.resolve()):
         raise ValueError("Website assembly requires a new directory outside the baseline")
     before = inventory(baseline)
@@ -185,16 +217,17 @@ def assemble(baseline, publications, destination):
                 raise ValueError("Website publication versions must be valid and unique")
             versions.add(version)
             apply_payload(output, content, version, landing=version == "dev")
+        retired = retire_prereleases(output, superseded, versions)
         catalogs(output)
         after = inventory(output)
         for name, expected in before.items():
             parts = PurePosixPath(name).parts
             if len(parts) >= 3 and parts[0] in {"docs", "playground"} and VERSION.fullmatch(parts[1]):
-                if after.get(name) != expected:
+                if after.get(name) != (None if parts[1] in retired else expected):
                     raise ValueError(f"Website assembly changed an archived release: {name}")
         output.rename(destination)
     return {"files": len(after), "bytes": sum(item["size"] for item in after.values()),
-            "publications": sorted(versions)}
+            "publications": sorted(versions), "superseded": sorted(retired, key=version_key)}
 
 
 def main():
@@ -214,7 +247,7 @@ def main():
             if manifest["provenance"] != entry["provenance"]:
                 raise ValueError("Website archive provenance differs from its catalog")
             publications.append((output, manifest["provenance"]))
-        print(json.dumps(assemble(args.baseline, publications, args.output), indent=2))
+        print(json.dumps(assemble(args.baseline, publications, args.output, catalog.get("superseded", ())), indent=2))
 
 
 if __name__ == "__main__":

@@ -347,7 +347,8 @@ For example, publishing `0.3.0` creates `/docs/0.3.0/` and removes
 `/docs/0.3.0-alpha.1/`. It keeps `0.2.0`, `0.1.0`, `dev`, and any pre-releases of
 later versions. Cleanup covers the documentation, playground, and their version
 menus on every publication. Retrying an old prerelease can't bring it back after
-its final release exists.
+its final release exists. Links into `/docs/0.3.0-alpha.1/` and
+`/playground/0.3.0-alpha.1/` redirect to the matching `0.3.0` page.
 
 The 0.1.0 entry links to its original, separate controller and Helm chart docs.
 The playground menu only includes releases with a published playground bundle.
