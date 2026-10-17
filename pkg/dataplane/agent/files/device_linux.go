@@ -17,10 +17,19 @@
 package files
 
 import (
+	"io/fs"
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
+
+func ownerOf(info fs.FileInfo) (uid, gid uint32) {
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		return st.Uid, st.Gid
+	}
+	return 0, 0
+}
 
 // deviceOf reports the st_dev of dir, which is how the agent tells the mounts
 // under its base directory apart.

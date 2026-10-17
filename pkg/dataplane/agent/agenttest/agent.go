@@ -37,6 +37,7 @@ import (
 
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/client"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/renderplan"
 )
 
 // Default credentials, mirroring the chart's agent Secret.
@@ -199,6 +200,14 @@ func (a *Agent) Content(path string) []byte {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return slices.Clone(a.contents[path])
+}
+
+// TamperFile rewrites path behind the fake's back, as something else in the
+// pod would. Like the agent, the fake reports it only on a verified read.
+func (a *Agent) TamperFile(path string, content []byte) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.contents[path] = slices.Clone(content)
 }
 
 // Applies returns every request the fake received, in order.
@@ -407,6 +416,9 @@ func (a *Agent) handleState(w http.ResponseWriter, r *http.Request) {
 	}
 	withPlan := r.URL.Query().Get("plan") != "0"
 	a.mu.Lock()
+	if r.URL.Query().Get("verify") == "1" {
+		a.reobserve()
+	}
 	a.stateReads++
 	if withPlan {
 		a.planReads++
@@ -414,6 +426,17 @@ func (a *Agent) handleState(w http.ResponseWriter, r *http.Request) {
 	state := a.snapshot(withPlan)
 	a.mu.Unlock()
 	writeJSON(w, http.StatusOK, state)
+}
+
+// reobserve is a verified read: a file whose content changed behind the fake
+// is reported as found, without a proof. Callers hold a.mu.
+func (a *Agent) reobserve() {
+	for path, at := range a.state.Files {
+		content := a.contents[path]
+		if digest := renderplan.Digest(content); digest != at.Digest || int64(len(content)) != at.Size {
+			a.state.Files[path] = api.FileAt{Digest: digest, Size: int64(len(content))}
+		}
+	}
 }
 
 // snapshot copies the maps the state carries so a caller cannot observe a

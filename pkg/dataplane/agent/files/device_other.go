@@ -16,7 +16,12 @@
 
 package files
 
-import "errors"
+import (
+	"errors"
+	"io/fs"
+)
+
+func ownerOf(_ fs.FileInfo) (uid, gid uint32) { return 0, 0 }
 
 // deviceOf has no portable form; the agent ships in a Linux container and the
 // single-mount fallback would silently break the per-mount hardlink rule.

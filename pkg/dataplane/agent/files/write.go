@@ -16,6 +16,7 @@ package files
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -42,8 +43,9 @@ var ErrPatchBaseMissing = errors.New("patch base is not the file held")
 
 // Staged is a verified part waiting in its target mount's temp directory.
 type Staged struct {
-	Rel string
-	tmp string
+	Rel         string
+	Fingerprint Fingerprint
+	tmp         string
 }
 
 // Stage streams a received part into the temp directory of the mount that will
@@ -110,8 +112,8 @@ func (s *Store) stage(rel, digest string, size int64, fill func(io.Writer) (int6
 	}
 	// A multipart part yields 4 KB per read. The MultiWriter also keeps bufio
 	// from handing the copy to the file's ReadFrom, which would write it that way.
-	hasher := xxhash.New()
-	buffered := bufio.NewWriterSize(io.MultiWriter(f, hasher), stageWriteBufferSize)
+	hasher, summer := xxhash.New(), sha256.New()
+	buffered := bufio.NewWriterSize(io.MultiWriter(f, hasher, summer), stageWriteBufferSize)
 	written, fillErr := fill(buffered)
 	closeErr := errors.Join(buffered.Flush(), f.Close())
 	if err := errors.Join(fillErr, closeErr); err != nil {
@@ -134,6 +136,12 @@ func (s *Store) stage(rel, digest string, size int64, fill func(io.Writer) (int6
 		staged.Discard()
 		return nil, fmt.Errorf("stage %q: %w", rel, err)
 	}
+	info, err := os.Lstat(staged.tmp)
+	if err != nil {
+		staged.Discard()
+		return nil, fmt.Errorf("stage %q: %w", rel, err)
+	}
+	staged.Fingerprint = fingerprint([sha256.Size]byte(summer.Sum(nil)), info)
 	return staged, nil
 }
 
