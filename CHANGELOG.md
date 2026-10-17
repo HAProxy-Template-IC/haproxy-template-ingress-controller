@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.0-rc.1] - 2026-10-17
+## [0.6.0-rc.2] - 2026-10-17
 
 HAPTIC 0.6 moves to GitHub, requires Kubernetes 1.35 or newer, and drops
 HAProxy 3.1. It ships security updates for Go, HAProxy, and the bundled Coraza
