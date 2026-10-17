@@ -44,8 +44,9 @@ _write_process() {
   _name=$2
   if ! _start=$(_process_start "$_proc"); then
     # The shell may reap a fast child before it is recorded; nothing is left to stop then.
-    [ -e "/proc/$_proc" ] && return 1
-    return 0
+    [ -e "/proc/$_proc" ] || return 0
+    printf 'availability monitor cannot read process %s (%s)\n' "$_proc" "$_name" >&2
+    return 1
   fi
   _tmp="$_state/$_name.tmp.$$"
   printf '%s %s\n' "$_proc" "$_start" > "$_tmp" || return 1

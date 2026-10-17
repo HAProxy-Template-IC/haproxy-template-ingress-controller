@@ -141,7 +141,7 @@ lint-fix: ## Run golangci-lint with auto-fix
 .PHONY: lint-e2e lint-e2e-fix
 .PHONY: lint-testinfra
 lint-testinfra: ## Lint shared test infrastructure and its process integration tests
-	$(GOLANGCI_LINT) run --build-tags=testinfra ./tests/process/... ./tests/kubeexec/... ./tests/admission/... ./tests/testutil/... ./tests/tunnel/... ./tests/kindutil/... ./tests/scenarios/... ./tests/runner/... ./tests/httpclient/... ./tests/traffic/... ./tests/publication/... ./tests/fixtures/...
+	$(GOLANGCI_LINT) run --build-tags=testinfra ./tests/process/... ./tests/e2e/availability/... ./tests/kubeexec/... ./tests/admission/... ./tests/testutil/... ./tests/tunnel/... ./tests/kindutil/... ./tests/scenarios/... ./tests/runner/... ./tests/httpclient/... ./tests/traffic/... ./tests/publication/... ./tests/fixtures/...
 
 lint-e2e: ## Lint the full-stack e2e suite without creating a cluster
 	$(GOLANGCI_LINT) run --build-tags=e2e ./tests/e2e/...
@@ -407,7 +407,7 @@ test-gateway-benchmark-harness: build-map-identity-check ## Verify benchmark set
 
 .PHONY: test-process
 test-process: ## Verify process supervision with real child processes, without a cluster
-	$(GO) tool gotestsum --junitfile report-process.xml --format testname -- -race -count=1 -tags=testinfra,e2e ./tests/process/... ./tests/e2e/availability/...
+	$(GO) tool gotestsum --junitfile report-process.xml --format testname -- -race -count=1 -tags=testinfra ./tests/process/... ./tests/e2e/availability/...
 
 test-unit: go-mod-download ## Run Go unit tests (PKG and TEST_RUN_PATTERN select a subset)
 	@# No coverage flags here: instrumenting the module for coverage costs a

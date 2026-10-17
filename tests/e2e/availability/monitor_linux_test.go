@@ -1,4 +1,4 @@
-//go:build e2e
+//go:build testinfra && linux
 
 // Copyright 2026 Philipp Hossner
 //
