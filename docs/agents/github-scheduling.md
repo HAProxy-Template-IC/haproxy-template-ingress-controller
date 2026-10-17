@@ -2,7 +2,7 @@
 
 Every pull request and push to `main` or `maint/*` runs the
 full matrix in `.github/workflows/ci-speed-proof.yml`; prose-only changes run
-eight common checks. No workflow runs on a schedule. Only the upstream Gateway
+seven common checks. No workflow runs on a schedule. Only the upstream Gateway
 API canary may fail; a missing, skipped, or cancelled job fails the verification
 receipt, which binds all jobs to the same source and run attempt.
 
@@ -13,7 +13,7 @@ passing at least five recent successful runs; stale weights put a long suite beh
 another in one lane, which sets the wall clock. `make schedule-github-verification`
 places long suites first and fills all 60 execution lanes with shorter suites, and
 prints the longest planned lane. Coverage aggregation takes over the lane
-of its longest measured producer and still waits for all seven inputs. Coverage
+of its longest measured producer and still waits for all six inputs. Coverage
 producers start immediately, alongside the command and general unit-test cache
 producers. Command shards run sequentially on fresh runners, and support tests
 follow the general unit tests, so consumers reuse their predecessors' compiled

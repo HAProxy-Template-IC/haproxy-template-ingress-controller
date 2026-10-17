@@ -122,6 +122,23 @@ class CheckImagePinsTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 CHECKER.validate_haproxy_ci_pins(patches, variables)
 
+    def test_supported_series_lists_must_agree(self):
+        chart = {"haproxyPatchVersions": {"3.2": "3.2.23", "3.4": "3.4.4"},
+                 "haproxyEnterprisePatchVersions": {"3.2": "3.2r1", "3.4": ""}}
+        schema = {"properties": {"haproxyVersion": {"enum": ["3.2", "3.4"]}}}
+        versions_env = 'HAPROXY_VERSIONS="3.2 3.4"\n'
+        CHECKER.validate_haproxy_series(chart, schema, versions_env)
+        cases = {
+            "versions.env HAPROXY_VERSIONS": (chart, schema, 'HAPROXY_VERSIONS="3.1 3.2 3.4"\n'),
+            "haproxyVersion enum": (chart, {"properties": {"haproxyVersion": {"type": "string"}}}, versions_env),
+            "haproxyEnterprisePatchVersions": (
+                {**chart, "haproxyEnterprisePatchVersions": {"3.1": "3.1r1", "3.2": "3.2r1", "3.4": ""}},
+                schema, versions_env),
+        }
+        for name, args in cases.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, name):
+                CHECKER.validate_haproxy_series(*args)
+
 
 if __name__ == "__main__":
     unittest.main()

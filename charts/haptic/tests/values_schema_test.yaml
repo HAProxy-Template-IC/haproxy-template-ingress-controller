@@ -30,6 +30,13 @@ tests:
       - failedTemplate:
           errorPattern: "at '/controller/image/pullPolicy': value must be one of"
 
+  - it: rejects an unsupported HAProxy series and names the supported ones
+    set:
+      haproxyVersion: "3.1"
+    asserts:
+      - failedTemplate:
+          errorPattern: "at '/haproxyVersion': value must be one of '3.0', '3.2', '3.3', '3.4'"
+
   - it: accepts any key in free-form maps
     documentSelector:
       path: metadata.name

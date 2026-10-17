@@ -147,7 +147,7 @@ func (v *ValidatorSet) ValidateCapture(model *models.Capture) error {
 }
 
 // ForVersion returns the ValidatorSet for a specific HAProxy version.
-// Returns v33 for 3.3+, v32 for 3.2, v31 for 3.1, v30 for 3.0 and below.
+// Returns v33 for 3.3+, v32 for 3.2, and v30 for anything older.
 func ForVersion(major, minor int) *ValidatorSet {
 	if major < 3 {
 		return validatorSetV30
@@ -161,8 +161,6 @@ func ForVersion(major, minor int) *ValidatorSet {
 		return validatorSetV33
 	case minor >= 2:
 		return validatorSetV32
-	case minor >= 1:
-		return validatorSetV31
 	default:
 		return validatorSetV30
 	}
@@ -172,7 +170,6 @@ func ForVersion(major, minor int) *ValidatorSet {
 // These are initialized in init() after the generated validators are loaded.
 var (
 	validatorSetV30 *ValidatorSet
-	validatorSetV31 *ValidatorSet
 	validatorSetV32 *ValidatorSet
 	validatorSetV33 *ValidatorSet
 )
@@ -197,27 +194,6 @@ func init() {
 		validateHTTPCheck:           genvalidators.ValidateHttpCheckV30,
 		validateTCPCheck:            genvalidators.ValidateTcpCheckV30,
 		validateCapture:             genvalidators.ValidateCaptureV30,
-	}
-
-	validatorSetV31 = &ValidatorSet{
-		validateServer:              genvalidators.ValidateServerV31,
-		validateServerTemplate:      genvalidators.ValidateServerTemplateV31,
-		validateBind:                genvalidators.ValidateBindV31,
-		validateHTTPRequestRule:     genvalidators.ValidateHttpRequestRuleV31,
-		validateHTTPResponseRule:    genvalidators.ValidateHttpResponseRuleV31,
-		validateTCPRequestRule:      genvalidators.ValidateTcpRequestRuleV31,
-		validateTCPResponseRule:     genvalidators.ValidateTcpResponseRuleV31,
-		validateHTTPAfterResponse:   genvalidators.ValidateHttpAfterResponseRuleV31,
-		validateHTTPErrorRule:       genvalidators.ValidateHttpErrorRuleV31,
-		validateServerSwitchingRule: genvalidators.ValidateServerSwitchingRuleV31,
-		validateBackendSwitching:    genvalidators.ValidateBackendSwitchingRuleV31,
-		validateStickRule:           genvalidators.ValidateStickRuleV31,
-		validateACL:                 genvalidators.ValidateAclV31,
-		validateFilter:              genvalidators.ValidateFilterV31,
-		validateLogTarget:           genvalidators.ValidateLogTargetV31,
-		validateHTTPCheck:           genvalidators.ValidateHttpCheckV31,
-		validateTCPCheck:            genvalidators.ValidateTcpCheckV31,
-		validateCapture:             genvalidators.ValidateCaptureV31,
 	}
 
 	validatorSetV32 = &ValidatorSet{

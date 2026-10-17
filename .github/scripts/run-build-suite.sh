@@ -28,7 +28,7 @@ case "$PILOT_SUITE" in
         for shard in renderer rest; do
             profiles+=(".pilot/coverage-inputs/ci-evidence-coverage-$shard/.pilot/coverage.out")
         done
-        for version in 3.0 3.1 3.2 3.3 3.4; do
+        for version in 3.0 3.2 3.3 3.4; do
             profiles+=(".pilot/coverage-inputs/ci-evidence-integration-$version/.pilot/coverage/integration.out")
         done
         for profile in "${profiles[@]}"; do test -s "$profile"; done

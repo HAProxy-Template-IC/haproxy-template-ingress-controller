@@ -15,7 +15,7 @@ set -euo pipefail
 #
 # Examples:
 #   ./extract-dataplane-spec.sh 3.2                                     # Community
-#   ./extract-dataplane-spec.sh 3.1 /tmp/spec.json                      # Community
+#   ./extract-dataplane-spec.sh 3.3 /tmp/spec.json                      # Community
 #   ./extract-dataplane-spec.sh 3.0 cmd/gen-validators/spec/v30.json    # Community
 #   ./extract-dataplane-spec.sh --enterprise 3.0r1                      # Enterprise
 #
@@ -23,7 +23,7 @@ set -euo pipefail
 #   --enterprise, -e  Use HAProxy Enterprise registry (hapee-registry.haproxy.com)
 #
 # Arguments:
-#   haproxy-version  HAProxy version (e.g., 3.0, 3.1, 3.2 for community; 3.0r1, 3.1r1, 3.2r1 for enterprise)
+#   haproxy-version  HAProxy version (e.g., 3.0, 3.2, 3.4 for community; 3.0r1, 3.2r1 for enterprise)
 #   output-file      Optional output file path (default: spec.json in current directory)
 #
 # Requirements:
@@ -72,12 +72,12 @@ Options:
   --enterprise, -e   Use HAProxy Enterprise registry
 
 Arguments:
-  haproxy-version    HAProxy version (e.g., 3.0, 3.1, 3.2 for community; 3.0r1, 3.1r1, 3.2r1 for enterprise)
+  haproxy-version    HAProxy version (e.g., 3.0, 3.2, 3.4 for community; 3.0r1, 3.2r1 for enterprise)
   output-file        Optional output file path (default: spec.json)
 
 Examples:
   $0 3.2                                     # Community edition
-  $0 3.1 /tmp/spec-v31.json                  # Community edition
+  $0 3.3 /tmp/spec-v33.json                  # Community edition
   $0 3.0 cmd/gen-validators/spec/v30.json    # Community edition
   $0 --enterprise 3.0r1                      # Enterprise edition
 
@@ -368,17 +368,17 @@ main() {
 
     # Validate version format based on edition
     if [ "$is_enterprise" = "true" ]; then
-        # Enterprise versions: X.Yr1 (e.g., 3.0r1, 3.1r1, 3.2r1)
+        # Enterprise versions: X.Yr1 (e.g., 3.0r1, 3.2r1)
         if ! [[ "$haproxy_version" =~ ^[0-9]+\.[0-9]+r[0-9]+$ ]]; then
             log_error "Invalid enterprise version format: $haproxy_version"
-            log_error "Expected format: X.YrZ (e.g., 3.0r1, 3.1r1, 3.2r1)"
+            log_error "Expected format: X.YrZ (e.g., 3.0r1, 3.2r1)"
             exit 1
         fi
     else
-        # Community versions: X.Y (e.g., 3.0, 3.1, 3.2)
+        # Community versions: X.Y (e.g., 3.0, 3.2, 3.4)
         if ! [[ "$haproxy_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
             log_error "Invalid community version format: $haproxy_version"
-            log_error "Expected format: X.Y (e.g., 3.0, 3.1, 3.2)"
+            log_error "Expected format: X.Y (e.g., 3.0, 3.2, 3.4)"
             exit 1
         fi
     fi

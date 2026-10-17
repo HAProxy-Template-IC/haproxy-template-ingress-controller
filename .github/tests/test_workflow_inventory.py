@@ -37,7 +37,7 @@ class WorkflowInventoryTests(unittest.TestCase):
         jobs = self.workflow["jobs"]
         self.assertEqual({jobs[group]["name"] for group in jobs["coverage"]["needs"]}, {
             "coverage-rest", "coverage-renderer",
-            "integration-3.0", "integration-3.1", "integration-3.2", "integration-3.3", "integration-3.4",
+            "integration-3.0", "integration-3.2", "integration-3.3", "integration-3.4",
         })
         self.assertEqual(set(jobs["verified"]["needs"]), set(jobs) - {"verified"})
 
@@ -64,7 +64,7 @@ class WorkflowInventoryTests(unittest.TestCase):
         self.assertTrue(all(count == 1 for count in children.values()), "A lane must not fork")
 
     def test_prose_profile_keeps_lint_docs_and_toolchain_images(self):
-        expected = {"lint", "docs", "docs-image", "ci-image-3.0", "ci-image-3.1", "ci-image-3.2",
+        expected = {"lint", "docs", "docs-image", "ci-image-3.0", "ci-image-3.2",
                     "ci-image-3.3", "ci-image-3.4"}
         self.assertEqual(set(self.manifest["prose"]["required_jobs"]), expected)
         self.assertTrue(all(path.endswith(".md") or path == "LICENSE" for path in self.manifest["prose"]["paths"]))
@@ -112,7 +112,7 @@ class WorkflowInventoryTests(unittest.TestCase):
                 group, index = name.rsplit("-", 1)
                 self.assertEqual(int(job["env"]["E2E_SHARD_INDEX"]), int(index))
                 groups[group].add(int(index))
-        self.assertEqual(set(groups), {"e2e-hp3.0", "e2e-hp3.1", "e2e-hp3.2", "e2e-hp3.3", "e2e-hp3.4",
+        self.assertEqual(set(groups), {"e2e-hp3.0", "e2e-hp3.2", "e2e-hp3.3", "e2e-hp3.4",
                                        "e2e-minimum-kubernetes"})
         for group, indexes in groups.items():
             with self.subTest(group=group):

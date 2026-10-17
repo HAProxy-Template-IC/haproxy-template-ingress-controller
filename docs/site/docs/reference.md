@@ -48,7 +48,7 @@ workflows too.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `controller.replicaCount` | int | `2` | Number of controller replicas (2+ recommended for HA with leader election) |
-| `haproxyVersion` | string | `"3.4"` | HAProxy major.minor series. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
+| `haproxyVersion` | string | `"3.4"` | HAProxy major.minor series: `3.0`, `3.2`, `3.3`, or `3.4`. Drives both the controller image tag suffix (`:<version>-haproxy<haproxyVersion>`) and — combined with `haproxyPatchVersions` — the HAProxy pod image tag |
 | `haproxyPatchVersions` | map | See values.yaml | Tested Community Edition patch versions for each HAProxy series. |
 | `haproxyEnterprisePatchVersions` | map | See values.yaml | Per-`haproxyVersion` enterprise revision pins (for example `"3.2": "3.2r1"`). Used when `haproxy.enterprise.enabled=true` |
 | `controller.image.repository` | string | `ghcr.io/haproxy-haptic/haptic` | Controller image repository |

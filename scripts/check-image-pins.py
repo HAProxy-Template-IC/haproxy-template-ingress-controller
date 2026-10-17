@@ -103,6 +103,19 @@ def validate_haproxy_ci_pins(patches, variables):
             raise ValueError(f"{name} must pin chart patch {patch} and a SHA-256 image digest")
 
 
+def validate_haproxy_series(chart, schema, versions_env):
+    match = re.search(r'^HAPROXY_VERSIONS="([^"]*)"$', versions_env, re.M)
+    lists = {
+        "versions.env HAPROXY_VERSIONS": match.group(1).split() if match else [],
+        "haproxyVersion enum": schema["properties"]["haproxyVersion"].get("enum", []),
+        "haproxyEnterprisePatchVersions": chart["haproxyEnterprisePatchVersions"],
+    }
+    supported = set(chart["haproxyPatchVersions"])
+    for name, series in lists.items():
+        if set(series) != supported:
+            raise ValueError(f"{name} lists {sorted(series)}, but haproxyPatchVersions supports {sorted(supported)}")
+
+
 def main():
     try:
         # Only tracked files belong to this checkout, not its nested worktrees or caches.
@@ -113,6 +126,11 @@ def main():
         chart = yaml.safe_load(Path("charts/haptic/values.yaml").read_text(encoding="utf-8"))
         build_pins = yaml.safe_load(Path("ci/build-pins.yml").read_text(encoding="utf-8"))
         validate_haproxy_ci_pins(chart["haproxyPatchVersions"], build_pins["variables"])
+        validate_haproxy_series(
+            chart,
+            json.loads(Path("charts/haptic/values.schema.json").read_text(encoding="utf-8")),
+            Path("versions.env").read_text(encoding="utf-8"),
+        )
         pins = collect_pins(managers, paths, lambda path: Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError, yaml.YAMLError, subprocess.CalledProcessError) as error:
         print(f"Image pin check failed: {error}", file=sys.stderr)
