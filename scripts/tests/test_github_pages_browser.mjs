@@ -10,8 +10,8 @@ const receipt = JSON.parse(await readFile(resolve(root, 'shared/pages-transport.
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
   '.wasm': 'application/wasm', '.json': 'application/json', '.css': 'text/css' };
 // Pages answers 5xx for a short while after a deployment. The local server does so once per path, so the retries stay tested.
-const unavailableOnce = new Set(['/shared/pages-transport.json',
-  '/' + Object.keys(receipt.engines).sort()[0].replace(/playground\.wasm$/, 'starter.resources.yaml')]);
+const playgrounds = Object.keys(receipt.engines).sort().map(engine => '/' + engine.replace(/playground\.wasm$/, ''));
+const unavailableOnce = new Set(['/shared/pages-transport.json', playgrounds[0] + 'starter.resources.yaml', playgrounds.at(-1)]);
 const attempts = 3;
 const pause = () => new Promise(resolve => setTimeout(resolve, 10000));
 async function fetchPublished(url, options) {
@@ -85,16 +85,18 @@ try {
           context.on('request', request => requests.push(request.url()));
           context.on('response', response => response.status() >= 500 && unavailable.push(`${response.status()} ${response.url()}`));
           const start = performance.now();
-          await page.goto(`${base}/playground/${version}/?preset=starter`);
-          await page.waitForFunction(() => window.hapticPlayground?.stats()?.haproxyCfg
-            || document.querySelector('#chip')?.textContent === 'error', null, { timeout: 30000 });
-          const result = await page.evaluate(() => window.hapticPlayground.stats());
+          const response = await page.goto(`${base}/playground/${version}/?preset=starter`);
+          const settled = response.status() < 500 && await page.waitForFunction(() => window.hapticPlayground?.stats()?.haproxyCfg
+            || document.querySelector('#chip')?.textContent === 'error', null, { timeout: 30000 })
+            .then(() => true, error => { if (!unavailable.length) throw error; return false; });
           if (unavailable.length && attempt < attempts) {
             console.log(JSON.stringify({ browser: name, version, unavailable, attempt, result: 'retrying' }));
             await context.close();
             await pause();
             continue;
           }
+          assert.ok(settled, `${version}: playground did not load: ${unavailable.join(', ')}`);
+          const result = await page.evaluate(() => window.hapticPlayground.stats());
           assert.ok(result?.haproxyCfg?.includes('frontend http'), await page.locator('body').innerText());
           assert.ok(Object.keys(result.maps).length > 0, `${version}: rendered map missing`);
           assert.equal(result.error, undefined);
