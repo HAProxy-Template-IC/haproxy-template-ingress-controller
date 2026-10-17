@@ -15,6 +15,7 @@
 package files
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -151,24 +152,43 @@ func (s *Store) mountFor(abs string) Mount {
 	return s.mounts[len(s.mounts)-1]
 }
 
-// Digest hashes one file of the tree.
-func (s *Store) Digest(rel string) (api.FileAt, error) {
+// Fingerprint tells the file the agent wrote from a rewrite of it: its bytes,
+// by SHA-256 rather than the digest anyone can collide, its mode and its owner.
+type Fingerprint struct {
+	Sum      [sha256.Size]byte
+	Mode     fs.FileMode
+	UID, GID uint32
+}
+
+func fingerprint(sum [sha256.Size]byte, info fs.FileInfo) Fingerprint {
+	uid, gid := ownerOf(info)
+	return Fingerprint{Sum: sum, Mode: info.Mode(), UID: uid, GID: gid}
+}
+
+// Observation is one file of the tree as read back from disk.
+type Observation struct {
+	At          api.FileAt
+	Fingerprint Fingerprint
+}
+
+func (s *Store) readRegular(rel string) ([]byte, fs.FileInfo, error) {
 	abs, err := s.Abs(rel)
 	if err != nil {
-		return api.FileAt{}, err
+		return nil, nil, err
 	}
 	info, err := os.Lstat(abs)
 	if err != nil {
-		return api.FileAt{}, err
+		return nil, nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return api.FileAt{}, fmt.Errorf("%w: %q is not a regular file", ErrInvalidPath, rel)
+		return nil, nil, fmt.Errorf("%w: %q is not a regular file", ErrInvalidPath, rel)
 	}
 	content, err := os.ReadFile(filepath.Clean(abs))
-	if err != nil {
-		return api.FileAt{}, err
-	}
-	return api.FileAt{Digest: renderplan.Digest(content), Size: int64(len(content))}, nil
+	return content, info, err
+}
+
+func fileAt(content []byte) api.FileAt {
+	return api.FileAt{Digest: renderplan.Digest(content), Size: int64(len(content))}
 }
 
 // HashTree observes the ownership set on disk. A path that is absent, or that
@@ -176,21 +196,41 @@ func (s *Store) Digest(rel string) (api.FileAt, error) {
 // it is not a file the agent wrote, and its absence is what makes a plan id
 // unknown after a container restart put the bootstrap config back.
 func (s *Store) HashTree(paths []string) (map[string]api.FileAt, error) {
-	if len(paths) > api.MaxFiles {
-		return nil, fmt.Errorf("ownership set of %d paths exceeds the %d-file limit", len(paths), api.MaxFiles)
-	}
 	out := make(map[string]api.FileAt, len(paths))
+	if err := s.readTree(paths, func(rel string, content []byte, _ fs.FileInfo) {
+		out[rel] = fileAt(content)
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Observe is HashTree with each file's fingerprint.
+func (s *Store) Observe(paths []string) (map[string]Observation, error) {
+	out := make(map[string]Observation, len(paths))
+	if err := s.readTree(paths, func(rel string, content []byte, info fs.FileInfo) {
+		out[rel] = Observation{At: fileAt(content), Fingerprint: fingerprint(sha256.Sum256(content), info)}
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) readTree(paths []string, visit func(rel string, content []byte, info fs.FileInfo)) error {
+	if len(paths) > api.MaxFiles {
+		return fmt.Errorf("ownership set of %d paths exceeds the %d-file limit", len(paths), api.MaxFiles)
+	}
 	for _, rel := range paths {
-		at, err := s.Digest(rel)
+		content, info, err := s.readRegular(rel)
 		switch {
 		case errors.Is(err, fs.ErrNotExist), errors.Is(err, ErrInvalidPath):
 			continue
 		case err != nil:
-			return nil, fmt.Errorf("hash %q: %w", rel, err)
+			return fmt.Errorf("hash %q: %w", rel, err)
 		}
-		out[rel] = at
+		visit(rel, content, info)
 	}
-	return out, nil
+	return nil
 }
 
 // probeMounts records the base directory and every mount point below it as

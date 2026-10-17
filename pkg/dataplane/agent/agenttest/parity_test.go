@@ -20,7 +20,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +70,8 @@ type observation struct {
 	// StoredPlan is whether /v1/state hands a baseline back, which is what a
 	// leader with a cold plan cache diffs against.
 	StoredPlan bool
+	// Proved names the files a verified read still reports a proof for.
+	Proved []string
 }
 
 // parityAgent is one implementation behind the client both ends share.
@@ -75,7 +81,9 @@ type parityAgent struct {
 	// the fake is told, the real agent's pacing window does it after its first
 	// reload.
 	pendReload func()
-	seen       []observation
+	// tamper rewrites a file behind the agent's back.
+	tamper func(path, content string)
+	seen   []observation
 }
 
 func (p *parityAgent) apply(t *testing.T, step string, m *api.Manifest, parts map[string]io.Reader) {
@@ -145,6 +153,7 @@ func TestFakeAndRealAgentAnswerAlike(t *testing.T) {
 		{name: "a stored plan is handed back only for the plan it describes", run: planBlobScenario},
 		{name: "a plan put after the apply binds to it and is refused once it moved", run: deferredPlanScenario},
 		{name: "a patched config splices into the held file or asks for it whole", run: patchScenario},
+		{name: "a verified read keeps the proofs of untouched files only", run: driftScenario},
 	}
 
 	for _, sc := range scenarios {
@@ -330,6 +339,7 @@ func newFakeParityAgent(t *testing.T) *parityAgent {
 	return &parityAgent{
 		client:     newClient(t, agent),
 		pendReload: func() { agent.SetReloadPending(true) },
+		tamper:     func(path, content string) { agent.TamperFile(path, []byte(content)) },
 	}
 }
 
@@ -345,8 +355,9 @@ func newRealParityAgent(t *testing.T) *parityAgent {
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
+	baseDir := t.TempDir()
 	agent, err := server.New(ctx, &server.Config{
-		BaseDir:           t.TempDir(),
+		BaseDir:           baseDir,
 		ConfigFile:        "haproxy.cfg",
 		MasterSocket:      model.MasterSocket(),
 		WorkerSocket:      model.WorkerSocket(),
@@ -383,7 +394,9 @@ func newRealParityAgent(t *testing.T) *parityAgent {
 	})
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
-	return &parityAgent{client: c, pendReload: func() {}}
+	return &parityAgent{client: c, pendReload: func() {}, tamper: func(path, content string) {
+		require.NoError(t, os.WriteFile(filepath.Join(baseDir, path), []byte(content), 0o600))
+	}}
 }
 
 // patchScenario sends a map file as a splice into a base the agent does not
@@ -419,4 +432,47 @@ func patchScenario(t *testing.T, p *parityAgent) {
 	parts["maps/host.map"] = strings.NewReader(added)
 	delete(parts, "haproxy.cfg")
 	p.apply(t, "a patch into the held base", good, parts)
+}
+
+// driftScenario is a drift prevention round: a verified read keeps the proof of
+// a file the agent still holds, so the idle apply needs no part, and drops it
+// for a file rewritten behind the agent, which is missing until sent again.
+func driftScenario(t *testing.T, p *parityAgent) {
+	t.Helper()
+	first, parts := build("plan-1", api.ModeReload, api.Token{LeaderEpoch: 1, RenderSeq: 1}, seedFiles)
+	p.apply(t, "first apply", first, parts)
+
+	p.verify(t, "a verified read of the untouched tree")
+	idle, _ := build("plan-1", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 2}, seedFiles)
+	idle.ExpectedPrevPlanID = "plan-1"
+	idle.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 1}
+	p.apply(t, "an idle round with no parts", idle, map[string]io.Reader{})
+
+	p.tamper("maps/host.map", "example.com be-tampered\n")
+	p.verify(t, "a verified read after a rewrite behind the agent")
+	next, _ := build("plan-1", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 3}, seedFiles)
+	next.ExpectedPrevPlanID = "plan-1"
+	next.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 2}
+	p.apply(t, "the next round without the rewritten file", next, map[string]io.Reader{})
+
+	repair, parts := build("plan-1", api.ModeAuto, api.Token{LeaderEpoch: 1, RenderSeq: 3}, seedFiles)
+	repair.ExpectedPrevPlanID = "plan-1"
+	repair.ExpectedPrevToken = api.Token{LeaderEpoch: 1, RenderSeq: 2}
+	delete(parts, "haproxy.cfg")
+	p.apply(t, "the round that sends it again", repair, parts)
+	p.verify(t, "a verified read of the repaired tree")
+}
+
+// verify records which files a verified read reports a proof for.
+func (p *parityAgent) verify(t *testing.T, step string) {
+	t.Helper()
+	state, err := p.client.State(t.Context(), api.StateRead{Verify: true})
+	require.NoError(t, err, step)
+	seen := observation{Step: step, Status: http.StatusOK, OK: true}
+	for _, path := range slices.Sorted(maps.Keys(state.Files)) {
+		if state.Files[path].Proof != "" {
+			seen.Proved = append(seen.Proved, path)
+		}
+	}
+	p.seen = append(p.seen, seen)
 }

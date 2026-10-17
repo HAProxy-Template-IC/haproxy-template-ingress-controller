@@ -262,8 +262,10 @@ restarting and copying the bootstrap configuration back — so the applied plan
 becomes unknown and the next apply is full state plus a reload.
 
 `GET /v1/state?verify=1` re-hashes on demand, which is what the controller's
-drift prevention compares against. The plain `GET` returns the digests the agent
-last observed.
+drift prevention compares against. A file keeps its proof only while its SHA-256,
+mode, and owner still match what the agent wrote; any other file loses it, and the
+controller sends it again. The plain `GET` returns the digests the agent last
+observed.
 
 ## Runtime commands
 

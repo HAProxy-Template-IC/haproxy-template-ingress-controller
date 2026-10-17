@@ -22,6 +22,7 @@ import (
 
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/api"
 	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/cli"
+	"github.com/haproxy-haptic/HAPTIC/pkg/dataplane/agent/files"
 )
 
 // handleState answers the controller's view of this pod. With verify=1 the
@@ -107,19 +108,31 @@ func (s *Server) reobserve() error {
 }
 
 // refreshTree re-hashes the ownership set so the reported digests are an
-// observation, which is what drift prevention compares against.
+// observation, which is what drift prevention compares against. A file keeps
+// its proof only while it is still the file the proof was issued for: an equal
+// digest is not an exact observation.
 func (s *Server) refreshTree() error {
 	s.mu.Lock()
 	paths := append([]string(nil), s.state.ManifestPaths...)
 	s.mu.Unlock()
 
-	tree, err := s.store.HashTree(paths)
+	observed, err := s.store.Observe(paths)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	tree := make(map[string]api.FileAt, len(observed))
+	prints := make(map[string]files.Fingerprint, len(observed))
+	for path, file := range observed {
+		if written, recorded := s.treePrints[path]; recorded && written == file.Fingerprint {
+			file.At.Proof = s.tree[path].Proof
+			prints[path] = written
+		}
+		tree[path] = file.At
+	}
 	s.tree = tree
+	s.treePrints = prints
 	s.state.TreeDigest = treeDigest(tree)
 	return nil
 }

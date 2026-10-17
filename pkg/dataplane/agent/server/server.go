@@ -100,6 +100,7 @@ type Server struct {
 	mu         sync.Mutex
 	state      *persistentState
 	tree       map[string]api.FileAt
+	treePrints map[string]files.Fingerprint // per tree path, the file its proof was issued for
 	inventory  api.Inventory
 	worker     api.HAProxyInfo
 	lastReload time.Time

@@ -223,7 +223,7 @@ makes no additional API requests.
 Two mechanisms trigger reconciliation:
 
 - **Watched resource changes** — the primary trigger; debounced to coalesce bursts.
-- **Drift prevention** — a periodic check (default `60s`, set via `spec.dataplane.driftPreventionInterval`) that asks every pod to re-hash its tree and re-applies if a digest disagrees with the render. This catches out-of-band changes to HAProxy and keeps desired and actual configuration eventually consistent. The same check reads the `HAProxyCfg` and one list per auxiliary-file kind live and re-applies only the `status.deployedToPods` entries that changed since the pod's last apply.
+- **Drift prevention** — a periodic check (default `60s`, set via `spec.dataplane.driftPreventionInterval`) that asks every pod to re-hash its tree and sends again every file that's no longer exactly what the agent wrote. This catches out-of-band changes to HAProxy and keeps desired and actual configuration eventually consistent. The same check reads the `HAProxyCfg` and one list per auxiliary-file kind live and re-applies only the `status.deployedToPods` entries that changed since the pod's last apply.
 
 ### Constraints
 

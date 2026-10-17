@@ -51,6 +51,7 @@ remove any `registry.gitlab.com` image overrides. Read the
     - Pruned checkpoints are recreated when their configuration is deployed again, and retained configurations no longer exceed the storage limit once recovery plans are included.
 - Critical `http.Fetch` outages: a replica without the source's content no longer renders, or re-reads every watched resource, on every change. It refetches the source every `interval` (30 seconds by default) and renders when the source answers.
 - A standby replica that became leader after more than 1.5 × `driftPreventionInterval` failed liveness until it deployed, so the kubelet restarted it, for example while a critical `http.Fetch` source was down.
+- An idle drift-prevention round no longer resends and rewrites every file on every HAProxy pod: the dataplane agent's verified read keeps a file's proof while the file still has the bytes, mode, and owner the agent wrote.
 - Valid changes are no longer denied with a timeout during heavy resource churn: a CPU stays free for each admission render.
 - A schema fetch timeout no longer rejects a valid HAProxyTemplateConfig change for good: it shows `Validated=Unknown` (`ValidationInconclusive`) and is validated again with backoff. Schema reads fetch only the watched CRDs.
 - A configuration that fails `haproxy -c` or rendering independently of watched resources is reported after two checks at startup instead of one per watched object.
