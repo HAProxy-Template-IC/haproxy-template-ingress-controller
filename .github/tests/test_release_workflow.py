@@ -19,6 +19,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.release = workflow("release.yml")
         self.script = (ROOT / "scripts/publish-github-release.sh").read_text()
 
+    def test_release_work_directories_are_ignored(self):
+        scripts = self.script + (ROOT / ".github/scripts/run-release-publication.sh").read_text()
+        directories = set(re.findall(r"(?<![\w./-])(\.[a-z][a-z-]*)/", scripts)) - {".github"}
+        self.assertTrue({".pilot", ".publication"} <= directories, directories)
+        for directory in sorted(directories):
+            with self.subTest(directory=directory):
+                ignored = subprocess.run(["git", "check-ignore", "-q", f"{directory}/probe"], cwd=ROOT, check=False)
+                self.assertEqual(ignored.returncode, 0, f"{directory}/ makes goreleaser see a dirty tree")
+
     def test_chart_publishes_only_after_the_signed_runtime_and_both_smokes(self):
         jobs = self.release["jobs"]
         self.assertEqual(set(jobs["chart"]["needs"]), {"source", "spoa", "controller", "smoke"})

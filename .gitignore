@@ -34,6 +34,10 @@ go.work.sum
 /build/
 /dist/
 
+# CI and release work directories; goreleaser refuses a release while they show as untracked
+/.pilot/
+/.publication/
+
 # Dependency directories
 /vendor/
 
