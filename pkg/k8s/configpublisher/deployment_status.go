@@ -35,7 +35,8 @@ import (
 // retry the update once the resource exists — swallowing this case silently
 // loses the pod's deployedToPods entry until the next config change or drift
 // check (up to driftPreventionInterval), which reads as a never-converging pod
-// to checksum-equality consumers.
+// to checksum-equality consumers. It also reports a HAProxyCfg whose
+// publication has not yet written its auxiliary references.
 var ErrRuntimeConfigNotPublished = errors.New("HAProxyCfg not published yet")
 
 const (
@@ -149,6 +150,9 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 	}
 
 	auxFiles, err := p.resolveAuxiliaryFileReferences(ctx, update, reads.runtimeConfig)
+	if errors.Is(err, ErrRuntimeConfigNotPublished) {
+		return err
+	}
 	if err != nil {
 		// Auxiliary file lookups are best-effort during status updates —
 		// the next reconcile retries. Don't fail the whole call.
@@ -156,8 +160,6 @@ func (p *Publisher) UpdateDeploymentStatus(ctx context.Context, update *Deployme
 			"runtime_config", update.RuntimeConfigName,
 			"error", err,
 		)
-	}
-	if auxFiles == nil {
 		return nil
 	}
 	if update.IsDriftCheck {
@@ -270,39 +272,33 @@ func (p *Publisher) existingPodStatus(ctx context.Context, update *DeploymentSta
 	return find(cfg)
 }
 
-// resolveAuxiliaryFileReferences finds the auxiliary file references for the
-// HAProxyCfg this update targets: from live when read, else lister cache first
-// and the typed client on cache miss.
+// resolveAuxiliaryFileReferences finds the committed auxiliary file references
+// for the HAProxyCfg this update targets: from live when read, else lister
+// cache first and the typed client when the cache misses or predates the commit.
 func (p *Publisher) resolveAuxiliaryFileReferences(ctx context.Context, update *DeploymentStatusUpdate, live *haproxyv1alpha1.HAProxyCfg) (*haproxyv1alpha1.AuxiliaryFileReferences, error) {
-	if live != nil {
-		return live.Status.AuxiliaryFiles, nil
-	}
-	if p.listers != nil && p.listers.HAProxyCfgs != nil {
-		cached, err := p.listers.HAProxyCfgs.HAProxyCfgs(update.RuntimeConfigNamespace).Get(update.RuntimeConfigName)
-		if err == nil {
-			return cached.Status.AuxiliaryFiles, nil
+	if live == nil && p.listers != nil && p.listers.HAProxyCfgs != nil {
+		if cached, err := p.listers.HAProxyCfgs.HAProxyCfgs(update.RuntimeConfigNamespace).Get(update.RuntimeConfigName); err == nil {
+			if refs, ok := committedReferences(cached); ok {
+				return refs, nil
+			}
 		}
-		// Cache miss falls through to API read.
 	}
-
-	runtimeConfig, err := p.crdClient.HaproxyTemplateICV1alpha1().
-		HAProxyCfgs(update.RuntimeConfigNamespace).
-		Get(ctx, update.RuntimeConfigName, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// Resource hasn't been published yet — the next reconcile retries.
-			return nil, errAuxFilesNotPublishedYet
+	if live == nil {
+		runtimeConfig, err := p.crdClient.HaproxyTemplateICV1alpha1().
+			HAProxyCfgs(update.RuntimeConfigNamespace).
+			Get(ctx, update.RuntimeConfigName, metav1.GetOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("getting HAProxyCfg: %w", err)
 		}
-		return nil, fmt.Errorf("getting HAProxyCfg: %w", err)
+		live = runtimeConfig
 	}
-	return runtimeConfig.Status.AuxiliaryFiles, nil
+	refs, ok := committedReferences(live)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s/%s has no auxiliary references for its current set", ErrRuntimeConfigNotPublished,
+			update.RuntimeConfigNamespace, update.RuntimeConfigName)
+	}
+	return refs, nil
 }
-
-// errAuxFilesNotPublishedYet is the sentinel returned from
-// resolveAuxiliaryFileReferences when the HAProxyCfg doesn't yet exist
-// in the API. Callers compare with errors.Is to distinguish "not ready
-// yet, will retry" from a real lookup failure.
-var errAuxFilesNotPublishedYet = fmt.Errorf("HAProxyCfg not yet published")
 
 // applyPodStatusToRuntimeConfig SSA-applies this pod's status entry to
 // HAProxyCfg. Field manager is per-pod (`haptic-pod-status-<podName>`) so

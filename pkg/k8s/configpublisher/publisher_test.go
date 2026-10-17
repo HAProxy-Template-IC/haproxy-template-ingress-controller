@@ -15,11 +15,13 @@
 package configpublisher
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -713,6 +715,55 @@ func TestUpdateDeploymentStatus_NotPublishedYetReturnsSentinel(t *testing.T) {
 	err := publisher.UpdateDeploymentStatus(ctx, &update)
 
 	require.ErrorIs(t, err, ErrRuntimeConfigNotPublished)
+}
+
+// holdAuxiliaryReferences refuses a publication's status.auxiliaryFiles patch
+// until release is called, leaving the HAProxyCfg written without them.
+func holdAuxiliaryReferences(c *fake.Clientset) (release func()) {
+	var held atomic.Bool
+	held.Store(true)
+	c.PrependReactor("patch", "haproxycfgs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		patch := action.(k8stesting.PatchAction)
+		if !held.Load() || patch.GetPatchType() != types.JSONPatchType ||
+			!bytes.Contains(patch.GetPatch(), []byte(`"/status/auxiliaryFiles"`)) {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewServiceUnavailable("auxiliary references held")
+	})
+	return func() { held.Store(false) }
+}
+
+// TestUpdateDeploymentStatus_UncommittedReferencesReturnSentinel: a publication
+// writes the HAProxyCfg before its auxiliary references. A status update in
+// between must be retried, not stamp no files or the previous set's.
+func TestUpdateDeploymentStatus_UncommittedReferencesReturnSentinel(t *testing.T) {
+	for name, republish := range map[string]bool{"first publication": false, "changed auxiliary set": true} {
+		t.Run(name, func(t *testing.T) {
+			ctx, _, crdClient, publisher := newTestPublisher(t)
+			if republish {
+				previous := auxPublishRequest()
+				_, err := publisher.PublishConfig(ctx, &previous)
+				require.NoError(t, err)
+			}
+			req := auxPublishRequest()
+			req.AuxiliaryFiles.MapFiles[0].Content = "example.com be_b\n"
+			release := holdAuxiliaryReferences(crdClient)
+			_, err := publisher.PublishConfig(ctx, &req)
+			require.Error(t, err)
+
+			update := statusUpdate("haproxy-0", "uid-0", "runtime-0", req.Checksum)
+			require.ErrorIs(t, publisher.UpdateDeploymentStatus(ctx, update), ErrRuntimeConfigNotPublished)
+
+			release()
+			_, err = publisher.PublishConfig(ctx, &req)
+			require.NoError(t, err)
+			require.NoError(t, publisher.UpdateDeploymentStatus(ctx, update))
+			objects := publishedAuxObjects(t, ctx, crdClient)
+			for _, resource := range []string{resHAProxyMapFiles, resHAProxyGeneralFiles, resHAProxyCRTListFiles} {
+				assertEntryRestored(t, ctx, crdClient, resource, objects)
+			}
+		})
+	}
 }
 
 func TestUpdateDeploymentStatus_UpdateExistingPod(t *testing.T) {

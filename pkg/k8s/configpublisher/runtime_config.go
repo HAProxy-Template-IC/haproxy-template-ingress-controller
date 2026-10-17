@@ -273,6 +273,16 @@ func buildAuxiliaryFileReferences(namespace string, result *PublishResult, setID
 	}
 }
 
+// committedReferences returns cfg's auxiliary references once its publication
+// wrote them: the set ID annotation lands with the spec, the matching references last.
+func committedReferences(cfg *haproxyv1alpha1.HAProxyCfg) (*haproxyv1alpha1.AuxiliaryFileReferences, bool) {
+	refs := cfg.Status.AuxiliaryFiles
+	if refs == nil || refs.SetID != cfg.Annotations[AuxiliarySetIDAnnotationKey] {
+		return nil, false
+	}
+	return refs, true
+}
+
 // auxiliaryRefsEqual compares two AuxiliaryFileReferences for equality.
 // ResourceReference is comparable (string-only fields), so slices.Equal is sufficient.
 func auxiliaryRefsEqual(a, b *haproxyv1alpha1.AuxiliaryFileReferences) bool {

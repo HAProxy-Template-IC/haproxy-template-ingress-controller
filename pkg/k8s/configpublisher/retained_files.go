@@ -93,8 +93,8 @@ func (p *Publisher) retainedFileReferences(ctx context.Context, req *PublishRequ
 		if !ownedByTemplate(item, req.TemplateConfigName, req.TemplateConfigUID) || item.DeletionTimestamp != nil {
 			continue
 		}
-		refs := item.Status.AuxiliaryFiles
-		if refs == nil || refs.SetID != item.Annotations[AuxiliarySetIDAnnotationKey] {
+		refs, ok := committedReferences(item)
+		if !ok {
 			return nil, false, nil
 		}
 		for _, group := range [][]v1.ResourceReference{refs.MapFiles, refs.GeneralFiles, refs.CRTListFiles, refs.SSLCertificates, refs.SSLCaFiles} {
