@@ -58,6 +58,7 @@ remove any `registry.gitlab.com` image overrides. Read the
 - Shared rate limiting no longer falls back to per-pod budgets for 5 seconds after one slow store reply (rate-limit plugin v0.4.2).
 - The dataplane agent no longer reports ready before its admin and drain sockets exist, and no longer stalls 30 seconds when HAProxy is still starting its worker.
 - `/livez` and `/readyz` say why a component is unhealthy.
+- A pod's `deployedToPods` entry no longer goes missing from the auxiliary-file resources until the next drift check when its status lands while the `HAProxyCfg` is being published.
 - Queued events no longer delay controller shutdown.
 - The playground escapes quotes in resource, annotation, and template names, so a shared link cannot inject HTML attributes.
 
